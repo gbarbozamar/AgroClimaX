@@ -1,0 +1,43 @@
+# ── Credenciales y secretos (NUNCA subir) ──────────────────────
+.env
+*.env
+.env.*
+!.env.example
+
+# ── Python ──────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.Python
+
+# ── Caches AgroClimaX ───────────────────────────────────────────
+apps/backend/.cache_agroclimax.json
+apps/backend/.tile_cache/
+apps/backend/.tiles_cache/
+
+# ── Logs ────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── IDEs ────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+
+# ── OS ──────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Node (por si se agrega frontend build) ──────────────────────
+node_modules/
+dist/
+
+# ── Docker ──────────────────────────────────────────────────────
+*.env.docker

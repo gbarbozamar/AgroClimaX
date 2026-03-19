@@ -1,0 +1,357 @@
+"""
+AgroClimaX — API Server + Tile Service
+Sirve datos reales de Copernicus al dashboard frontend.
+v0.2: tile proxy para capas agronomicas (NDVI, NDMI, NDWI, SAVI, RGB, SAR)
+"""
+import json, asyncio, math, requests
+from pathlib import Path
+from datetime import date, timedelta
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, Response
+import uvicorn
+
+from data_fetcher import run_pipeline, get_token, fetch_ndmi_s2, fetch_s1_stats
+
+app = FastAPI(title="AgroClimaX API", version="0.2.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
+
+# ── Cache JSON ────────────────────────────────────────────────────────────────
+_cache: dict = {}
+CACHE_FILE = Path(__file__).parent / ".cache_agroclimax.json"
+
+# ── Tile Cache ────────────────────────────────────────────────────────────────
+TILE_CACHE_DIR = Path(__file__).parent / ".tile_cache"
+TILE_CACHE_DIR.mkdir(exist_ok=True)
+
+SH_PROCESS_URL = "https://sh.dataspace.copernicus.eu/api/v1/process"
+
+# Transparent 1x1 PNG para tiles sin datos
+TRANSPARENT_PNG = (
+    b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01'
+    b'\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89'
+    b'\x00\x00\x00\x0bIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00'
+    b'\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82'
+)
+
+# ── Info de cada capa ─────────────────────────────────────────────────────────
+CAPAS_INFO = {
+    "rgb":  {"src": "sentinel-2-l2a", "clouds": True},
+    "ndvi": {"src": "sentinel-2-l2a", "clouds": True},
+    "ndmi": {"src": "sentinel-2-l2a", "clouds": True},
+    "ndwi": {"src": "sentinel-2-l2a", "clouds": True},
+    "savi": {"src": "sentinel-2-l2a", "clouds": True},
+    "sar":  {"src": "sentinel-1-grd",  "clouds": False},
+}
+
+# ── Evalscripts (RGBA UINT8) para cada capa agronomica ───────────────────────
+EVALSCRIPTS = {
+
+    "rgb": """//VERSION=3
+function setup() {
+  return { input:[{bands:["B04","B03","B02","dataMask"]}], output:{bands:4,sampleType:"UINT8"} };
+}
+function evaluatePixel(s) {
+  if (!s.dataMask) return [0,0,0,0];
+  return [
+    Math.min(255,Math.round(s.B04*255*3.5)),
+    Math.min(255,Math.round(s.B03*255*3.5)),
+    Math.min(255,Math.round(s.B02*255*3.5)),
+    255
+  ];
+}""",
+
+    "ndvi": """//VERSION=3
+// NDVI = (B08-B04)/(B08+B04)  |  Salud y densidad de la vegetacion
+// Rojo < 0 (suelo desnudo) -> Amarillo (escasa) -> Verde intenso (densa)
+function setup() {
+  return { input:[{bands:["B04","B08","dataMask"]}], output:{bands:4,sampleType:"UINT8"} };
+}
+function evaluatePixel(s) {
+  if (!s.dataMask) return [0,0,0,0];
+  var v = Math.max(-1, Math.min(1, (s.B08-s.B04)/(s.B08+s.B04+1e-6)));
+  var r,g,b;
+  if (v < 0) {
+    r = 160; g = 100; b = 60;
+  } else if (v < 0.2) {
+    var t = v/0.2;
+    r = Math.round(160+40*t); g = Math.round(100+80*t); b = Math.round(60*(1-t));
+  } else if (v < 0.5) {
+    var t = (v-0.2)/0.3;
+    r = Math.round(200*(1-t)+80*t); g = Math.round(180*(1-t)+180*t); b = 0;
+  } else {
+    var t = Math.min(1,(v-0.5)/0.5);
+    r = Math.round(80*(1-t)); g = Math.round(180*(1-t)+120*t); b = 0;
+  }
+  return [r,g,b,255];
+}""",
+
+    "ndmi": """//VERSION=3
+// NDMI = (B08-B11)/(B08+B11)  |  Humedad en follaje y canopia
+// Marron (muy seco) -> Naranja (estres) -> Celeste (adecuado) -> Azul (muy humedo)
+function setup() {
+  return { input:[{bands:["B08","B11","dataMask"]}], output:{bands:4,sampleType:"UINT8"} };
+}
+function evaluatePixel(s) {
+  if (!s.dataMask) return [0,0,0,0];
+  var v = Math.max(-0.8, Math.min(0.8, (s.B08-s.B11)/(s.B08+s.B11+1e-6)));
+  var r,g,b;
+  if (v < -0.3) {
+    r = 180; g = 70; b = 20;
+  } else if (v < 0) {
+    var t = (v+0.3)/0.3;
+    r = Math.round(180*(1-t)+240*t); g = Math.round(70*(1-t)+200*t); b = Math.round(20*(1-t)+80*t);
+  } else if (v < 0.3) {
+    var t = v/0.3;
+    r = Math.round(240*(1-t)+30*t); g = Math.round(200*(1-t)+130*t); b = Math.round(80*(1-t)+220*t);
+  } else {
+    r = 0; g = 80; b = 210;
+  }
+  return [r,g,b,255];
+}""",
+
+    "ndwi": """//VERSION=3
+// NDWI = (B03-B08)/(B03+B08)  |  Agua superficial e inundaciones
+// Ocre (suelo/pastizal) -> Celeste (suelo humedo) -> Azul (agua)
+function setup() {
+  return { input:[{bands:["B03","B08","dataMask"]}], output:{bands:4,sampleType:"UINT8"} };
+}
+function evaluatePixel(s) {
+  if (!s.dataMask) return [0,0,0,0];
+  var v = Math.max(-1, Math.min(1, (s.B03-s.B08)/(s.B03+s.B08+1e-6)));
+  var r,g,b;
+  if (v > 0.1) {
+    r = 0; g = Math.round(80+120*Math.min(1,v)); b = 220;
+  } else if (v > -0.3) {
+    var t = (v+0.3)/0.4;
+    r = Math.round(175*(1-t)+40*t); g = Math.round(160*(1-t)+150*t); b = Math.round(100*(1-t)+200*t);
+  } else {
+    r = 175; g = 155; b = 100;
+  }
+  return [r,g,b,255];
+}""",
+
+    "savi": """//VERSION=3
+// SAVI = (B08-B04)/(B08+B04+L)*(1+L)  L=0.5  |  Vegetacion con correccion de suelo
+// Ideal para pastizales y suelos desnudos frecuentes en Rivera
+// Ocre (suelo) -> Verde claro (pastizal) -> Verde (vegetacion densa)
+function setup() {
+  return { input:[{bands:["B04","B08","dataMask"]}], output:{bands:4,sampleType:"UINT8"} };
+}
+function evaluatePixel(s) {
+  if (!s.dataMask) return [0,0,0,0];
+  var L = 0.5;
+  var v = Math.max(-1, Math.min(1, ((s.B08-s.B04)/(s.B08+s.B04+L))*(1+L)));
+  var r,g,b;
+  if (v < 0.1) {
+    r = 210; g = 175; b = 130;
+  } else if (v < 0.35) {
+    var t = (v-0.1)/0.25;
+    r = Math.round(210*(1-t)+140*t); g = Math.round(175*(1-t)+200*t); b = Math.round(130*(1-t)+50*t);
+  } else if (v < 0.6) {
+    var t = (v-0.35)/0.25;
+    r = Math.round(140*(1-t)+30*t); g = Math.round(200*(1-t)+160*t); b = Math.round(50*(1-t));
+  } else {
+    r = 20; g = 130; b = 0;
+  }
+  return [r,g,b,255];
+}""",
+
+    "sar": """//VERSION=3
+// SAR VV (Sentinel-1 GRD) -> Retrodispersion -> Humedad suelo (Diaz 2026)
+// Rojo (muy seco, -18dB) -> Celeste (humedo, -8dB)
+function setup() {
+  return { input:[{bands:["VV"],units:"LINEAR_POWER"}], output:{bands:4,sampleType:"UINT8"} };
+}
+function evaluatePixel(s) {
+  if (!s.VV || s.VV <= 0) return [0,0,0,0];
+  var db = 10 * Math.log10(s.VV);
+  if (db < -22 || db > 0) return [0,0,0,0];
+  var t = Math.max(0, Math.min(1, (db+18)/10));
+  return [Math.round(220*(1-t)), Math.round(80+80*t), Math.round(20+200*t), 220];
+}""",
+}
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def tile_to_bbox(z: int, x: int, y: int) -> list:
+    """Convierte tile Slippy Map (z/x/y) a bbox WGS84 [W, S, E, N]."""
+    n = 2 ** z
+    return [
+        round(x / n * 360.0 - 180.0, 6),
+        round(math.degrees(math.atan(math.sinh(math.pi * (1 - 2*(y+1)/n)))), 6),
+        round((x+1) / n * 360.0 - 180.0, 6),
+        round(math.degrees(math.atan(math.sinh(math.pi * (1 - 2*y/n)))), 6),
+    ]
+
+
+def load_cache():
+    global _cache
+    if CACHE_FILE.exists():
+        try:
+            _cache = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            _cache = {}
+
+
+def save_cache():
+    CACHE_FILE.write_text(
+        json.dumps(_cache, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+load_cache()
+
+
+# ── Endpoints JSON ────────────────────────────────────────────────────────────
+
+@app.get("/api/estado-actual")
+async def estado_actual():
+    """Estado hidrico actual de Rivera — datos reales Copernicus."""
+    hoy = str(date.today())
+    if _cache.get("fecha") == hoy and "resumen" in _cache:
+        return JSONResponse(_cache)
+    try:
+        resultado = await asyncio.to_thread(run_pipeline)
+        _cache.update(resultado)
+        save_cache()
+        return JSONResponse(resultado)
+    except Exception as e:
+        if _cache:
+            _cache["advertencia"] = f"Error actualizando: {str(e)[:100]}"
+            return JSONResponse(_cache)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/historico")
+async def historico(dias: int = 30):
+    """Serie temporal de NDMI y humedad — ultimos N dias."""
+    hoy = date.today()
+    serie = []
+    try:
+        token = await asyncio.to_thread(get_token)
+        n_periodos = min(dias // 5, 6)
+        for i in range(n_periodos):
+            fecha_fin    = hoy - timedelta(days=i * 5)
+            fecha_inicio = fecha_fin - timedelta(days=10)
+            s2 = await asyncio.to_thread(fetch_ndmi_s2, token, str(fecha_inicio), str(fecha_fin))
+            s1 = await asyncio.to_thread(fetch_s1_stats, token, str(fecha_inicio), str(fecha_fin))
+            ndmi    = s2.get("ndmi_media") if "error" not in s2 else None
+            humedad = s1.get("humedad_media") if "error" not in s1 else None
+            if ndmi is not None or humedad is not None:
+                nivel = 0
+                if humedad is not None:
+                    nivel = 3 if humedad < 15 else 2 if humedad < 25 else 1 if humedad < 50 else 0
+                serie.append({
+                    "fecha":       str(fecha_fin),
+                    "humedad_pct": humedad,
+                    "ndmi":        ndmi,
+                    "nivel":       nivel,
+                })
+        serie.sort(key=lambda x: x["fecha"])
+        return JSONResponse({"departamento": "Rivera", "datos": serie})
+    except Exception as e:
+        return JSONResponse({"error": str(e), "datos": []}, status_code=500)
+
+
+# ── Tile Endpoint ─────────────────────────────────────────────────────────────
+
+@app.get("/api/tiles/{layer}/{z}/{x}/{y}.png")
+async def serve_tile(layer: str, z: int, x: int, y: int):
+    """
+    Sirve tiles PNG de imagenes satelitales reales Sentinel-1/2.
+    Capas: rgb, ndvi, ndmi, ndwi, savi, sar
+    Cachea en disco (renovacion diaria).
+    """
+    if layer not in EVALSCRIPTS:
+        return Response(status_code=404)
+
+    # Verificar rango de zoom util (Sentinel-2 = 10m, Sentinel-1 = 10m)
+    if z < 7 or z > 13:
+        return Response(content=TRANSPARENT_PNG, media_type="image/png",
+                        headers={"Access-Control-Allow-Origin": "*"})
+
+    # Cache diario
+    today = str(date.today())
+    cache_path = TILE_CACHE_DIR / f"{layer}_{today}_{z}_{x}_{y}.png"
+    if cache_path.exists():
+        return Response(
+            content=cache_path.read_bytes(),
+            media_type="image/png",
+            headers={"Cache-Control": "max-age=7200", "Access-Control-Allow-Origin": "*"},
+        )
+
+    info = CAPAS_INFO[layer]
+    bbox = tile_to_bbox(z, x, y)
+    hoy  = str(date.today())
+    inicio = str(date.today() - timedelta(days=45))
+
+    data_filter = {
+        "timeRange": {"from": f"{inicio}T00:00:00Z", "to": f"{hoy}T23:59:59Z"}
+    }
+    if info["clouds"]:
+        data_filter["maxCloudCoverage"] = 50
+
+    payload = {
+        "input": {
+            "bounds": {
+                "bbox": bbox,
+                "properties": {"crs": "http://www.opengis.net/def/crs/EPSG/0/4326"},
+            },
+            "data": [{"type": info["src"], "dataFilter": data_filter}],
+        },
+        "output": {
+            "width": 256,
+            "height": 256,
+            "responses": [{"identifier": "default", "format": {"type": "image/png"}}],
+        },
+        "evalscript": EVALSCRIPTS[layer],
+    }
+
+    try:
+        token = await asyncio.to_thread(get_token)
+        resp  = await asyncio.to_thread(
+            lambda: requests.post(
+                SH_PROCESS_URL,
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type":  "application/json",
+                    "Accept":        "image/png",
+                },
+                timeout=30,
+            )
+        )
+        if resp.status_code == 200 and "image" in resp.headers.get("content-type", ""):
+            cache_path.write_bytes(resp.content)
+            return Response(
+                content=resp.content,
+                media_type="image/png",
+                headers={"Cache-Control": "max-age=7200", "Access-Control-Allow-Origin": "*"},
+            )
+    except Exception:
+        pass
+
+    # Sin datos: tile transparente (sin error visible en Leaflet)
+    return Response(
+        content=TRANSPARENT_PNG,
+        media_type="image/png",
+        headers={"Access-Control-Allow-Origin": "*"},
+    )
+
+
+@app.get("/api/health")
+async def health():
+    return {"status": "ok", "sistema": "AgroClimaX", "version": "0.2.0"}
+
+
+if __name__ == "__main__":
+    uvicorn.run("server:app", host="0.0.0.0", port=8002, reload=False)

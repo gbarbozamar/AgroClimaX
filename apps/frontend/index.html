@@ -1,0 +1,1342 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AgroClimaX — Alertas Agroclimáticas Rivera, Uruguay</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d2e;
+      --surface2: #242740;
+      --border: #2e3150;
+      --text: #e2e8f0;
+      --text-muted: #8892a4;
+      --verde: #2ecc71;
+      --amarillo: #f1c40f;
+      --naranja: #e67e22;
+      --rojo: #e74c3c;
+      --accent: #4a90d9;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── HEADER ── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      height: 60px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 1000;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      font-size: 1.2rem;
+    }
+
+    .logo-icon {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, #2ecc71, #4a90d9);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+    }
+
+    .logo-sub {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      font-weight: 400;
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .badge-area {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 12px;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+
+    .badge-area span {
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .last-update {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    /* ── ALERTA BANNER ── */
+    #alerta-banner {
+      padding: 10px 24px;
+      font-size: 0.85rem;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: all 0.3s;
+    }
+
+    .banner-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.6; transform: scale(1.3); }
+    }
+
+    /* ── LAYOUT ── */
+    .main-grid {
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      grid-template-rows: auto 1fr;
+      gap: 0;
+      flex: 1;
+      min-height: 0;
+    }
+
+    /* ── KPI BAR ── */
+    .kpi-bar {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 1px;
+      background: var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .kpi-card {
+      background: var(--surface);
+      padding: 16px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .kpi-label {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .kpi-value {
+      font-size: 1.6rem;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .kpi-sub {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+    }
+
+    /* ── MAPA ── */
+    .map-container {
+      position: relative;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+    }
+
+    #map {
+      height: 100%;
+      min-height: 500px;
+    }
+
+    .map-legend {
+      position: absolute;
+      bottom: 20px;
+      left: 10px;
+      z-index: 500;
+      background: rgba(15, 17, 23, 0.93);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 13px;
+      font-size: 0.75rem;
+      backdrop-filter: blur(6px);
+      min-width: 155px;
+      max-width: 200px;
+    }
+
+    .map-legend-title {
+      font-weight: 700;
+      margin-bottom: 7px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      font-size: 0.65rem;
+    }
+
+    /* Gradient legend for index layers */
+    .legend-gradient {
+      height: 9px;
+      border-radius: 5px;
+      margin: 5px 0 2px;
+    }
+    .legend-scale-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.6rem;
+      color: var(--text-muted);
+      margin-bottom: 3px;
+    }
+    .legend-formula {
+      font-size: 0.62rem;
+      color: rgba(136,146,164,0.6);
+      font-family: monospace;
+      margin-top: 3px;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 5px;
+    }
+
+    .legend-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+      flex-shrink: 0;
+    }
+
+    /* ── LAYER SELECTOR ── */
+    .map-controls {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      right: 10px;
+      z-index: 500;
+      display: flex;
+      gap: 5px;
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      scrollbar-width: none;
+      padding-bottom: 2px;
+    }
+    .map-controls::-webkit-scrollbar { display: none; }
+
+    .map-btn {
+      background: rgba(15, 17, 23, 0.92);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 7px 10px 5px;
+      color: var(--text-muted);
+      font-family: 'Inter', sans-serif;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1px;
+      flex: 0 0 auto;
+      backdrop-filter: blur(6px);
+      min-width: 70px;
+    }
+    .map-btn-icon  { font-size: 1.1rem; line-height: 1; }
+    .map-btn-name  { font-size: 0.72rem; font-weight: 700; color: var(--text); letter-spacing: 0.3px; }
+    .map-btn-desc  { font-size: 0.58rem; color: var(--text-muted); white-space: nowrap; }
+    .map-btn-formula { font-size: 0.55rem; color: rgba(136,146,164,0.7); font-family: monospace; white-space: nowrap; }
+
+    .map-btn:hover { background: var(--surface2); border-color: var(--accent); }
+    .map-btn.active {
+      border-color: var(--accent);
+      background: rgba(74,144,217,0.18);
+      box-shadow: 0 0 0 1px rgba(74,144,217,0.3);
+    }
+    .map-btn.active .map-btn-name { color: var(--accent); }
+    .map-btn.active .map-btn-icon { filter: drop-shadow(0 0 4px rgba(74,144,217,0.6)); }
+
+    /* Opacity slider */
+    .map-opacity-wrap {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 500;
+      background: rgba(15,17,23,0.92);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 6px 10px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      backdrop-filter: blur(6px);
+    }
+    .map-opacity-wrap input[type=range] {
+      width: 70px;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
+    /* Tile loading indicator */
+    .map-tile-loading {
+      position: absolute;
+      bottom: 90px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(15,17,23,0.9);
+      border: 1px solid var(--accent);
+      border-radius: 20px;
+      padding: 5px 14px;
+      font-size: 0.72rem;
+      color: var(--accent);
+      display: none;
+      z-index: 600;
+      white-space: nowrap;
+      animation: pulse 1.5s infinite;
+    }
+
+    /* ── SIDEBAR PANEL ── */
+    .side-panel {
+      background: var(--surface);
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    .panel-section {
+      border-bottom: 1px solid var(--border);
+      padding: 16px;
+    }
+
+    .panel-title {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+      font-weight: 600;
+    }
+
+    /* ── ALERTA CARD ── */
+    .alerta-card {
+      border-radius: 8px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      border: 1px solid;
+    }
+
+    .alerta-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .alerta-nivel {
+      font-size: 1rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .alerta-badge {
+      font-size: 0.7rem;
+      padding: 2px 8px;
+      border-radius: 12px;
+      background: rgba(255,255,255,0.1);
+    }
+
+    .alerta-descripcion {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+
+    .alerta-accion {
+      font-size: 0.78rem;
+      font-weight: 500;
+      padding: 6px 10px;
+      background: rgba(255,255,255,0.07);
+      border-radius: 5px;
+      border-left: 3px solid currentColor;
+    }
+
+    /* ── INDICADORES ── */
+    .indicador-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.82rem;
+    }
+
+    .indicador-row:last-child { border-bottom: none; }
+
+    .indicador-label { color: var(--text-muted); }
+
+    .indicador-valor {
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Barra de humedad */
+    .humedad-bar-wrap {
+      margin-top: 4px;
+    }
+
+    .humedad-bar-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+    }
+
+    .humedad-bar {
+      height: 8px;
+      background: var(--surface2);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .humedad-bar-fill {
+      height: 100%;
+      border-radius: 4px;
+      transition: width 1s ease;
+    }
+
+    /* ── CHART ── */
+    .chart-wrap {
+      position: relative;
+      height: 160px;
+    }
+
+    /* ── ALERTAS RECIENTES ── */
+    .alerta-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 0;
+      font-size: 0.8rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .alerta-item:last-child { border-bottom: none; }
+
+    .alerta-item-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .alerta-item-fecha {
+      color: var(--text-muted);
+      font-size: 0.72rem;
+      margin-left: auto;
+    }
+
+    /* ── SPI GAUGE ── */
+    .spi-gauge {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      padding: 8px 0;
+    }
+
+    .spi-value-big {
+      font-size: 2.4rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .spi-label {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .spi-bar-wrap {
+      width: 100%;
+      position: relative;
+      margin-top: 6px;
+    }
+
+    .spi-scale {
+      display: flex;
+      height: 10px;
+      border-radius: 5px;
+      overflow: hidden;
+    }
+
+    .spi-scale-seg {
+      flex: 1;
+    }
+
+    .spi-marker {
+      position: absolute;
+      top: -4px;
+      width: 4px;
+      height: 18px;
+      background: white;
+      border-radius: 2px;
+      transform: translateX(-50%);
+      transition: left 1s ease;
+    }
+
+    .spi-ticks {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.65rem;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    /* ── SCROLL ── */
+    .side-panel::-webkit-scrollbar { width: 4px; }
+    .side-panel::-webkit-scrollbar-track { background: transparent; }
+    .side-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    /* ── FOOTER ── */
+    footer {
+      grid-column: 1 / -1;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      padding: 8px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.72rem;
+      color: var(--text-muted);
+    }
+
+    .footer-sources {
+      display: flex;
+      gap: 16px;
+    }
+
+    .source-tag {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 2px 8px;
+      font-size: 0.68rem;
+    }
+  </style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header>
+  <div class="logo">
+    <div class="logo-icon">🌾</div>
+    <div>
+      <div>AgroClimaX</div>
+      <div class="logo-sub">Alertas Agroclimáticas por Teledetección</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="badge-area">Área: <span>Rivera, Uruguay</span></div>
+    <div class="badge-area">Satélites: <span>Sentinel-1 · Sentinel-2 · ERA5</span></div>
+    <div class="last-update" id="last-update">Actualizado: —</div>
+  </div>
+</header>
+
+<!-- ALERTA BANNER -->
+<div id="alerta-banner"></div>
+
+<div class="main-grid">
+
+  <!-- KPI BAR -->
+  <div class="kpi-bar">
+    <div class="kpi-card">
+      <div class="kpi-label">Humedad Suelo (S1)</div>
+      <div class="kpi-value" id="kpi-humedad" style="color: var(--naranja);">—</div>
+      <div class="kpi-sub">Sentinel-1 SAR · ~5 cm prof.</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">NDMI Vegetación (S2)</div>
+      <div class="kpi-value" id="kpi-ndmi" style="color: var(--amarillo);">—</div>
+      <div class="kpi-sub">Sentinel-2 · B08/B11</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">SPI-30 (ERA5)</div>
+      <div class="kpi-value" id="kpi-spi" style="color: var(--rojo);">—</div>
+      <div class="kpi-sub">Índice Precip. Estandarizado</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Área en Alerta</div>
+      <div class="kpi-value" id="kpi-area" style="color: var(--naranja);">—</div>
+      <div class="kpi-sub">% depto. Rivera afectado</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Días en Déficit</div>
+      <div class="kpi-value" id="kpi-dias" style="color: var(--rojo);">—</div>
+      <div class="kpi-sub">Consecutivos ≥ Alerta</div>
+    </div>
+  </div>
+
+  <!-- MAPA -->
+  <div class="map-container">
+    <div id="map"></div>
+
+    <!-- SELECTOR DE CAPAS AGRONÓMICAS -->
+    <div class="map-controls">
+      <button class="map-btn active" id="btn-alerta" onclick="setLayer('alerta',this)">
+        <span class="map-btn-icon">🎯</span>
+        <span class="map-btn-name">Alerta</span>
+        <span class="map-btn-desc">S1 + S2</span>
+      </button>
+      <button class="map-btn" id="btn-rgb" onclick="setLayer('rgb',this)">
+        <span class="map-btn-icon">🌍</span>
+        <span class="map-btn-name">RGB</span>
+        <span class="map-btn-formula">B04·B03·B02</span>
+      </button>
+      <button class="map-btn" id="btn-ndvi" onclick="setLayer('ndvi',this)">
+        <span class="map-btn-icon">🌿</span>
+        <span class="map-btn-name">NDVI</span>
+        <span class="map-btn-formula">B08−B04/sum</span>
+      </button>
+      <button class="map-btn" id="btn-ndmi" onclick="setLayer('ndmi',this)">
+        <span class="map-btn-icon">💧</span>
+        <span class="map-btn-name">NDMI</span>
+        <span class="map-btn-formula">B08−B11/sum</span>
+      </button>
+      <button class="map-btn" id="btn-ndwi" onclick="setLayer('ndwi',this)">
+        <span class="map-btn-icon">🔵</span>
+        <span class="map-btn-name">NDWI</span>
+        <span class="map-btn-formula">B03−B08/sum</span>
+      </button>
+      <button class="map-btn" id="btn-savi" onclick="setLayer('savi',this)">
+        <span class="map-btn-icon">🌾</span>
+        <span class="map-btn-name">SAVI</span>
+        <span class="map-btn-formula">(B08−B04)/…·1.5</span>
+      </button>
+      <button class="map-btn" id="btn-sar" onclick="setLayer('sar',this)">
+        <span class="map-btn-icon">📡</span>
+        <span class="map-btn-name">SAR VV</span>
+        <span class="map-btn-formula">S1 · Díaz 2026</span>
+      </button>
+    </div>
+
+    <!-- Control de opacidad -->
+    <div class="map-opacity-wrap" id="opacity-wrap" style="display:none">
+      <span>Opacidad</span>
+      <input type="range" id="opacity-slider" min="20" max="100" value="85"
+             oninput="setTileOpacity(this.value/100)">
+      <span id="opacity-label">85%</span>
+    </div>
+
+    <!-- Indicador de carga -->
+    <div class="map-tile-loading" id="map-tile-loading">⏳ Cargando Sentinel...</div>
+
+    <!-- LEYENDA DINÁMICA -->
+    <div class="map-legend" id="map-legend">
+      <div class="map-legend-title" id="legend-title">Nivel de Alerta · Rivera</div>
+      <div id="legend-content">
+        <div class="legend-item"><div class="legend-dot" style="background:#2ecc71"></div> Verde — Normal (&gt;50%)</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#f1c40f"></div> Amarillo (25–50%)</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#e67e22"></div> Naranja (15–25%)</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#e74c3c"></div> Rojo (&lt;15%)</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SIDE PANEL -->
+  <div class="side-panel">
+
+    <!-- ESTADO ACTUAL -->
+    <div class="panel-section">
+      <div class="panel-title">Estado Hídrico Actual</div>
+      <div class="alerta-card" id="alerta-card-main">
+        <div class="alerta-header">
+          <div class="alerta-nivel" id="alerta-nivel-text">Cargando...</div>
+          <div class="alerta-badge" id="alerta-tipo-badge">—</div>
+        </div>
+        <div class="alerta-descripcion" id="alerta-descripcion">Conectando con datos Copernicus...</div>
+        <div class="alerta-accion" id="alerta-accion">—</div>
+      </div>
+    </div>
+
+    <!-- BARRAS DE HUMEDAD -->
+    <div class="panel-section">
+      <div class="panel-title">Humedad Superficial del Suelo</div>
+      <div class="humedad-bar-wrap">
+        <div class="humedad-bar-label">
+          <span>Humedad S1 (Sentinel-1)</span>
+          <span id="hum-s1-pct">—</span>
+        </div>
+        <div class="humedad-bar">
+          <div class="humedad-bar-fill" id="hum-s1-bar" style="width:0%;background:var(--naranja)"></div>
+        </div>
+      </div>
+      <div class="humedad-bar-wrap" style="margin-top:10px">
+        <div class="humedad-bar-label">
+          <span>NDMI normalizado (S2)</span>
+          <span id="hum-ndmi-pct">—</span>
+        </div>
+        <div class="humedad-bar">
+          <div class="humedad-bar-fill" id="hum-ndmi-bar" style="width:0%;background:var(--amarillo)"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SPI GAUGE -->
+    <div class="panel-section">
+      <div class="panel-title">SPI-30 — Precipitación Estandarizada (ERA5)</div>
+      <div class="spi-gauge">
+        <div class="spi-value-big" id="spi-big">—</div>
+        <div class="spi-label" id="spi-cat">Sin datos</div>
+        <div class="spi-bar-wrap">
+          <div class="spi-scale">
+            <div class="spi-scale-seg" style="background:#e74c3c"></div>
+            <div class="spi-scale-seg" style="background:#e67e22"></div>
+            <div class="spi-scale-seg" style="background:#f1c40f"></div>
+            <div class="spi-scale-seg" style="background:#2ecc71"></div>
+            <div class="spi-scale-seg" style="background:#3498db"></div>
+            <div class="spi-scale-seg" style="background:#2980b9"></div>
+          </div>
+          <div class="spi-marker" id="spi-marker" style="left:50%"></div>
+        </div>
+        <div class="spi-ticks">
+          <span>-3</span><span>-2</span><span>-1</span><span>0</span><span>+1</span><span>+2</span><span>+3</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- SERIE TEMPORAL -->
+    <div class="panel-section">
+      <div class="panel-title">Serie Temporal — Últimos 30 días</div>
+      <div class="chart-wrap">
+        <canvas id="chart-humedad"></canvas>
+      </div>
+    </div>
+
+    <!-- ALERTAS RECIENTES -->
+    <div class="panel-section">
+      <div class="panel-title">Alertas Recientes</div>
+      <div id="alertas-recientes">
+        <!-- poblado por JS -->
+      </div>
+    </div>
+
+    <!-- INDICADORES TÉCNICOS -->
+    <div class="panel-section">
+      <div class="panel-title">Indicadores Técnicos</div>
+      <div class="indicador-row">
+        <span class="indicador-label">Puntos calibración S1</span>
+        <span class="indicador-valor" style="color:var(--verde)">5 Rivera</span>
+      </div>
+      <div class="indicador-row">
+        <span class="indicador-label">Resolución espacial</span>
+        <span class="indicador-valor">20 m</span>
+      </div>
+      <div class="indicador-row">
+        <span class="indicador-label">Profundidad S1</span>
+        <span class="indicador-valor">~5 cm</span>
+      </div>
+      <div class="indicador-row">
+        <span class="indicador-label">Anticipación estrés NDMI</span>
+        <span class="indicador-valor" style="color:var(--accent)">7–10 días</span>
+      </div>
+      <div class="indicador-row">
+        <span class="indicador-label">Fuente climática</span>
+        <span class="indicador-valor">ERA5 CDS</span>
+      </div>
+      <div class="indicador-row">
+        <span class="indicador-label">Pipeline</span>
+        <span class="indicador-valor" style="color:var(--verde)">Diario 03:00</span>
+      </div>
+    </div>
+
+  </div><!-- /side-panel -->
+
+</div><!-- /main-grid -->
+
+<footer>
+  <div>AgroClimaX v0.1 — AI Deep Economics · Rivera, Uruguay</div>
+  <div class="footer-sources">
+    <span class="source-tag">🛰 Sentinel-1 SAR (Copernicus)</span>
+    <span class="source-tag">🛰 Sentinel-2 L2A (Copernicus)</span>
+    <span class="source-tag">🌦 ERA5 CDS (Copernicus)</span>
+    <span class="source-tag">📐 Método: Díaz, G. 2026</span>
+  </div>
+</footer>
+
+<script>
+// ── API REAL — Copernicus CDSE ─────────────────────────────────
+const API_BASE = 'http://localhost:8002/api';
+const COLORES  = { 0: '#2ecc71', 1: '#f1c40f', 2: '#e67e22', 3: '#e74c3c' };
+const NOMBRES  = { 0: 'VERDE', 1: 'AMARILLO', 2: 'NARANJA', 3: 'ROJO' };
+
+let estadoActual = null;
+let historialDatos = [];
+
+function mostrarCargando() {
+  document.getElementById('alerta-banner').innerHTML =
+    `<div class="banner-dot" style="background:#4a90d9;animation:pulse 1s infinite"></div>
+     <span style="color:#4a90d9">Conectando con Copernicus Data Space — descargando datos reales...</span>`;
+  document.getElementById('alerta-banner').style.background = '#4a90d922';
+  document.getElementById('alerta-banner').style.borderBottom = '1px solid #4a90d944';
+  ['kpi-humedad','kpi-ndmi','kpi-spi','kpi-area','kpi-dias'].forEach(id => {
+    document.getElementById(id).textContent = '...';
+  });
+}
+
+async function cargarEstadoActual() {
+  mostrarCargando();
+  try {
+    const r = await fetch(`${API_BASE}/estado-actual`);
+    const data = await r.json();
+    estadoActual = normalizar(data);
+    renderTodo(estadoActual);
+  } catch(e) {
+    document.getElementById('alerta-banner').innerHTML =
+      `<span style="color:#e74c3c">Error conectando con API: ${e.message}. Verifique que el servidor esté corriendo en puerto 8002.</span>`;
+  }
+}
+
+async function cargarHistorico() {
+  try {
+    const r = await fetch(`${API_BASE}/historico?dias=30`);
+    const data = await r.json();
+    historialDatos = (data.datos || []).map(d => ({
+      fecha:   d.fecha,
+      nivel:   d.nivel,
+      humedad: d.humedad_pct,
+      ndmi:    d.ndmi,
+    }));
+    if (historialDatos.length > 0) {
+      renderChart(historialDatos);
+      renderAlertasRecientes(historialDatos);
+    }
+  } catch(e) {
+    console.warn('No se pudo cargar histórico:', e.message);
+  }
+}
+
+// Normaliza la respuesta real de la API al formato del dashboard
+function normalizar(data) {
+  const s1  = data.sentinel_1  || {};
+  const s2  = data.sentinel_2  || {};
+  const era5 = data.era5        || {};
+  const alerta = data.alerta    || {};
+  const res  = data.resumen     || {};
+
+  const humedad = s1.humedad_media  ?? res.humedad_s1_pct ?? 0;
+  const ndmi    = s2.ndmi_media     ?? res.ndmi_s2        ?? 0;
+  const spi     = era5.spi_30d      ?? res.spi_30d        ?? 0;
+  const nivel   = alerta.nivel      ?? res.nivel          ?? 'VERDE';
+  const color   = alerta.color      ?? res.color          ?? '#2ecc71';
+
+  return {
+    fecha:           data.fecha || new Date().toISOString().slice(0,10),
+    nivel,
+    nivel_codigo:    alerta.codigo ?? 0,
+    color,
+    humedad_s1_pct:  humedad,
+    ndmi_medio:      ndmi,
+    spi_30d:         spi,
+    spi_categoria:   era5.spi_categoria  ?? res.spi_categoria ?? 'Sin datos',
+    pct_area_afectada: s1.cobertura_pct ?? 100,
+    dias_deficit:    0,
+    es_prolongada:   false,
+    descripcion:     alerta.descripcion  ?? '',
+    accion:          alerta.accion       ?? '',
+    tipo:            alerta.nivel_s1 && alerta.nivel_s2
+                     ? `S1:${alerta.nivel_s1} | S2:${alerta.nivel_s2}`
+                     : 'Combinado S1+S2',
+    // Detalles técnicos
+    vv_db:           s1.vv_db_media     ?? null,
+    ndmi_p10:        s2.ndmi_p10        ?? null,
+    ndmi_p90:        s2.ndmi_p90        ?? null,
+    humedad_p10:     s1.humedad_p10     ?? null,
+    humedad_p90:     s1.humedad_p90     ?? null,
+    s2_cobertura:    s2.cobertura_pct   ?? null,
+    advertencia:     data.advertencia   ?? null,
+  };
+}
+
+function renderTodo(d) {
+  renderBanner(d);
+  renderKPIs(d);
+  renderAlertaCard(d);
+  renderBarras(d);
+  renderSPI(d);
+  actualizarMapaConDatos(d);
+}
+
+// ── BANNER ────────────────────────────────────────────────────
+function renderBanner(d) {
+  const banner = document.getElementById('alerta-banner');
+  banner.style.background = d.color + '22';
+  banner.style.borderBottom = `1px solid ${d.color}44`;
+  banner.style.color = d.color;
+  banner.innerHTML = `
+    <div class="banner-dot" style="background:${d.color}"></div>
+    <strong>ALERTA ${d.nivel}</strong> — ${d.descripcion}
+    ${d.es_prolongada ? `<span style="margin-left:12px;background:${d.color}33;padding:2px 10px;border-radius:12px;font-size:0.75rem">⚠ PROLONGADA: ${d.dias_deficit} días consecutivos</span>` : ''}
+    <span style="margin-left:auto;font-size:0.75rem;color:var(--text-muted)">Rivera · ${d.fecha}</span>
+  `;
+}
+
+// ── KPIs ─────────────────────────────────────────────────────
+function renderKPIs(d) {
+  const h = d.humedad_s1_pct;
+  document.getElementById('kpi-humedad').textContent = h.toFixed(1) + '%';
+  document.getElementById('kpi-humedad').style.color = d.color;
+
+  const n = d.ndmi_medio;
+  document.getElementById('kpi-ndmi').textContent = n.toFixed(3);
+  document.getElementById('kpi-ndmi').style.color = n < -0.10 ? '#e74c3c' : n < 0 ? '#e67e22' : n < 0.10 ? '#f1c40f' : '#2ecc71';
+
+  document.getElementById('kpi-spi').textContent = d.spi_30d.toFixed(2);
+  document.getElementById('kpi-spi').style.color = d.spi_30d < -1.5 ? '#e74c3c' : d.spi_30d < -1.0 ? '#e67e22' : d.spi_30d < 0 ? '#f1c40f' : '#2ecc71';
+
+  document.getElementById('kpi-area').textContent = (d.pct_area_afectada ?? 0).toFixed(1) + '%';
+  document.getElementById('kpi-area').style.color = d.color;
+
+  // VV dB como indicador técnico en lugar de días deficit
+  const vv = d.vv_db ?? d.dias_deficit;
+  document.getElementById('kpi-dias').textContent = d.vv_db ? d.vv_db.toFixed(1) + ' dB' : (d.dias_deficit ?? 0);
+  document.getElementById('kpi-dias').style.color = d.vv_db ? '#4a90d9' : '#e67e22';
+
+  document.getElementById('last-update').textContent = 'Datos: ' + d.fecha + ' · Fuente: Copernicus CDSE';
+  if (d.advertencia) {
+    document.getElementById('last-update').style.color = '#e67e22';
+    document.getElementById('last-update').textContent += ' ⚠';
+  }
+}
+
+// ── ALERTA CARD ───────────────────────────────────────────────
+function renderAlertaCard(d) {
+  const card = document.getElementById('alerta-card-main');
+  card.style.borderColor = d.color + '88';
+  card.style.background = d.color + '11';
+  card.style.color = d.color;
+  document.getElementById('alerta-nivel-text').textContent = '● ' + d.nivel;
+  document.getElementById('alerta-tipo-badge').textContent = d.tipo;
+  document.getElementById('alerta-descripcion').textContent = d.descripcion;
+  const accion = document.getElementById('alerta-accion');
+  accion.textContent = '→ ' + d.accion;
+  accion.style.color = d.color;
+  accion.style.borderLeftColor = d.color;
+}
+
+// ── BARRAS HUMEDAD ────────────────────────────────────────────
+function renderBarras(d) {
+  const hPct = d.humedad_s1_pct;
+  document.getElementById('hum-s1-pct').textContent = hPct.toFixed(1) + '%';
+  const bar = document.getElementById('hum-s1-bar');
+  bar.style.width = hPct + '%';
+  bar.style.background = hPct < 15 ? '#e74c3c' : hPct < 25 ? '#e67e22' : hPct < 50 ? '#f1c40f' : '#2ecc71';
+
+  const ndmiNorm = Math.max(0, Math.min(100, (d.ndmi_medio + 0.5) * 100));
+  document.getElementById('hum-ndmi-pct').textContent = d.ndmi_medio.toFixed(3);
+  const barN = document.getElementById('hum-ndmi-bar');
+  barN.style.width = ndmiNorm + '%';
+  barN.style.background = d.ndmi_medio < -0.1 ? '#e74c3c' : d.ndmi_medio < 0 ? '#e67e22' : d.ndmi_medio < 0.1 ? '#f1c40f' : '#2ecc71';
+}
+
+// ── SPI GAUGE ─────────────────────────────────────────────────
+function renderSPI(d) {
+  document.getElementById('spi-big').textContent = d.spi_30d.toFixed(2);
+  document.getElementById('spi-big').style.color = d.spi_30d < -1.5 ? '#e74c3c' : d.spi_30d < 0 ? '#e67e22' : '#2ecc71';
+  document.getElementById('spi-cat').textContent = d.spi_categoria;
+  // Posición marcador: SPI -3 → 0%, SPI +3 → 100%
+  const pos = Math.max(0, Math.min(100, ((d.spi_30d + 3) / 6) * 100));
+  document.getElementById('spi-marker').style.left = pos + '%';
+}
+
+// ── CHART ─────────────────────────────────────────────────────
+function renderChart(hist) {
+  const ctx = document.getElementById('chart-humedad').getContext('2d');
+  const labels = hist.map(h => h.fecha.substring(5)).reverse();
+  const humedad = hist.map(h => h.humedad).reverse();
+  const ndmi = hist.map(h => (h.ndmi + 0.5) * 100).reverse();
+
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Humedad S1 (%)',
+          data: humedad,
+          borderColor: '#4a90d9',
+          backgroundColor: 'rgba(74,144,217,0.1)',
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.4,
+          fill: true,
+          yAxisID: 'y',
+        },
+        {
+          label: 'NDMI norm.',
+          data: ndmi,
+          borderColor: '#2ecc71',
+          borderWidth: 1.5,
+          pointRadius: 0,
+          tension: 0.4,
+          borderDash: [4, 3],
+          fill: false,
+          yAxisID: 'y',
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          labels: { color: '#8892a4', font: { size: 10 }, boxWidth: 12 }
+        },
+        annotation: {
+          annotations: {
+            alerta: {
+              type: 'line',
+              yMin: 25, yMax: 25,
+              borderColor: '#e67e22',
+              borderWidth: 1,
+              borderDash: [4, 4],
+            },
+            emergencia: {
+              type: 'line',
+              yMin: 15, yMax: 15,
+              borderColor: '#e74c3c',
+              borderWidth: 1,
+              borderDash: [4, 4],
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          ticks: { color: '#8892a4', font: { size: 9 }, maxTicksLimit: 8 },
+          grid: { color: '#2e3150' }
+        },
+        y: {
+          ticks: { color: '#8892a4', font: { size: 9 } },
+          grid: { color: '#2e3150' },
+          min: 0,
+          max: 100
+        }
+      }
+    }
+  });
+}
+
+// ── ALERTAS RECIENTES ─────────────────────────────────────────
+function renderAlertasRecientes(hist) {
+  const alertas = hist.filter(h => h.nivel >= 2).slice(0, 5);
+  const container = document.getElementById('alertas-recientes');
+  if (alertas.length === 0) {
+    container.innerHTML = '<div style="color:var(--text-muted);font-size:0.8rem">Sin alertas recientes.</div>';
+    return;
+  }
+  container.innerHTML = alertas.map(a => `
+    <div class="alerta-item">
+      <div class="alerta-item-dot" style="background:${COLORES[a.nivel]}"></div>
+      <span>${NOMBRES[a.nivel]} — Humedad ${a.humedad.toFixed(1)}%</span>
+      <span class="alerta-item-fecha">${a.fecha.substring(5)}</span>
+    </div>
+  `).join('');
+}
+
+// ── MAPA LEAFLET ──────────────────────────────────────────────
+let map, heatLayer;
+let currentLayer = 'humedad';
+
+function initMap() {
+  map = L.map('map', {
+    center: [-31.5, -55.5],
+    zoom: 9,
+    zoomControl: true,
+  });
+
+  // Pane para tiles satelitales (entre basemap y marcadores)
+  map.createPane('satellitePane');
+  map.getPane('satellitePane').style.zIndex = 250;
+
+  // Basemap oscuro CartoDB
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '© OpenStreetMap © CARTO',
+    maxZoom: 18,
+    pane: 'tilePane',
+  }).addTo(map);
+
+  // Puntos de alerta y calibración (encima de todo)
+  addDemoHeatPoints();
+  addCalibrationPoints();
+}
+
+function addDemoHeatPoints() {
+  // Puntos simulados distribuidos en el depto Rivera
+  const puntos = [];
+  const riveraBounds = [
+    [-30.0, -57.5], [-30.0, -53.5],
+    [-32.0, -53.5], [-32.0, -57.5]
+  ];
+
+  const seed = [
+    [-31.1, -55.5, 18], [-31.3, -55.2, 22], [-31.5, -55.8, 15],
+    [-31.7, -55.3, 28], [-31.2, -56.1, 12], [-31.8, -54.8, 35],
+    [-30.8, -55.6, 19], [-31.4, -56.3, 24], [-31.6, -54.5, 31],
+    [-31.0, -54.9, 42], [-31.9, -56.0, 16], [-30.6, -55.0, 55],
+    [-30.4, -56.2, 62], [-31.3, -57.0, 14], [-31.7, -56.8, 9],
+    [-30.9, -56.5, 48], [-31.5, -53.8, 38], [-30.5, -54.2, 67],
+    [-31.2, -54.0, 43], [-31.0, -57.2, 11],
+  ];
+
+  seed.forEach(([lat, lon, hum]) => {
+    const color = hum < 15 ? '#e74c3c' : hum < 25 ? '#e67e22' : hum < 50 ? '#f1c40f' : '#2ecc71';
+    L.circleMarker([lat, lon], {
+      radius: 14,
+      fillColor: color,
+      color: color,
+      weight: 1,
+      opacity: 0.6,
+      fillOpacity: 0.35,
+    })
+    .bindPopup(`
+      <div style="font-family:Inter,sans-serif;min-width:160px">
+        <strong style="color:${color}">Nivel: ${hum < 15 ? 'ROJO' : hum < 25 ? 'NARANJA' : hum < 50 ? 'AMARILLO' : 'VERDE'}</strong><br>
+        <span style="color:#aaa">Humedad S1:</span> <b>${hum.toFixed(1)}%</b><br>
+        <span style="color:#aaa">NDMI:</span> ${(hum/100 - 0.5).toFixed(3)}<br>
+        <span style="color:#aaa">Coord:</span> ${lat.toFixed(4)}, ${lon.toFixed(4)}
+      </div>
+    `)
+    .addTo(map);
+  });
+
+  // Polígono aproximado Rivera
+  L.polygon([
+    [-30.0, -57.5], [-30.0, -53.5],
+    [-32.0, -53.5], [-32.0, -57.5]
+  ], {
+    color: '#4a90d9',
+    weight: 2,
+    fill: false,
+    dashArray: '6 4',
+    opacity: 0.5,
+  }).addTo(map);
+}
+
+function addCalibrationPoints() {
+  const pts = [
+    { id: 'P1', lat: -31.4896, lon: -54.9933, desc: 'Suelo muy seco', vv: -16.92, ndmi: -0.33 },
+    { id: 'P2', lat: -31.4892, lon: -54.9887, desc: 'Suelo seco', vv: -13.49, ndmi: -0.11 },
+    { id: 'P3', lat: -31.5004, lon: -54.9907, desc: 'Humedad media', vv: -12.42, ndmi: 0.07 },
+    { id: 'P4', lat: -31.5045, lon: -54.9755, desc: 'Suelo húmedo', vv: -10.96, ndmi: 0.25 },
+    { id: 'P5', lat: -31.5026, lon: -55.0046, desc: 'Suelo muy húmedo', vv: -8.97, ndmi: 0.44 },
+  ];
+
+  pts.forEach(p => {
+    L.marker([p.lat, p.lon], {
+      icon: L.divIcon({
+        html: `<div style="background:#1a1d2e;border:2px solid #4a90d9;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#4a90d9;font-family:Inter,sans-serif">${p.id}</div>`,
+        iconSize: [22, 22],
+        iconAnchor: [11, 11],
+        className: '',
+      })
+    })
+    .bindPopup(`
+      <div style="font-family:Inter,sans-serif;min-width:180px">
+        <strong style="color:#4a90d9">${p.id} — Punto de Calibración</strong><br>
+        <span style="color:#aaa">Descripción:</span> ${p.desc}<br>
+        <span style="color:#aaa">VV (dB):</span> ${p.vv}<br>
+        <span style="color:#aaa">NDMI:</span> ${p.ndmi}<br>
+        <span style="color:#aaa">Fuente:</span> Díaz, G. 01/03/2026
+      </div>
+    `)
+    .addTo(map);
+  });
+}
+
+// ── LEYENDAS POR CAPA ─────────────────────────────────────────────────────
+const LAYER_LEGENDS = {
+  alerta: {
+    title: 'Nivel de Alerta · Rivera',
+    html: `
+      <div class="legend-item"><div class="legend-dot" style="background:#2ecc71"></div> Verde — Normal (&gt;50%)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#f1c40f"></div> Amarillo (25–50%)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#e67e22"></div> Naranja (15–25%)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#e74c3c"></div> Rojo (&lt;15%)</div>`
+  },
+  rgb: {
+    title: 'RGB — Color Natural S2',
+    html: `<div style="font-size:0.7rem;color:var(--text-muted);line-height:1.5">
+      Imagen óptica Sentinel-2 L2A<br>
+      <span style="color:rgba(136,146,164,0.6);font-family:monospace">R=B04 · G=B03 · B=B02</span><br>
+      Últimos 45 días · nubes &lt;50%
+    </div>`
+  },
+  ndvi: {
+    title: 'NDVI — Salud Vegetación',
+    html: `
+      <div class="legend-gradient" style="background:linear-gradient(to right,#a06428,#c8a000,#c8b400,#50b432,#006400)"></div>
+      <div class="legend-scale-labels">
+        <span>&lt;0 Suelo</span><span>0.2</span><span>0.5</span><span>&gt;0.7</span>
+      </div>
+      <div class="legend-formula">B08−B04 / B08+B04</div>
+      <div style="font-size:0.62rem;color:var(--text-muted);margin-top:3px">Salud y densidad de cultivos/pastizales</div>`
+  },
+  ndmi: {
+    title: 'NDMI — Humedad Foliar',
+    html: `
+      <div class="legend-gradient" style="background:linear-gradient(to right,#b44614,#f0a050,#50b4be,#0050d2)"></div>
+      <div class="legend-scale-labels">
+        <span>&lt;-0.3 Seco</span><span>0</span><span>&gt;0.3 Húmedo</span>
+      </div>
+      <div class="legend-formula">B08−B11 / B08+B11</div>
+      <div style="font-size:0.62rem;color:var(--text-muted);margin-top:3px">Estrés hídrico foliar (7–10 días antes)</div>`
+  },
+  ndwi: {
+    title: 'NDWI — Agua Superficial',
+    html: `
+      <div class="legend-gradient" style="background:linear-gradient(to right,#afa082,#82aac8,#0050dc)"></div>
+      <div class="legend-scale-labels">
+        <span>&lt;-0.3 Suelo</span><span>0</span><span>&gt;0.1 Agua</span>
+      </div>
+      <div class="legend-formula">B03−B08 / B03+B08</div>
+      <div style="font-size:0.62rem;color:var(--text-muted);margin-top:3px">Cuerpos de agua e inundaciones</div>`
+  },
+  savi: {
+    title: 'SAVI — Veg. Ajustada Suelo',
+    html: `
+      <div class="legend-gradient" style="background:linear-gradient(to right,#d2af82,#96c87d,#148200)"></div>
+      <div class="legend-scale-labels">
+        <span>&lt;0.1 Suelo</span><span>0.35</span><span>&gt;0.6 Densa</span>
+      </div>
+      <div class="legend-formula">(B08−B04)/(…+0.5)·1.5</div>
+      <div style="font-size:0.62rem;color:var(--text-muted);margin-top:3px">Ideal para pastizales / suelo variable</div>`
+  },
+  sar: {
+    title: 'SAR VV — Humedad Suelo',
+    html: `
+      <div class="legend-gradient" style="background:linear-gradient(to right,#dc5014,#5090be,#14bcd2)"></div>
+      <div class="legend-scale-labels">
+        <span>Seco −18dB</span><span>−13</span><span>Húmedo −8dB</span>
+      </div>
+      <div class="legend-formula">S1 VV · Calibración Díaz 2026</div>
+      <div style="font-size:0.62rem;color:var(--text-muted);margin-top:3px">Humedad suelo ~5 cm profundidad</div>`
+  }
+};
+
+// ── GESTIÓN DE CAPAS TILE ─────────────────────────────────────────────────
+let activeTileLayer = null;
+
+function setLayer(name, btn) {
+  currentLayer = name;
+
+  // Activar botón
+  document.querySelectorAll('.map-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+
+  // Eliminar capa tile anterior
+  if (activeTileLayer) {
+    map.removeLayer(activeTileLayer);
+    activeTileLayer = null;
+  }
+
+  const opacityWrap = document.getElementById('opacity-wrap');
+
+  if (name === 'alerta') {
+    // Modo alerta: solo marcadores de color, sin tile satelital
+    opacityWrap.style.display = 'none';
+    if (estadoActual) actualizarMapaConDatos(estadoActual);
+  } else {
+    // Modo satelital: cargar tiles reales del backend
+    opacityWrap.style.display = 'flex';
+    const loading = document.getElementById('map-tile-loading');
+
+    activeTileLayer = L.tileLayer(
+      `http://localhost:8002/api/tiles/${name}/{z}/{x}/{y}.png`,
+      {
+        pane:       'satellitePane',
+        maxZoom:    13,
+        minZoom:    7,
+        opacity:    parseFloat(document.getElementById('opacity-slider').value) / 100,
+        tileSize:   256,
+        attribution: `© Copernicus/ESA · ${name.toUpperCase()} · AgroClimaX`,
+      }
+    );
+
+    activeTileLayer.on('loading', () => { loading.style.display = 'block'; });
+    activeTileLayer.on('load',    () => { loading.style.display = 'none';  });
+    activeTileLayer.on('tileerror', () => { /* silencio — tile transparente del backend */ });
+
+    activeTileLayer.addTo(map);
+  }
+
+  // Actualizar leyenda
+  const legend = LAYER_LEGENDS[name] || LAYER_LEGENDS.alerta;
+  document.getElementById('legend-title').textContent    = legend.title;
+  document.getElementById('legend-content').innerHTML   = legend.html;
+}
+
+function setTileOpacity(val) {
+  document.getElementById('opacity-label').textContent = Math.round(val * 100) + '%';
+  if (activeTileLayer) activeTileLayer.setOpacity(val);
+}
+
+// ── FUNCIÓN MAPA con datos reales ─────────────────────────────
+function actualizarMapaConDatos(d) {
+  // Actualizar color de puntos en el mapa según nivel real
+  if (!map) return;
+  map.eachLayer(layer => {
+    if (layer instanceof L.CircleMarker) {
+      layer.setStyle({ fillColor: d.color, color: d.color });
+    }
+  });
+}
+
+// ── INIT ──────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', async () => {
+  initMap();
+  // Cargar datos reales de Copernicus
+  await cargarEstadoActual();
+  // Cargar histórico en paralelo (puede tardar más)
+  cargarHistorico();
+  // Refrescar cada 30 minutos
+  setInterval(cargarEstadoActual, 30 * 60 * 1000);
+});
+</script>
+</body>
+</html>
