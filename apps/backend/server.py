@@ -165,17 +165,65 @@ function evaluatePixel(s) {
 }""",
 
     "sar": """//VERSION=3
-// SAR VV (Sentinel-1 GRD) -> Retrodispersion -> Humedad suelo (Diaz 2026)
-// Rojo (muy seco, -18dB) -> Celeste (humedo, -8dB)
+// SAR Humedad de Suelo — Método Díaz 2026 completo
+// Pipeline: VV+VH → corrección vegetación → 5 puntos calibración → humedad%
+//
+// Leyenda:
+//   Azul       → agua libre
+//   Verde osc. → vegetación densa (suelo no observable)
+//   Rojo→Amar→Verde→Celeste → gradiente seco→húmedo
+//
+// Calibración: Rivera, Uruguay, 1/3/2026
+//   P1 muy seco   VV=-16.92 dB  NDMI=-0.33
+//   P2 seco        VV=-13.49 dB  NDMI=-0.11
+//   P3 med         VV=-12.42 dB  NDMI= 0.07
+//   P4 húmedo      VV=-10.96 dB  NDMI= 0.25
+//   P5 muy húmedo  VV= -8.97 dB  NDMI= 0.44
+//
+// humedad% = 100 × (NDMI − (−0.5)) / (0.5 − (−0.5))
 function setup() {
-  return { input:[{bands:["VV"],units:"LINEAR_POWER"}], output:{bands:4,sampleType:"UINT8"} };
+  return { input:[{bands:["VV","VH"],units:"LINEAR_POWER"}], output:{bands:4,sampleType:"UINT8"} };
+}
+// Matriz de calibración Díaz 2026
+var cal = [[-16.92,-0.33],[-13.49,-0.11],[-12.42,0.07],[-10.96,0.25],[-8.97,0.44]];
+// VV_suelo_dB → NDMI por interpolación lineal con extrapolación plana
+function vvANdmi(vv) {
+  var x=cal.map(function(p){return p[0];}), y=cal.map(function(p){return p[1];});
+  for (var i=1;i<y.length;i++) if(y[i]<y[i-1]) y[i]=y[i-1]; // monotonicidad
+  if (vv<=x[0]) return y[0];
+  if (vv>=x[x.length-1]) return y[y.length-1];
+  for (var i=0;i<x.length-1;i++) {
+    if (vv>=x[i]&&vv<=x[i+1]) { var t=(vv-x[i])/(x[i+1]-x[i]); return y[i]+t*(y[i+1]-y[i]); }
+  }
+  return y[0];
+}
+// NDMI → humedad % (escala Díaz: ndmi_min=-0.5, ndmi_max=0.5)
+function ndmiAHumedad(ndmi) { return Math.min(100,Math.max(0,100*(ndmi+0.5)/1.0)); }
+// Color: rojo (seco) → amarillo → verde → celeste (húmedo)
+function humedadAColor(h) {
+  var r,g,b;
+  if (h<25)      { var t=h/25;       r=220; g=Math.round(40+80*t);  b=20; }
+  else if (h<50) { var t=(h-25)/25;  r=Math.round(220*(1-t)+240*t); g=Math.round(120+80*t);  b=20; }
+  else if (h<75) { var t=(h-50)/25;  r=Math.round(240*(1-t)+30*t);  g=Math.round(200+20*t);  b=Math.round(20+60*t); }
+  else           { var t=(h-75)/25;  r=Math.round(30*(1-t));         g=Math.round(220-60*t);  b=Math.round(80+140*t); }
+  return [r,g,b,220];
 }
 function evaluatePixel(s) {
-  if (!s.VV || s.VV <= 0) return [0,0,0,0];
-  var db = 10 * Math.log10(s.VV);
-  if (db < -22 || db > 0) return [0,0,0,0];
-  var t = Math.max(0, Math.min(1, (db+18)/10));
-  return [Math.round(220*(1-t)), Math.round(80+80*t), Math.round(20+200*t), 220];
+  var vv=s.VV, vh=s.VH;
+  if (!vv||!vh||vv<=0||vh<=0) return [0,0,0,0];
+  var vv_dB=10*Math.log10(vv+1e-10), vh_dB=10*Math.log10(vh+1e-10);
+  // 1. Agua libre
+  if (vv_dB<-18&&vh_dB<-23) return [20,80,200,200];
+  // 2. Vegetación densa: suelo no observable
+  var rvi=vh/(vv+vh);
+  var veg=Math.min(1,Math.max(0,(rvi-0.1)/0.4));
+  if (veg>0.7) return [30,110,30,180];
+  // 3. Corrección de vegetación sobre VV (Díaz 2026)
+  var vv_suelo_dB=vv_dB-veg*2.5;
+  // 4. Calibración: vv_suelo_dB → NDMI → humedad%
+  var ndmi=vvANdmi(vv_suelo_dB);
+  var h=ndmiAHumedad(ndmi);
+  return humedadAColor(h);
 }""",
 }
 

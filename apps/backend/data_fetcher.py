@@ -154,17 +154,27 @@ function evaluatePixel(s) {
 
 def fetch_s1_stats(token: str, fecha_inicio: str, fecha_fin: str) -> dict:
     """
-    Descarga estadísticas de retrodispersión VV de Sentinel-1 para Rivera.
-    Convierte VV (linear) → dB → estima humedad usando calibración Díaz 2026.
+    Descarga estadísticas de Sentinel-1 para Rivera.
+    Implementa el método Díaz 2026 completo por píxel:
+      - VV + VH en LINEAR_POWER
+      - Detección de agua libre (VV y VH muy bajos)
+      - Estimación de vegetación via RVI = VH/(VV+VH)
+      - Exclusión de vegetación densa (suelo no observable, RVI > 0.7)
+      - Corrección de vegetación: vv_suelo_dB = vv_dB - veg * 2.5
+    Las estadísticas resultantes son sobre vv_suelo_dB, ya corregido.
     """
     STAT_URL = "https://sh.dataspace.copernicus.eu/api/v1/statistics"
     headers  = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
+    # Evalscript fiel al método Díaz 2026:
+    # retorna vv_suelo_dB (VV corregido por vegetación), excluyendo agua y veg densa
     evalscript_vv = """
 //VERSION=3
+// Método Díaz 2026 — pipeline completo por píxel
+// Salida: vv_suelo_dB (VV corregido por vegetación, sin agua, sin veg densa)
 function setup() {
   return {
-    input: [{ bands: ["VV"], units: "LINEAR_POWER" }],
+    input: [{ bands: ["VV", "VH"], units: "LINEAR_POWER" }],
     output: [
       { id: "default",  bands: 1, sampleType: "FLOAT32" },
       { id: "dataMask", bands: 1, sampleType: "UINT8"   }
@@ -172,10 +182,19 @@ function setup() {
   };
 }
 function evaluatePixel(s) {
-  if (!s.VV || s.VV <= 0) return { default: [NaN], dataMask: [0] };
-  var vv_db = 10 * Math.log10(s.VV);
-  if (vv_db < -22) return { default: [NaN], dataMask: [0] };
-  return { default: [vv_db], dataMask: [1] };
+  var vv = s.VV; var vh = s.VH;
+  if (!vv || !vh || vv <= 0 || vh <= 0) return { default: [NaN], dataMask: [0] };
+  var vv_dB = 10 * Math.log10(vv);
+  var vh_dB = 10 * Math.log10(vh);
+  // Agua libre: retrodispersión especular muy baja en ambas polarizaciones
+  if (vv_dB < -18 && vh_dB < -23) return { default: [NaN], dataMask: [0] };
+  // Vegetación densa: suelo no observable
+  var rvi = vh / (vv + vh);
+  var veg = Math.min(1, Math.max(0, (rvi - 0.1) / 0.4));
+  if (veg > 0.7) return { default: [NaN], dataMask: [0] };
+  // Corrección de vegetación sobre VV
+  var vv_suelo_dB = vv_dB - veg * 2.5;
+  return { default: [vv_suelo_dB], dataMask: [1] };
 }
 """
 
@@ -224,10 +243,11 @@ function evaluatePixel(s) {
         return {"error": "Sin datos S1 en el período", "fuente": "sentinel-1-grd"}
 
     ultimo = intervalos[-1]["outputs"]["default"]["bands"]["B0"]["stats"]
+    # vv_suelo_db ya viene corregido por vegetación (evalscript aplica Díaz 2026 por píxel)
     vv_db_media = ultimo.get("mean", -13.0)
 
-    # Calibración Díaz 2026: 5 puntos Rivera
-    # VV (dB) → NDMI → % humedad
+    # Calibración Díaz 2026: 5 puntos Rivera 1/3/2026
+    # vv_suelo_dB → NDMI (interpolación lineal) → humedad %
     puntos = [(-16.92, -0.33), (-13.49, -0.11), (-12.42, 0.07), (-10.96, 0.25), (-8.97, 0.44)]
     xs = [p[0] for p in puntos]
     ys = [p[1] for p in puntos]
@@ -281,7 +301,7 @@ function evaluatePixel(s) {
         "fuente":                "sentinel-1-grd",
         "fecha_inicio":          fecha_inicio,
         "fecha_fin":             fecha_fin,
-        "vv_db_media":           round(vv_db_media, 3),
+        "vv_suelo_db_media":     round(vv_db_media, 3),  # ya corregido por vegetación
         "ndmi_estimado":         round(ndmi_estimado, 4),
         "humedad_media":         round(humedad_media, 1),
         "humedad_p10":           round(ndmi_a_humedad(ndmi_p10), 1),
