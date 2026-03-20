@@ -874,9 +874,9 @@ function normalizar(data) {
     ndmi_medio:      ndmi,
     spi_30d:         spi,
     spi_categoria:   era5.spi_categoria  ?? res.spi_categoria ?? 'Sin datos',
-    pct_area_afectada: s1.cobertura_pct ?? 100,
-    dias_deficit:    0,
-    es_prolongada:   false,
+    pct_area_afectada: s1.pct_area_bajo_estres ?? s1.cobertura_pct ?? 100,
+    dias_deficit:    data.dias_deficit    ?? 0,
+    es_prolongada:   data.es_prolongada   ?? false,
     descripcion:     alerta.descripcion  ?? '',
     accion:          alerta.accion       ?? '',
     tipo:            alerta.nivel_s1 && alerta.nivel_s2
@@ -900,6 +900,7 @@ function renderTodo(d) {
   renderBarras(d);
   renderSPI(d);
   actualizarMapaConDatos(d);
+  actualizarMarcadorRivera(d);
 }
 
 // ── BANNER ────────────────────────────────────────────────────
@@ -1082,6 +1083,41 @@ function renderAlertasRecientes(hist) {
 // ── MAPA LEAFLET ──────────────────────────────────────────────
 let map, heatLayer;
 let currentLayer = 'humedad';
+let riveraMarker = null;
+
+function agregarMarcadorRivera() {
+  const iconHtml = `<div id="rivera-marker-icon" style="
+    background:var(--surface);border:2px solid #4a90d9;border-radius:8px;
+    padding:5px 8px;font-family:Inter,sans-serif;font-size:0.7rem;
+    color:var(--text);white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.4);
+    min-width:90px;text-align:center">
+    <div style="font-weight:700;color:#4a90d9">📍 Rivera</div>
+    <div id="marker-humedad" style="color:#f1c40f">Cargando...</div>
+  </div>`;
+
+  riveraMarker = L.marker([-30.9028, -55.5408], {
+    icon: L.divIcon({
+      html: iconHtml,
+      iconSize: [100, 52],
+      iconAnchor: [50, 26],
+      className: ''
+    })
+  }).addTo(map);
+}
+
+function actualizarMarcadorRivera(d) {
+  const el = document.getElementById('marker-humedad');
+  if (el && d) {
+    el.innerHTML = `
+      <span style="color:${d.color}">● ${d.nivel}</span><br>
+      <span style="color:#aaa">H:</span> ${d.humedad_s1_pct.toFixed(1)}%
+      <span style="color:#aaa">NDMI:</span> ${d.ndmi_medio.toFixed(3)}
+    `;
+    // Update icon border color
+    const icon = document.getElementById('rivera-marker-icon');
+    if (icon) icon.style.borderColor = d.color;
+  }
+}
 
 function initMap() {
   map = L.map('map', {
@@ -1101,61 +1137,30 @@ function initMap() {
     pane: 'tilePane',
   }).addTo(map);
 
-  // Puntos de alerta y calibración (encima de todo)
-  addDemoHeatPoints();
+  // Puntos de calibración reales (Díaz 2026)
   addCalibrationPoints();
-}
 
-function addDemoHeatPoints() {
-  // Puntos simulados distribuidos en el depto Rivera
-  const puntos = [];
-  const riveraBounds = [
-    [-30.0, -57.5], [-30.0, -53.5],
-    [-32.0, -53.5], [-32.0, -57.5]
-  ];
-
-  const seed = [
-    [-31.1, -55.5, 18], [-31.3, -55.2, 22], [-31.5, -55.8, 15],
-    [-31.7, -55.3, 28], [-31.2, -56.1, 12], [-31.8, -54.8, 35],
-    [-30.8, -55.6, 19], [-31.4, -56.3, 24], [-31.6, -54.5, 31],
-    [-31.0, -54.9, 42], [-31.9, -56.0, 16], [-30.6, -55.0, 55],
-    [-30.4, -56.2, 62], [-31.3, -57.0, 14], [-31.7, -56.8, 9],
-    [-30.9, -56.5, 48], [-31.5, -53.8, 38], [-30.5, -54.2, 67],
-    [-31.2, -54.0, 43], [-31.0, -57.2, 11],
-  ];
-
-  seed.forEach(([lat, lon, hum]) => {
-    const color = hum < 15 ? '#e74c3c' : hum < 25 ? '#e67e22' : hum < 50 ? '#f1c40f' : '#2ecc71';
-    L.circleMarker([lat, lon], {
-      radius: 14,
-      fillColor: color,
-      color: color,
-      weight: 1,
-      opacity: 0.6,
-      fillOpacity: 0.35,
+  // Cargar límite real de Rivera desde GADM
+  fetch('http://localhost:8002/api/geojson/rivera')
+    .then(r => r.json())
+    .then(geojson => {
+      L.geoJSON(geojson, {
+        style: {
+          color: '#4a90d9',
+          weight: 2,
+          fill: false,
+          dashArray: '6 4',
+          opacity: 0.6,
+        }
+      }).addTo(map);
     })
-    .bindPopup(`
-      <div style="font-family:Inter,sans-serif;min-width:160px">
-        <strong style="color:${color}">Nivel: ${hum < 15 ? 'ROJO' : hum < 25 ? 'NARANJA' : hum < 50 ? 'AMARILLO' : 'VERDE'}</strong><br>
-        <span style="color:#aaa">Humedad S1:</span> <b>${hum.toFixed(1)}%</b><br>
-        <span style="color:#aaa">NDMI:</span> ${(hum/100 - 0.5).toFixed(3)}<br>
-        <span style="color:#aaa">Coord:</span> ${lat.toFixed(4)}, ${lon.toFixed(4)}
-      </div>
-    `)
-    .addTo(map);
-  });
+    .catch(() => console.warn('No se pudo cargar límite de Rivera'));
 
-  // Polígono aproximado Rivera
-  L.polygon([
-    [-30.0, -57.5], [-30.0, -53.5],
-    [-32.0, -53.5], [-32.0, -57.5]
-  ], {
-    color: '#4a90d9',
-    weight: 2,
-    fill: false,
-    dashArray: '6 4',
-    opacity: 0.5,
-  }).addTo(map);
+  // Marcador Rivera con datos en tiempo real
+  agregarMarcadorRivera();
+
+  // Activar capa SAR por defecto (humedad suelo real Sentinel-1)
+  setTimeout(() => setLayer('sar', document.getElementById('btn-sar')), 500);
 }
 
 function addCalibrationPoints() {
@@ -1318,13 +1323,8 @@ function setTileOpacity(val) {
 
 // ── FUNCIÓN MAPA con datos reales ─────────────────────────────
 function actualizarMapaConDatos(d) {
-  // Actualizar color de puntos en el mapa según nivel real
   if (!map) return;
-  map.eachLayer(layer => {
-    if (layer instanceof L.CircleMarker) {
-      layer.setStyle({ fillColor: d.color, color: d.color });
-    }
-  });
+  actualizarMarcadorRivera(d);
 }
 
 // ── INIT ──────────────────────────────────────────────────────

@@ -27,42 +27,6 @@ CDS_URL     = os.getenv("CDS_API_URL", "https://cds.climate.copernicus.eu/api")
 # BBox más ajustada al departamento de Rivera
 RIVERA_BBOX = [-56.5, -31.5, -54.5, -30.0]  # [W, S, E, N]
 
-# ── Evalscripts ──────────────────────────────────────────────
-EVALSCRIPT_NDMI = """
-//VERSION=3
-function setup() {
-  return {
-    input: ["B08", "B11", "SCL", "dataMask"],
-    output: [
-      { id: "ndmi",    bands: 1, sampleType: "FLOAT32" },
-      { id: "valido",  bands: 1, sampleType: "UINT8"   }
-    ]
-  };
-}
-function evaluatePixel(s) {
-  // Máscara: eliminar nubes (SCL 8,9,10), sombras (3), nieve (11)
-  var nubes = [3,8,9,10,11].indexOf(s.SCL) >= 0;
-  if (!s.dataMask || nubes) return { ndmi: [NaN], valido: [0] };
-  var ndmi = (s.B08 - s.B11) / (s.B08 + s.B11 + 1e-6);
-  return { ndmi: [ndmi], valido: [1] };
-}
-"""
-
-EVALSCRIPT_S1 = """
-//VERSION=3
-function setup() {
-  return {
-    input: [{ datasource: "S1", bands: ["VV","VH"], units: "LINEAR_POWER" }],
-    output: { bands: 2, sampleType: "FLOAT32" }
-  };
-}
-function evaluatePixel(samples) {
-  var s = samples.S1[0];
-  return [s.VV, s.VH];
-}
-"""
-
-
 def get_token() -> str:
     """Obtiene token OAuth2 de CDSE."""
     r = httpx.post(TOKEN_URL, data={
@@ -286,101 +250,161 @@ function evaluatePixel(s) {
     ndmi_p10 = interpolar(ultimo["percentiles"].get("10.0", vv_db_media))
     ndmi_p90 = interpolar(ultimo["percentiles"].get("90.0", vv_db_media))
 
+    # Calcular % área bajo estrés usando distribución de percentiles
+    h_p10 = ndmi_a_humedad(interpolar(ultimo["percentiles"].get("10.0", vv_db_media)))
+    h_p25 = ndmi_a_humedad(interpolar(ultimo["percentiles"].get("25.0", vv_db_media)))
+    h_p50 = ndmi_a_humedad(interpolar(ultimo["percentiles"].get("50.0", vv_db_media)))
+    h_p75 = ndmi_a_humedad(interpolar(ultimo["percentiles"].get("75.0", vv_db_media)))
+    h_p90 = ndmi_a_humedad(interpolar(ultimo["percentiles"].get("90.0", vv_db_media)))
+
+    UMBRAL_ALERTA = 50.0  # % humedad umbral VERDE/AMARILLO
+
+    pct_bajo_estres = 0.0
+    if h_p90 <= UMBRAL_ALERTA:
+        pct_bajo_estres = 90.0
+    elif h_p10 >= UMBRAL_ALERTA:
+        pct_bajo_estres = 10.0
+    elif h_p50 <= UMBRAL_ALERTA:
+        # Entre p50 y p75
+        t = (UMBRAL_ALERTA - h_p50) / max(h_p75 - h_p50, 1.0)
+        pct_bajo_estres = 50.0 + t * 25.0
+    elif h_p25 <= UMBRAL_ALERTA:
+        # Entre p25 y p50
+        t = (UMBRAL_ALERTA - h_p25) / max(h_p50 - h_p25, 1.0)
+        pct_bajo_estres = 25.0 + t * 25.0
+    else:
+        # Entre p10 y p25
+        t = (UMBRAL_ALERTA - h_p10) / max(h_p25 - h_p10, 1.0)
+        pct_bajo_estres = 10.0 + t * 15.0
+
     return {
-        "fuente":          "sentinel-1-grd",
-        "fecha_inicio":    fecha_inicio,
-        "fecha_fin":       fecha_fin,
-        "vv_db_media":     round(vv_db_media, 3),
-        "ndmi_estimado":   round(ndmi_estimado, 4),
-        "humedad_media":   round(humedad_media, 1),
-        "humedad_p10":     round(ndmi_a_humedad(ndmi_p10), 1),
-        "humedad_p90":     round(ndmi_a_humedad(ndmi_p90), 1),
-        "cobertura_pct":   round(100 * (1 - ultimo.get("noDataCount", 0) /
-                           max(ultimo.get("sampleCount", 1), 1)), 1),
-        "calibracion":     "Diaz_Rivera_2026_5pts"
+        "fuente":                "sentinel-1-grd",
+        "fecha_inicio":          fecha_inicio,
+        "fecha_fin":             fecha_fin,
+        "vv_db_media":           round(vv_db_media, 3),
+        "ndmi_estimado":         round(ndmi_estimado, 4),
+        "humedad_media":         round(humedad_media, 1),
+        "humedad_p10":           round(ndmi_a_humedad(ndmi_p10), 1),
+        "humedad_p90":           round(ndmi_a_humedad(ndmi_p90), 1),
+        "cobertura_pct":         round(100 * (1 - ultimo.get("noDataCount", 0) /
+                                 max(ultimo.get("sampleCount", 1), 1)), 1),
+        "pct_area_bajo_estres":  round(min(100.0, max(0.0, pct_bajo_estres)), 1),
+        "calibracion":           "Diaz_Rivera_2026_5pts"
+    }
+
+
+def fetch_precipitacion_openmeteo(lat: float = -31.5, lon: float = -55.5, dias: int = 730) -> dict:
+    """
+    Descarga precipitación diaria histórica para Rivera desde Open-Meteo (ERA5-Land).
+    Sin autenticación, respuesta en <2s, datos desde 1940.
+    """
+    fecha_fin = date.today()
+    fecha_inicio = fecha_fin - timedelta(days=dias)
+
+    url = (
+        f"https://archive-api.open-meteo.com/v1/archive"
+        f"?latitude={lat}&longitude={lon}"
+        f"&start_date={fecha_inicio}&end_date={fecha_fin}"
+        f"&daily=precipitation_sum&timezone=America%2FMontevideo"
+    )
+
+    r = httpx.get(url, timeout=30)
+    if r.status_code != 200:
+        return {"error": f"Open-Meteo HTTP {r.status_code}"}
+
+    data = r.json()
+    fechas = data["daily"]["time"]
+    precip = data["daily"]["precipitation_sum"]
+
+    # Replace None with 0.0
+    precip = [p if p is not None else 0.0 for p in precip]
+
+    return {"fechas": fechas, "precipitacion_mm": precip}
+
+
+def calcular_spi_30(precip_data: dict) -> dict:
+    """
+    Calcula SPI-30 (Standardized Precipitation Index, ventana 30 días)
+    usando precipitación diaria de Open-Meteo.
+
+    Metodología:
+    1. Sumar ventanas deslizantes de 30 días
+    2. Calcular climatología mensual (media + std) del período histórico
+    3. SPI = (precip_30d_actual - media_mes) / std_mes
+    """
+    if "error" in precip_data:
+        return {"error": precip_data["error"], "spi_30d": 0.0, "spi_categoria": "Sin datos"}
+
+    fechas = precip_data["fechas"]
+    precip = precip_data["precipitacion_mm"]
+
+    if len(precip) < 60:
+        return {"error": "Insuficientes datos históricos", "spi_30d": 0.0, "spi_categoria": "Sin datos"}
+
+    # Calcular sumas acumuladas de 30 días
+    sumas_30d = []
+    meses_30d = []
+    for i in range(29, len(precip)):
+        s = sum(precip[i-29:i+1])
+        sumas_30d.append(s)
+        meses_30d.append(int(fechas[i][5:7]))  # month number
+
+    # Climatología mensual desde el histórico
+    from collections import defaultdict
+    por_mes = defaultdict(list)
+    for s, m in zip(sumas_30d, meses_30d):
+        por_mes[m].append(s)
+
+    # SPI del período más reciente
+    mes_actual = int(fechas[-1][5:7])
+    datos_mes = por_mes.get(mes_actual, [])
+
+    if len(datos_mes) < 2:
+        return {"spi_30d": 0.0, "spi_categoria": "Normal", "fuente": "open-meteo-era5land", "nota": "Datos insuficientes para el mes"}
+
+    media = sum(datos_mes) / len(datos_mes)
+    variance = sum((x - media) ** 2 for x in datos_mes) / (len(datos_mes) - 1)
+    std = variance ** 0.5
+
+    if std < 1.0:
+        std = 1.0  # evitar division por cero
+
+    precip_30d_actual = sumas_30d[-1]
+    spi = (precip_30d_actual - media) / std
+    spi = max(-3.0, min(3.0, round(spi, 3)))
+
+    return {
+        "fuente": "open-meteo-era5land",
+        "lat": -31.5,
+        "lon": -55.5,
+        "precip_30d_mm": round(precip_30d_actual, 1),
+        "media_historica_30d_mm": round(media, 1),
+        "std_historica_mm": round(std, 1),
+        "spi_30d": spi,
+        "spi_categoria": clasificar_spi(spi),
+        "n_anios_historico": round(len(por_mes.get(mes_actual, [])), 0),
     }
 
 
 def fetch_era5_precipitacion() -> dict:
     """
-    Obtiene precipitación mensual ERA5 para Rivera via CDS API (nueva versión).
-    Calcula SPI-30 aproximado.
+    Obtiene SPI-30 real para Rivera via Open-Meteo (ERA5-Land).
+    Reemplaza el job asíncrono CDS que nunca devolvía resultados.
     """
-    headers = {"PRIVATE-TOKEN": CDS_API_KEY, "Content-Type": "application/json"}
-
-    hoy = date.today()
-    # ERA5 monthly tiene un lag de ~2 meses
-    anio  = hoy.year if hoy.month > 3 else hoy.year - 1
-    mes   = hoy.month - 2 if hoy.month > 2 else 10 + hoy.month
-
-    # Pedir 12 meses para calcular SPI
-    meses = []
-    for i in range(12):
-        m = mes - i
-        a = anio
-        while m <= 0:
-            m += 12
-            a -= 1
-        meses.append((a, m))
-
-    body = {
-        "dataset_id": "reanalysis-era5-single-levels-monthly-means",
-        "product_type": ["monthly_averaged_reanalysis"],
-        "variable": ["total_precipitation"],
-        "year":  list(set(str(m[0]) for m in meses)),
-        "month": [str(m[1]).zfill(2) for m in meses],
-        "time":  ["00:00"],
-        "area":  [-30.0, -57.5, -32.0, -53.5],  # Rivera BBox (N,W,S,E)
-        "format": "json",
-        "data_format": "netcdf",
-    }
-
     try:
-        # Solicitar datos (puede tardar, hacemos submit + poll)
-        r = httpx.post(f"{CDS_URL}/retrieve", headers=headers, json=body, timeout=30)
-        if r.status_code in [200, 202]:
-            job = r.json()
-            job_id = job.get("request_id") or job.get("jobID", "")
-            return {
-                "fuente": "era5-monthly",
-                "estado": "solicitado",
-                "job_id": job_id,
-                "nota": "ERA5 requiere procesamiento async. Disponible en ~2 min."
-            }
-        else:
-            # Usar estimación basada en climatología Uruguay (fallback con datos reales)
-            return _spi_climatologia_uruguay()
+        precip_data = fetch_precipitacion_openmeteo()
+        if "error" in precip_data:
+            raise ValueError(precip_data["error"])
+        return calcular_spi_30(precip_data)
     except Exception as e:
-        return _spi_climatologia_uruguay()
-
-
-def _spi_climatologia_uruguay() -> dict:
-    """
-    SPI estimado con climatología histórica ERA5 para Rivera.
-    Precipitación mensual histórica 1991-2020 (mm) para Rivera.
-    """
-    # Precipitación media mensual climatológica ERA5 Rivera 1991-2020 (mm/mes)
-    precip_climatol = {
-        1: 112, 2: 98,  3: 105, 4: 95,
-        5: 88,  6: 82,  7: 78,  8: 85,
-        9: 90,  10: 98, 11: 105, 12: 110
-    }
-    mes_actual = date.today().month
-    media_mes  = precip_climatol.get(mes_actual, 95)
-    std_mes    = media_mes * 0.35  # CV ~35% típico Uruguay
-
-    # Estimación SPI basada en déficit observado (actualizar con dato real cuando ERA5 responda)
-    # Por ahora: SPI negativo consistente con la sequía observada en S1/S2
-    spi_estimado = -1.72  # Consistente con datos S1/S2 actuales
-
-    return {
-        "fuente":         "era5-climatologia-1991-2020",
-        "mes":            mes_actual,
-        "precip_media_mm": media_mes,
-        "spi_30d":        spi_estimado,
-        "spi_categoria":  clasificar_spi(spi_estimado),
-        "nota":           "SPI basado en climatología ERA5 Rivera. ERA5 real en procesamiento."
-    }
+        # Fallback: SPI neutro con nota de error, NO un valor hardcodeado
+        return {
+            "fuente": "fallback-sin-datos",
+            "spi_30d": 0.0,
+            "spi_categoria": clasificar_spi(0.0),
+            "error": str(e)[:120],
+            "nota": "No se pudo calcular SPI. Verificar conexión a Open-Meteo."
+        }
 
 
 def clasificar_spi(spi: float) -> str:

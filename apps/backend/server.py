@@ -211,6 +211,30 @@ def save_cache():
 load_cache()
 
 
+def _calcular_deficit_desde_cache(cache: dict) -> dict:
+    """
+    Estima días en déficit consecutivos desde la serie histórica cacheada.
+    Si no hay histórico, usa solo el dato actual.
+    """
+    serie = cache.get("serie_historica", [])
+    if not serie:
+        # Solo tenemos el dato actual
+        humedad = cache.get("resumen", {}).get("humedad_s1_pct", 100)
+        nivel_actual = 3 if humedad < 15 else 2 if humedad < 25 else 1 if humedad < 50 else 0
+        dias = 5 if nivel_actual >= 1 else 0
+        return {"dias_deficit": dias, "es_prolongada": False}
+
+    periodos = 0
+    for punto in reversed(serie):  # de más reciente a más antiguo
+        if punto.get("nivel", 0) >= 1:
+            periodos += 1
+        else:
+            break
+
+    dias = periodos * 5
+    return {"dias_deficit": dias, "es_prolongada": dias >= 25}
+
+
 # ── Endpoints JSON ────────────────────────────────────────────────────────────
 
 @app.get("/api/estado-actual")
@@ -222,6 +246,14 @@ async def estado_actual():
     try:
         resultado = await asyncio.to_thread(run_pipeline)
         _cache.update(resultado)
+        # Calcular deficit consecutivo desde cache (usa serie_historica si existe)
+        try:
+            deficit_info = _calcular_deficit_desde_cache(_cache)
+            resultado.update(deficit_info)
+            _cache.update(deficit_info)
+        except Exception:
+            resultado.setdefault("dias_deficit", 0)
+            resultado.setdefault("es_prolongada", False)
         save_cache()
         return JSONResponse(resultado)
     except Exception as e:
@@ -257,6 +289,9 @@ async def historico(dias: int = 30):
                     "nivel":       nivel,
                 })
         serie.sort(key=lambda x: x["fecha"])
+        # Save serie to cache so deficit calculation can use it
+        _cache["serie_historica"] = serie
+        save_cache()
         return JSONResponse({"departamento": "Rivera", "datos": serie})
     except Exception as e:
         return JSONResponse({"error": str(e), "datos": []}, status_code=500)
@@ -346,6 +381,71 @@ async def serve_tile(layer: str, z: int, x: int, y: int):
         media_type="image/png",
         headers={"Access-Control-Allow-Origin": "*"},
     )
+
+
+GADM_RIVERA_CACHE = Path(__file__).parent / ".geojson_rivera.json"
+# Nivel 1 = departamentos de Uruguay (límite del departamento completo)
+GADM_URL = "https://geodata.ucdavis.edu/gadm/gadm4.1/json/gadm41_URY_1.json"
+
+@app.get("/api/geojson/rivera")
+async def geojson_rivera():
+    """
+    Devuelve el GeoJSON del límite administrativo real del departamento de Rivera (GADM 4.1 nivel 1).
+    Cachea en disco indefinidamente (los límites no cambian).
+    """
+    # Usar cache si existe
+    if GADM_RIVERA_CACHE.exists():
+        return JSONResponse(json.loads(GADM_RIVERA_CACHE.read_text(encoding="utf-8")))
+
+    try:
+        # Descargar GADM Uruguay nivel 1 (departamentos)
+        resp = await asyncio.to_thread(
+            lambda: requests.get(GADM_URL, timeout=60)
+        )
+        if resp.status_code != 200:
+            raise ValueError(f"GADM HTTP {resp.status_code}")
+
+        gadm = resp.json()
+
+        # En nivel 1: NAME_1 = nombre del departamento
+        rivera_feature = None
+        for feature in gadm.get("features", []):
+            props = feature.get("properties", {})
+            if props.get("NAME_1", "").lower() == "rivera":
+                rivera_feature = feature
+                break
+
+        if not rivera_feature:
+            raise ValueError("Departamento Rivera no encontrado en GADM nivel 1")
+
+        geojson = {
+            "type": "FeatureCollection",
+            "features": [rivera_feature]
+        }
+
+        GADM_RIVERA_CACHE.write_text(json.dumps(geojson), encoding="utf-8")
+        return JSONResponse(geojson)
+
+    except Exception as e:
+        # Fallback: polígono simplificado del límite real de Rivera
+        fallback = {
+            "type": "FeatureCollection",
+            "features": [{
+                "type": "Feature",
+                "properties": {"NAME_2": "Rivera", "fuente": "fallback-aproximado"},
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[
+                        [-57.642, -30.145], [-56.824, -30.000], [-55.971, -30.110],
+                        [-55.198, -30.257], [-54.610, -30.383], [-54.178, -30.695],
+                        [-53.777, -31.076], [-54.018, -31.514], [-54.572, -31.828],
+                        [-55.103, -31.976], [-55.739, -31.857], [-56.368, -31.720],
+                        [-56.969, -31.486], [-57.430, -31.165], [-57.642, -30.145]
+                    ]]
+                }
+            }]
+        }
+        return JSONResponse(fallback)
 
 
 @app.get("/api/health")
