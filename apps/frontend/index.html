@@ -801,7 +801,12 @@
 
 <script>
 // ── API REAL — Copernicus CDSE ─────────────────────────────────
-const API_BASE = 'http://localhost:8002/api';
+// API_BASE: en producción usa URL relativa (FastAPI sirve el frontend).
+// En desarrollo local, override via ?api=http://localhost:8002 en la URL.
+const _urlParams = new URLSearchParams(window.location.search);
+const API_BASE = _urlParams.get('api') || (window.location.port === '' || window.location.port === '80' || window.location.port === '443'
+  ? '/api'
+  : 'http://localhost:8002/api');
 const COLORES  = { 0: '#2ecc71', 1: '#f1c40f', 2: '#e67e22', 3: '#e74c3c' };
 const NOMBRES  = { 0: 'VERDE', 1: 'AMARILLO', 2: 'NARANJA', 3: 'ROJO' };
 
@@ -828,7 +833,7 @@ async function cargarEstadoActual() {
     renderTodo(estadoActual);
   } catch(e) {
     document.getElementById('alerta-banner').innerHTML =
-      `<span style="color:#e74c3c">Error conectando con API: ${e.message}. Verifique que el servidor esté corriendo en puerto 8002.</span>`;
+      `<span style="color:#e74c3c">Error conectando con API: ${e.message}. Verifique que el servidor esté accesible en ${API_BASE}.</span>`;
   }
 }
 
@@ -1141,7 +1146,7 @@ function initMap() {
   addCalibrationPoints();
 
   // Cargar límite real de Rivera desde GADM
-  fetch('http://localhost:8002/api/geojson/rivera')
+  fetch(`${API_BASE}/geojson/rivera`)
     .then(r => r.json())
     .then(geojson => {
       L.geoJSON(geojson, {
@@ -1292,7 +1297,7 @@ function setLayer(name, btn) {
     const loading = document.getElementById('map-tile-loading');
 
     activeTileLayer = L.tileLayer(
-      `http://localhost:8002/api/tiles/${name}/{z}/{x}/{y}.png`,
+      `${API_BASE}/tiles/${name}/{z}/{x}/{y}.png`,
       {
         pane:       'satellitePane',
         maxZoom:    13,

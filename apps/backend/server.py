@@ -9,7 +9,8 @@ from datetime import date, timedelta
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, FileResponse
+from fastapi.staticfiles import StaticFiles
 import uvicorn
 
 from data_fetcher import run_pipeline, get_token, fetch_ndmi_s2, fetch_s1_stats
@@ -499,6 +500,17 @@ async def geojson_rivera():
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "sistema": "AgroClimaX", "version": "0.2.0"}
+
+
+# ── Frontend estático ─────────────────────────────────────────────────────────
+# Sirve el dashboard desde /  (tanto en desarrollo como en producción)
+_FRONTEND = Path(__file__).parent.parent / "frontend"
+if _FRONTEND.exists():
+    app.mount("/static", StaticFiles(directory=str(_FRONTEND)), name="static")
+
+    @app.get("/", include_in_schema=False)
+    async def root():
+        return FileResponse(str(_FRONTEND / "index.html"))
 
 
 if __name__ == "__main__":

@@ -95,9 +95,18 @@ def fetch_ndmi_s2(token: str, fecha_inicio: str, fecha_fin: str) -> dict:
             "resx": 0.002, "resy": 0.002,
             "evalscript": """
 //VERSION=3
+// NDMI = (B08-B11)/(B08+B11) — Método Díaz 2026
+// Filtra píxeles inválidos via SCL (Scene Classification Layer):
+//   SCL 1 = saturado/defectivo
+//   SCL 3 = sombra de nube
+//   SCL 6 = agua superficial
+//   SCL 8 = nubes medianas
+//   SCL 9 = nubes altas
+//   SCL 10 = cirrus
+// Solo se procesa vegetación (SCL 4) y suelo desnudo (SCL 5)
 function setup() {
   return {
-    input: [{ bands: ["B08", "B11"] }],
+    input: [{ bands: ["B08", "B11", "SCL"] }],
     output: [
       { id: "default",  bands: 1, sampleType: "FLOAT32" },
       { id: "dataMask", bands: 1, sampleType: "UINT8"   }
@@ -105,6 +114,10 @@ function setup() {
   };
 }
 function evaluatePixel(s) {
+  // Filtro SCL: excluir saturados, sombras, agua, nubes
+  var scl = s.SCL;
+  if (scl === 1 || scl === 3 || scl === 6 || scl === 8 || scl === 9 || scl === 10)
+    return { default: [NaN], dataMask: [0] };
   if (!s.B08 || !s.B11 || (s.B08 + s.B11) === 0)
     return { default: [NaN], dataMask: [0] };
   var ndmi = (s.B08 - s.B11) / (s.B08 + s.B11 + 1e-6);
