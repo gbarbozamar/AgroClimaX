@@ -57,9 +57,13 @@
     }
 
     .logo img {
-      height: 88px; /* Aumentado 100% (de 44px a 88px) */
+      height: 88px;
       width: auto;
       display: block;
+    }
+
+    .logo img.logo-secundario {
+      height: 62px; /* Reducido un 30% (88px * 0.7 = ~62px) */
     }
 
     .header-right {
@@ -554,7 +558,7 @@
 <header>
     <div class="logo">
       <img src="/static/logo.png" alt="AgroClimaX Logo" onerror="this.src='logo.png'">
-      <img src="/static/AIDeepEconomics.png" alt="AI Deep Economics Logo" onerror="this.src='AIDeepEconomics.png'">
+      <img src="/static/AIDeepEconomics.png" alt="AI Deep Economics Logo" onerror="this.src='AIDeepEconomics.png'" class="logo-secundario">
     </div>
   <div class="header-right">
     <div class="badge-area">Área: <span>Rivera, Uruguay</span></div>
