@@ -3,11 +3,11 @@ AgroClimaX — API Server + Tile Service
 Sirve datos reales de Copernicus al dashboard frontend.
 v0.2: tile proxy para capas agronomicas (NDVI, NDMI, NDWI, SAVI, RGB, SAR)
 """
-import json, asyncio, math, requests
+import json, asyncio, math, requests, os, httpx
 from pathlib import Path
 from datetime import date, timedelta
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -380,7 +380,7 @@ async def estado_actual():
 
 
 
-from fastapi import Request
+# Import Request movido al inicio
 
 @app.post("/api/stats/custom")
 async def stats_custom(request: Request):
@@ -625,7 +625,7 @@ async def health():
 # ── Frontend estático ─────────────────────────────────────────────────────────
 # En Docker/Railway el frontend se copia a /frontend.
 # En desarrollo local está en ../../frontend respecto a server.py.
-import os
+# Import os movido al inicio
 _FRONTEND_DOCKER = Path("/frontend")
 _FRONTEND_LOCAL  = Path(__file__).resolve().parent.parent / "frontend"
 _FRONTEND = _FRONTEND_DOCKER if _FRONTEND_DOCKER.exists() else _FRONTEND_LOCAL
@@ -639,5 +639,5 @@ if _FRONTEND.exists():
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8003))
+    port = int(os.environ.get("PORT", 8005))
     uvicorn.run("server:app", host="0.0.0.0", port=port, reload=False)
