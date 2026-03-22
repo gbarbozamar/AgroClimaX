@@ -604,8 +604,13 @@ async def health():
 
 
 # ── Frontend estático ─────────────────────────────────────────────────────────
-# Sirve el dashboard desde /  (tanto en desarrollo como en producción)
-_FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
+# En Docker/Railway el frontend se copia a /frontend.
+# En desarrollo local está en ../../frontend respecto a server.py.
+import os
+_FRONTEND_DOCKER = Path("/frontend")
+_FRONTEND_LOCAL  = Path(__file__).resolve().parent.parent / "frontend"
+_FRONTEND = _FRONTEND_DOCKER if _FRONTEND_DOCKER.exists() else _FRONTEND_LOCAL
+
 if _FRONTEND.exists():
     app.mount("/static", StaticFiles(directory=str(_FRONTEND)), name="static")
 
@@ -615,4 +620,5 @@ if _FRONTEND.exists():
 
 
 if __name__ == "__main__":
-    uvicorn.run("server:app", host="0.0.0.0", port=8003, reload=False)
+    port = int(os.environ.get("PORT", 8003))
+    uvicorn.run("server:app", host="0.0.0.0", port=port, reload=False)

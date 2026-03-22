@@ -15,13 +15,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY apps/backend/server.py apps/backend/data_fetcher.py ./
 COPY apps/backend/.env.example .env.example
 
-# Frontend estático (servido desde /  por FastAPI StaticFiles)
-COPY apps/frontend/ ../frontend/
+# Frontend estático servido por FastAPI StaticFiles
+# Copiado a /frontend relativo a la raíz del servicio
+COPY apps/frontend/ /frontend/
 
-# Puerto de escucha (Render/Railway inyectan $PORT)
-ENV PORT=8000
-
+# Puerto — Railway inyecta $PORT en runtime
 EXPOSE 8000
 
 # AgroClimaX: FastAPI + frontend en /
-CMD uvicorn server:app --host 0.0.0.0 --port ${PORT}
+CMD uvicorn server:app --host 0.0.0.0 --port ${PORT:-8000}

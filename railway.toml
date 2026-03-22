@@ -1,0 +1,12 @@
+[build]
+  dockerfilePath    = "apps/backend/Dockerfile"
+  dockerContext     = "."
+
+[deploy]
+  startCommand      = "uvicorn server:app --host 0.0.0.0 --port $PORT"
+  healthcheckPath   = "/api/health"
+  healthcheckTimeout = 300
+  restartPolicyType = "on_failure"
+
+[[services]]
+  name = "AgroClimaX"
