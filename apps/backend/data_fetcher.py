@@ -67,7 +67,7 @@ def buscar_escenas_s2(token: str, dias: int = 10) -> list:
     ]
 
 
-def fetch_ndmi_s2(token: str, fecha_inicio: str, fecha_fin: str) -> dict:
+def fetch_ndmi_s2(token: str, fecha_inicio: str, fecha_fin: str, geom: dict = None) -> dict:
     """
     Descarga estadísticas NDMI reales para Rivera (Sentinel-2 L2A).
     Usa Statistical API para obtener percentiles sin descargar raster completo.
@@ -76,10 +76,7 @@ def fetch_ndmi_s2(token: str, fecha_inicio: str, fecha_fin: str) -> dict:
 
     body = {
         "input": {
-            "bounds": {
-                "bbox": RIVERA_BBOX,
-                "properties": {"crs": "http://www.opengis.net/def/crs/OGC/1.3/CRS84"}
-            },
+            "bounds": {"geometry": geom, "properties": {"crs": "http://www.opengis.net/def/crs/EPSG/0/4326"}} if geom else {"bbox": RIVERA_BBOX, "properties": {"crs": "http://www.opengis.net/def/crs/OGC/1.3/CRS84"}},
             "data": [{
                 "dataFilter": {
                     "timeRange": {"from": f"{fecha_inicio}T00:00:00Z", "to": f"{fecha_fin}T23:59:59Z"},
@@ -165,7 +162,7 @@ function evaluatePixel(s) {
     }
 
 
-def fetch_s1_stats(token: str, fecha_inicio: str, fecha_fin: str) -> dict:
+def fetch_s1_stats(token: str, fecha_inicio: str, fecha_fin: str, geom: dict = None) -> dict:
     """
     Descarga estadísticas de Sentinel-1 para Rivera.
     Implementa el método Díaz 2026 completo por píxel:
@@ -213,10 +210,7 @@ function evaluatePixel(s) {
 
     body = {
         "input": {
-            "bounds": {
-                "bbox": RIVERA_BBOX,
-                "properties": {"crs": "http://www.opengis.net/def/crs/OGC/1.3/CRS84"}
-            },
+            "bounds": {"geometry": geom, "properties": {"crs": "http://www.opengis.net/def/crs/EPSG/0/4326"}} if geom else {"bbox": RIVERA_BBOX, "properties": {"crs": "http://www.opengis.net/def/crs/OGC/1.3/CRS84"}},
             "data": [{
                 "dataFilter": {
                     "timeRange": {"from": f"{fecha_inicio}T00:00:00Z", "to": f"{fecha_fin}T23:59:59Z"},
@@ -419,13 +413,13 @@ def calcular_spi_30(precip_data: dict) -> dict:
     }
 
 
-def fetch_era5_precipitacion() -> dict:
+def fetch_era5_precipitacion(lat: float = -31.5, lon: float = -55.5) -> dict:
     """
     Obtiene SPI-30 real para Rivera via Open-Meteo (ERA5-Land).
     Reemplaza el job asíncrono CDS que nunca devolvía resultados.
     """
     try:
-        precip_data = fetch_precipitacion_openmeteo()
+        precip_data = fetch_precipitacion_openmeteo(lat, lon)
         if "error" in precip_data:
             raise ValueError(precip_data["error"])
         return calcular_spi_30(precip_data)
@@ -502,7 +496,7 @@ def clasificar_alerta(humedad: float, ndmi: float, spi: float) -> dict:
     }
 
 
-def run_pipeline() -> dict:
+def run_pipeline(geom: dict = None) -> dict:
     """Ejecuta el pipeline completo y retorna estado hídrico actual."""
     print("Obteniendo token CDSE...")
     token = get_token()
@@ -512,16 +506,26 @@ def run_pipeline() -> dict:
     fecha_inicio = str(hoy - timedelta(days=20))
 
     print(f"Descargando NDMI S2 ({fecha_inicio} a {fecha_fin})...")
-    s2 = fetch_ndmi_s2(token, fecha_inicio, fecha_fin)
+    s2 = fetch_ndmi_s2(token, fecha_inicio, fecha_fin, geom)
 
     print(f"Descargando S1 SAR ({fecha_inicio} a {fecha_fin})...")
-    s1 = fetch_s1_stats(token, fecha_inicio, fecha_fin)
+    s1 = fetch_s1_stats(token, fecha_inicio, fecha_fin, geom)
 
     print("Obteniendo datos climáticos ERA5...")
-    era5 = fetch_era5_precipitacion()
+    lat, lon = (-31.5, -55.5)
+    if geom:
+        coords = geom.get("coordinates", [[[]]])[0]
+        if coords:
+            lat = sum(c[1] for c in coords) / max(len(coords),1)
+            lon = sum(c[0] for c in coords) / max(len(coords),1)
+    era5 = fetch_era5_precipitacion(lat, lon)
 
-    ndmi     = s2.get("ndmi_media", -0.05) if "error" not in s2 else -0.05
-    humedad  = s1.get("humedad_media", 30.0) if "error" not in s1 else 30.0
+    if "error" in s2:
+        raise Exception(f"Copernicus rechazó el Polígono para S2: {s2['error']}")
+    ndmi = s2.get("ndmi_media", -0.05)
+    if "error" in s1:
+        raise Exception(f"Copernicus rechazó el Polígono para S1: {s1['error']}")
+    humedad = s1.get("humedad_media", 30.0)
     spi      = era5.get("spi_30d", 0.0)
 
     alerta = clasificar_alerta(humedad, ndmi, spi)

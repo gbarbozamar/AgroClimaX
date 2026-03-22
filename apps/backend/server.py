@@ -51,6 +51,7 @@ CAPAS_INFO = {
     "savi": {"src": "sentinel-2-l2a", "clouds": True},
     "sar":  {"src": "sentinel-1-grd",  "clouds": False},
     "alerta_fusion": {"fusion": True, "clouds": True},
+    "lst": {"src": "sentinel-3-slstr", "clouds": False},
 }
 
 # ── Evalscripts (RGBA UINT8) para cada capa agronomica ───────────────────────
@@ -228,6 +229,22 @@ function evaluatePixel(s) {
   return humedadAColor(h);
 }""",
 
+
+    "lst": """//VERSION=3
+function setup() {
+  return { input:[{bands:["S8","dataMask"]}], output:{bands:4,sampleType:"UINT8"} };
+}
+function evaluatePixel(s) {
+  if (!s.dataMask || !s.S8) return [0,0,0,0];
+  var tempC = s.S8 - 273.15;
+  var t = Math.max(0, Math.min(1, (tempC - 10) / 40));
+  var r, g, b;
+  if (t < 0.25) { r=0; g=Math.round(t*4*255); b=255; }
+  else if (t < 0.5) { r=0; g=255; b=Math.round((1-(t-0.25)*4)*255); }
+  else if (t < 0.75) { r=Math.round((t-0.5)*4*255); g=255; b=0; }
+  else { r=255; g=Math.round((1-(t-0.75)*4)*255); b=0; }
+  return [r, g, b, 255];
+}""",
     "alerta_fusion": """//VERSION=3
 function setup() {
   return {
@@ -361,6 +378,24 @@ async def estado_actual():
             return JSONResponse(_cache)
         return JSONResponse({"error": str(e)}, status_code=500)
 
+
+
+from fastapi import Request
+
+@app.post("/api/stats/custom")
+async def stats_custom(request: Request):
+    try:
+        geom = await request.json()
+        resultado = await asyncio.to_thread(run_pipeline, geom)
+        try:
+            deficit_info = _calcular_deficit_desde_cache(_cache)
+            resultado.update(deficit_info)
+        except Exception:
+            resultado.setdefault("dias_deficit", 0)
+            resultado.setdefault("es_prolongada", False)
+        return JSONResponse(resultado)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.get("/api/historico")
 async def historico(dias: int = 30):

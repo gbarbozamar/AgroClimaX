@@ -574,6 +574,8 @@
   <div class="header-right">
     <div class="badge-area">Área: <span>Rivera, Uruguay</span></div>
     <div class="badge-area">Satélites: <span>Sentinel-1 · Sentinel-2 · ERA5</span></div>
+    <button id="btn-dibujar" onclick="window._drawingMode ? window.finishDrawing() : window.startDrawing()" style="padding:6px 14px;border-radius:6px;border:1px solid #4a90d9;background:#1a1d2e;color:#4a90d9;cursor:pointer;font-size:0.8rem;font-family:Inter,sans-serif;font-weight:600">✏️ Dibujar Parcela</button>
+    <button id="btn-limpiar" onclick="window.clearDrawing()" style="display:none;padding:6px 14px;border-radius:6px;border:1px solid #e74c3c;background:#1a1d2e;color:#e74c3c;cursor:pointer;font-size:0.8rem;font-family:Inter,sans-serif;font-weight:600">🗑 Limpiar</button>
     <div class="last-update" id="last-update">Actualizado: —</div>
   </div>
 </header>
@@ -652,6 +654,11 @@
         <span class="map-btn-icon">📡</span>
         <span class="map-btn-name">SAR VV</span>
         <span class="map-btn-formula">S1 · Díaz 2026</span>
+      </button>
+      <button class="map-btn" id="btn-lst" onclick="setLayer('lst',this)">
+        <span class="map-btn-icon">🌡️</span>
+        <span class="map-btn-name">Termal</span>
+        <span class="map-btn-formula">LST S3</span>
       </button>
     </div>
 
@@ -829,11 +836,35 @@ async function cargarEstadoActual() {
   try {
     const r = await fetch(`${API_BASE}/estado-actual`);
     const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Compruebe que el polígono sea válido.');
     estadoActual = normalizar(data);
     renderTodo(estadoActual);
   } catch(e) {
     document.getElementById('alerta-banner').innerHTML =
       `<span style="color:#e74c3c">Error conectando con API: ${e.message}. Verifique que el servidor esté accesible en ${API_BASE}.</span>`;
+  }
+}
+
+
+async function cargarEstadoActualCustom(geojson) {
+  mostrarCargando();
+  document.querySelector('.badge-area span').textContent = 'Mi Parcela (analizando…)';
+  try {
+    const r = await fetch(`${API_BASE}/stats/custom`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(geojson)
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Error procesando parcela en Copernicus.');
+    estadoActual = normalizar(data);
+    renderTodo(estadoActual);
+    document.querySelector('.badge-area span').textContent = 'Mi Parcela (actualizada)';
+  } catch(e) {
+    document.getElementById('alerta-banner').innerHTML =
+      `<span style="color:#e74c3c">⚠ Error analizando parcela: ${e.message}</span>`;
+    document.getElementById('alerta-banner').style.background = '#e74c3c22';
+    document.querySelector('.badge-area span').textContent = 'Mi Parcela (error)';
   }
 }
 
@@ -1134,6 +1165,7 @@ function initMap() {
   // Pane para tiles satelitales (entre basemap y marcadores)
   map.createPane('satellitePane');
   map.getPane('satellitePane').style.zIndex = 250;
+  map.getPane('satellitePane').style.pointerEvents = 'none';
 
   // Basemap oscuro CartoDB
   L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
@@ -1144,6 +1176,96 @@ function initMap() {
 
   // Puntos de calibración reales (Díaz 2026)
   addCalibrationPoints();
+
+  // ── DIBUJADOR NATIVO DE PARCELA ──────────────────────────────────────────
+  // Variables de estado en scope global para acceso desde botones del header
+  window._drawingMode   = false;
+  window._drawingPoints = [];
+  window._previewPoly   = null;
+  window._previewMarkers = [];
+  window._savedPoly     = null;
+
+  window.startDrawing = function() {
+    window._drawingMode = true;
+    window._drawingPoints = [];
+    if (window._previewPoly)  { map.removeLayer(window._previewPoly); window._previewPoly = null; }
+    window._previewMarkers.forEach(function(m) { map.removeLayer(m); });
+    window._previewMarkers = [];
+    if (window._savedPoly) { map.removeLayer(window._savedPoly); window._savedPoly = null; }
+    map.getContainer().style.cursor = 'crosshair';
+    document.getElementById('btn-dibujar').textContent = '✅ Finalizar Parcela';
+    document.getElementById('btn-dibujar').style.backgroundColor = '#2ecc71';
+    document.getElementById('btn-dibujar').style.color = '#000';
+    document.getElementById('btn-limpiar').style.display = 'inline-block';
+    document.querySelector('.badge-area span').textContent = 'Dibujando… (Clic en el mapa = punto · Doble-clic = cerrar)';
+  };
+
+  window.finishDrawing = function() {
+    if (window._drawingPoints.length < 3) {
+      document.querySelector('.badge-area span').textContent = 'Necesitas al menos 3 puntos para la parcela.';
+      return;
+    }
+    var coords = window._drawingPoints.map(function(p) { return [p.lng, p.lat]; });
+    coords.push(coords[0]);
+
+    if (window._previewPoly) { map.removeLayer(window._previewPoly); window._previewPoly = null; }
+    window._previewMarkers.forEach(function(m) { map.removeLayer(m); });
+    window._previewMarkers = [];
+
+    window._savedPoly = L.polygon(window._drawingPoints.map(function(p){ return [p.lat, p.lng]; }), {
+      color: '#2ecc71', weight: 2, fillColor: '#4a90d9', fillOpacity: 0.2
+    }).addTo(map);
+
+    window._drawingMode = false;
+    map.getContainer().style.cursor = '';
+    document.getElementById('btn-dibujar').textContent = '✏️ Dibujar Parcela';
+    document.getElementById('btn-dibujar').style.backgroundColor = '';
+    document.getElementById('btn-dibujar').style.color = '#4a90d9';
+    document.querySelector('.badge-area span').textContent = 'Mi Parcela (analizando…)';
+
+    var geojson = { type: 'Polygon', coordinates: [coords] };
+    cargarEstadoActualCustom(geojson);
+  };
+
+  window.clearDrawing = function() {
+    window._drawingMode = false;
+    window._drawingPoints = [];
+    if (window._previewPoly)  { map.removeLayer(window._previewPoly); window._previewPoly = null; }
+    window._previewMarkers.forEach(function(m) { map.removeLayer(m); });
+    window._previewMarkers = [];
+    if (window._savedPoly) { map.removeLayer(window._savedPoly); window._savedPoly = null; }
+    map.getContainer().style.cursor = '';
+    document.getElementById('btn-dibujar').textContent = '✏️ Dibujar Parcela';
+    document.getElementById('btn-dibujar').style.backgroundColor = '';
+    document.getElementById('btn-dibujar').style.color = '#4a90d9';
+    document.getElementById('btn-limpiar').style.display = 'none';
+    document.querySelector('.badge-area span').textContent = 'Rivera, Uruguay';
+  };
+
+  // Click para añadir punto
+  map.on('click', function(e) {
+    if (!window._drawingMode) return;
+    window._drawingPoints.push(e.latlng);
+
+    var dot = L.circleMarker([e.latlng.lat, e.latlng.lng], {
+      radius: 5, color: '#4a90d9', fillColor: '#fff', fillOpacity: 1, weight: 2
+    }).addTo(map);
+    window._previewMarkers.push(dot);
+
+    if (window._previewPoly) map.removeLayer(window._previewPoly);
+    if (window._drawingPoints.length > 1) {
+      window._previewPoly = L.polygon(window._drawingPoints.map(function(p){ return [p.lat, p.lng]; }), {
+        color: '#4a90d9', weight: 2, fillOpacity: 0.1, dashArray: '6 4'
+      }).addTo(map);
+    }
+  });
+
+  // Doble-clic para cerrar polígono
+  map.on('dblclick', function(e) {
+    if (!window._drawingMode) return;
+    L.DomEvent.stop(e);
+    window.finishDrawing();
+  });
 
   // Cargar límite real de Rivera desde GADM
   fetch(`${API_BASE}/geojson/rivera`)
@@ -1266,6 +1388,16 @@ const LAYER_LEGENDS = {
       </div>
       <div class="legend-formula">S1 VV · Calibración Díaz 2026</div>
       <div style="font-size:0.62rem;color:var(--text-muted);margin-top:3px">Humedad suelo ~5 cm profundidad</div>`
+  },
+  lst: {
+    title: 'LST — Temperatura Superficial',
+    html: `
+      <div class="legend-gradient" style="background:linear-gradient(to right,#0000ff,#00ff00,#ffff00,#ff0000)"></div>
+      <div class="legend-scale-labels">
+        <span>10°C</span><span>20°</span><span>30°</span><span>>40°</span>
+      </div>
+      <div class="legend-formula">S3 SLSTR S8 Band</div>
+      <div style="font-size:0.62rem;color:var(--text-muted);margin-top:3px">Radiación térmica terrestre (estrés evaporativo)</div>`
   }
 };
 
