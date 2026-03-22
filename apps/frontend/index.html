@@ -40,7 +40,7 @@
       background: var(--surface);
       border-bottom: 1px solid var(--border);
       padding: 0 24px;
-      height: 60px;
+      height: 110px;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -52,26 +52,13 @@
     .logo {
       display: flex;
       align-items: center;
-      gap: 10px;
-      font-weight: 700;
-      font-size: 1.2rem;
+      height: 100%;
     }
 
-    .logo-icon {
-      width: 32px;
-      height: 32px;
-      background: linear-gradient(135deg, #2ecc71, #4a90d9);
-      border-radius: 8px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 16px;
-    }
-
-    .logo-sub {
-      font-size: 0.7rem;
-      color: var(--text-muted);
-      font-weight: 400;
+    .logo img {
+      height: 88px; /* Aumentado 100% (de 44px a 88px) */
+      width: auto;
+      display: block;
     }
 
     .header-right {
@@ -564,13 +551,9 @@
 
 <!-- HEADER -->
 <header>
-  <div class="logo">
-    <div class="logo-icon">🌾</div>
-    <div>
-      <div>AgroClimaX</div>
-      <div class="logo-sub">Alertas Agroclimáticas por Teledetección</div>
+    <div class="logo">
+      <img src="/static/logo.png" alt="AgroClimaX Logo" onerror="this.src='logo.png'">
     </div>
-  </div>
   <div class="header-right">
     <div class="badge-area">Área: <span>Rivera, Uruguay</span></div>
     <div class="badge-area">Satélites: <span>Sentinel-1 · Sentinel-2 · ERA5</span></div>
