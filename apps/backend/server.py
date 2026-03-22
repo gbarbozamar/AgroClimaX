@@ -431,7 +431,26 @@ async def historico(dias: int = 30):
         return JSONResponse({"error": str(e), "datos": []}, status_code=500)
 
 
-# ── Tile Endpoint ─────────────────────────────────────────────────────────────
+@app.get("/api/proxy/coneat")
+async def proxy_coneat(request: Request):
+    """
+    Proxy para el WMS de CONEAT (MGAP).
+    Necesario porque el MGAP solo sirve via HTTP y Railway usa HTTPS (Mixed Content error).
+    """
+    params = dict(request.query_params)
+    url = "http://dgrn.mgap.gub.uy/arcgis/services/TEMATICOS/IntConeat/MapServer/WMSServer"
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.get(url, params=params, timeout=30)
+            return Response(
+                content=resp.content,
+                media_type=resp.headers.get("content-type"),
+                headers={"Cache-Control": "max-age=86400", "Access-Control-Allow-Origin": "*"}
+            )
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+
 
 @app.get("/api/tiles/{layer}/{z}/{x}/{y}.png")
 async def serve_tile(layer: str, z: int, x: int, y: int):

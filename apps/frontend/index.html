@@ -660,6 +660,16 @@
         <span class="map-btn-name">Termal</span>
         <span class="map-btn-formula">LST S3</span>
       </button>
+      <button class="map-btn" id="btn-coneat" onclick="setLayer('coneat',this)">
+        <span class="map-btn-icon">🚜</span>
+        <span class="map-btn-name">CONEAT</span>
+        <span class="map-btn-formula">MGAP · Suelos</span>
+      </button>
+      <button class="map-btn" id="btn-judicial" onclick="setLayer('judicial',this)">
+        <span class="map-btn-icon">⚖️</span>
+        <span class="map-btn-name">Judicial</span>
+        <span class="map-btn-formula">IDE · Secciones</span>
+      </button>
     </div>
 
     <!-- Control de opacidad -->
@@ -1398,6 +1408,22 @@ const LAYER_LEGENDS = {
       </div>
       <div class="legend-formula">S3 SLSTR S8 Band</div>
       <div style="font-size:0.62rem;color:var(--text-muted);margin-top:3px">Radiación térmica terrestre (estrés evaporativo)</div>`
+  },
+  coneat: {
+    title: 'Productividad Suelos CONEAT',
+    html: `
+      <div class="legend-item"><div class="legend-dot" style="background:#8b4513"></div> Productividad Alta</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#cd853f"></div> Productividad Media</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#deb887"></div> Productividad Baja</div>
+      <div style="font-size:0.62rem;color:var(--text-muted);margin-top:3px">Datos oficiales MGAP Uruguay</div>`
+  },
+  judicial: {
+    title: 'Secciones Judiciales — IGM',
+    html: `
+      <div class="legend-item" style="border:1px solid #4a90d9;padding:2px;border-radius:3px">
+        <div class="legend-dot" style="background:rgba(74,144,217,0.2);border:1px solid #4a90d9"></div> Límite Judicial
+      </div>
+      <div style="font-size:0.62rem;color:var(--text-muted);margin-top:3px">División administrativa Judicial Uruguay</div>`
   }
 };
 
@@ -1424,17 +1450,40 @@ function setLayer(name, btn) {
   opacityWrap.style.display = 'flex';
   const loading = document.getElementById('map-tile-loading');
 
-  activeTileLayer = L.tileLayer(
-    `${API_BASE}/tiles/${tileLayerName}/{z}/{x}/{y}.png`,
-    {
-      pane:       'satellitePane',
-      maxZoom:    13,
-      minZoom:    7,
-      opacity:    parseFloat(document.getElementById('opacity-slider').value) / 100,
-      tileSize:   256,
-      attribution: `© Copernicus/ESA · ${tileLayerName.toUpperCase()} · AgroClimaX`,
-    }
-  );
+  if (name === 'coneat') {
+    // Capa CONEAT vía Proxy de Backend (evita Mixed Content HTTP/HTTPS)
+    activeTileLayer = L.tileLayer.wms(`${API_BASE}/proxy/coneat`, {
+      layers: '2,5', // CONEAT + Padrones Rurales
+      format: 'image/png',
+      transparent: true,
+      version: '1.1.1',
+      attribution: '© MGAP/DGRN Uruguay',
+      opacity: parseFloat(document.getElementById('opacity-slider').value) / 100
+    });
+  } else if (name === 'judicial') {
+    // Capa Secciones Judiciales vía IDE Uruguay (HTTPS nativo)
+    activeTileLayer = L.tileLayer.wms('https://mapas.ide.uy/geoservicios/WMS/WMS_Uruguay', {
+      layers: 'sec_judicial_poligono',
+      format: 'image/png',
+      transparent: true,
+      version: '1.1.1',
+      attribution: '© IDE Uruguay',
+      opacity: parseFloat(document.getElementById('opacity-slider').value) / 100
+    });
+  } else {
+    // Capas satelitales nativas de AgroClimaX
+    activeTileLayer = L.tileLayer(
+      `${API_BASE}/tiles/${tileLayerName}/{z}/{x}/{y}.png`,
+      {
+        pane:       'satellitePane',
+        maxZoom:    13,
+        minZoom:    7,
+        opacity:    parseFloat(document.getElementById('opacity-slider').value) / 100,
+        tileSize:   256,
+        attribution: `© Copernicus/ESA · ${tileLayerName.toUpperCase()} · AgroClimaX`,
+      }
+    );
+  }
 
   activeTileLayer.on('loading', () => { loading.style.display = 'block'; });
   activeTileLayer.on('load',    () => { loading.style.display = 'none';  });
