@@ -349,24 +349,19 @@ def fetch_precipitacion_openmeteo(lat: float = -31.5, lon: float = -55.5, dias: 
     return {"fechas": fechas, "precipitacion_mm": precip}
 
 
-def calcular_spi_30(precip_data: dict) -> dict:
+def calcular_spi_30(precip_data: dict, lat: float, lon: float) -> dict:
     """
     Calcula SPI-30 (Standardized Precipitation Index, ventana 30 días)
     usando precipitación diaria de Open-Meteo.
-
-    Metodología:
-    1. Sumar ventanas deslizantes de 30 días
-    2. Calcular climatología mensual (media + std) del período histórico
-    3. SPI = (precip_30d_actual - media_mes) / std_mes
     """
     if "error" in precip_data:
-        return {"error": precip_data["error"], "spi_30d": 0.0, "spi_categoria": "Sin datos"}
+        return {"error": precip_data["error"], "spi_30d": 0.0, "spi_categoria": "Sin datos", "lat": lat, "lon": lon}
 
     fechas = precip_data["fechas"]
     precip = precip_data["precipitacion_mm"]
 
     if len(precip) < 60:
-        return {"error": "Insuficientes datos históricos", "spi_30d": 0.0, "spi_categoria": "Sin datos"}
+        return {"error": "Insuficientes datos históricos", "spi_30d": 0.0, "spi_categoria": "Sin datos", "lat": lat, "lon": lon}
 
     # Calcular sumas acumuladas de 30 días
     sumas_30d = []
@@ -387,7 +382,7 @@ def calcular_spi_30(precip_data: dict) -> dict:
     datos_mes = por_mes.get(mes_actual, [])
 
     if len(datos_mes) < 2:
-        return {"spi_30d": 0.0, "spi_categoria": "Normal", "fuente": "open-meteo-era5land", "nota": "Datos insuficientes para el mes"}
+        return {"spi_30d": 0.0, "spi_categoria": "Normal", "fuente": "open-meteo-era5land", "lat": lat, "lon": lon, "nota": "Datos insuficientes"}
 
     media = sum(datos_mes) / len(datos_mes)
     variance = sum((x - media) ** 2 for x in datos_mes) / (len(datos_mes) - 1)
@@ -402,8 +397,8 @@ def calcular_spi_30(precip_data: dict) -> dict:
 
     return {
         "fuente": "open-meteo-era5land",
-        "lat": -31.5,
-        "lon": -55.5,
+        "lat": round(lat, 5),
+        "lon": round(lon, 5),
         "precip_30d_mm": round(precip_30d_actual, 1),
         "media_historica_30d_mm": round(media, 1),
         "std_historica_mm": round(std, 1),
@@ -413,16 +408,15 @@ def calcular_spi_30(precip_data: dict) -> dict:
     }
 
 
-def fetch_era5_precipitacion(lat: float = -31.5, lon: float = -55.5) -> dict:
+def fetch_era5_precipitacion(lat: float, lon: float) -> dict:
     """
-    Obtiene SPI-30 real para Rivera via Open-Meteo (ERA5-Land).
-    Reemplaza el job asíncrono CDS que nunca devolvía resultados.
+    Obtiene SPI-30 real para coordenadas específicas via Open-Meteo (ERA5-Land).
     """
     try:
         precip_data = fetch_precipitacion_openmeteo(lat, lon)
         if "error" in precip_data:
             raise ValueError(precip_data["error"])
-        return calcular_spi_30(precip_data)
+        return calcular_spi_30(precip_data, lat, lon)
     except Exception as e:
         # Fallback: SPI neutro con nota de error, NO un valor hardcodeado
         return {
@@ -512,12 +506,16 @@ def run_pipeline(geom: dict = None) -> dict:
     s1 = fetch_s1_stats(token, fecha_inicio, fecha_fin, geom)
 
     print("Obteniendo datos climáticos ERA5...")
-    lat, lon = (-31.5, -55.5)
+    lat, lon = (-31.5, -55.5) # Rivera centro por defecto
     if geom:
         coords = geom.get("coordinates", [[[]]])[0]
-        if coords:
-            lat = sum(c[1] for c in coords) / max(len(coords),1)
-            lon = sum(c[0] for c in coords) / max(len(coords),1)
+        if len(coords) > 3:
+            # Centroide simple: promedio de puntos (sin contar el ultimo duplicado si existe)
+            puntos = coords[:-1] if coords[0] == coords[-1] else coords
+            lat = sum(c[1] for c in puntos) / len(puntos)
+            lon = sum(c[0] for c in puntos) / len(puntos)
+    
+    print(f"-> Coordenadas para análisis ERA5: {lat:.5f}, {lon:.5f}")
     era5 = fetch_era5_precipitacion(lat, lon)
 
     if "error" in s2:
