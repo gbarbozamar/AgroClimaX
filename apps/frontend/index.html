@@ -802,11 +802,11 @@
 <script>
 // ── API REAL — Copernicus CDSE ─────────────────────────────────
 // API_BASE: en producción usa URL relativa (FastAPI sirve el frontend).
-// En desarrollo local, override via ?api=http://localhost:8002 en la URL.
+// En desarrollo local, override via ?api=http://localhost:8003 en la URL.
 const _urlParams = new URLSearchParams(window.location.search);
 const API_BASE = _urlParams.get('api') || (window.location.port === '' || window.location.port === '80' || window.location.port === '443'
   ? '/api'
-  : 'http://localhost:8002/api');
+  : 'http://localhost:8003/api');
 const COLORES  = { 0: '#2ecc71', 1: '#f1c40f', 2: '#e67e22', 3: '#e74c3c' };
 const NOMBRES  = { 0: 'VERDE', 1: 'AMARILLO', 2: 'NARANJA', 3: 'ROJO' };
 
@@ -1286,33 +1286,32 @@ function setLayer(name, btn) {
   }
 
   const opacityWrap = document.getElementById('opacity-wrap');
+  const tileLayerName = name === 'alerta' ? 'alerta_fusion' : name;
 
-  if (name === 'alerta') {
-    // Modo alerta: solo marcadores de color, sin tile satelital
-    opacityWrap.style.display = 'none';
-    if (estadoActual) actualizarMapaConDatos(estadoActual);
-  } else {
-    // Modo satelital: cargar tiles reales del backend
-    opacityWrap.style.display = 'flex';
-    const loading = document.getElementById('map-tile-loading');
+  // Cargar satélite real siempre, incluso en la alerta de fusión
+  opacityWrap.style.display = 'flex';
+  const loading = document.getElementById('map-tile-loading');
 
-    activeTileLayer = L.tileLayer(
-      `${API_BASE}/tiles/${name}/{z}/{x}/{y}.png`,
-      {
-        pane:       'satellitePane',
-        maxZoom:    13,
-        minZoom:    7,
-        opacity:    parseFloat(document.getElementById('opacity-slider').value) / 100,
-        tileSize:   256,
-        attribution: `© Copernicus/ESA · ${name.toUpperCase()} · AgroClimaX`,
-      }
-    );
+  activeTileLayer = L.tileLayer(
+    `${API_BASE}/tiles/${tileLayerName}/{z}/{x}/{y}.png`,
+    {
+      pane:       'satellitePane',
+      maxZoom:    13,
+      minZoom:    7,
+      opacity:    parseFloat(document.getElementById('opacity-slider').value) / 100,
+      tileSize:   256,
+      attribution: `© Copernicus/ESA · ${tileLayerName.toUpperCase()} · AgroClimaX`,
+    }
+  );
 
-    activeTileLayer.on('loading', () => { loading.style.display = 'block'; });
-    activeTileLayer.on('load',    () => { loading.style.display = 'none';  });
-    activeTileLayer.on('tileerror', () => { /* silencio — tile transparente del backend */ });
+  activeTileLayer.on('loading', () => { loading.style.display = 'block'; });
+  activeTileLayer.on('load',    () => { loading.style.display = 'none';  });
+  activeTileLayer.on('tileerror', () => { /* silencio — tile transparente del backend */ });
 
-    activeTileLayer.addTo(map);
+  activeTileLayer.addTo(map);
+
+  if (name === 'alerta' && estadoActual) {
+    actualizarMapaConDatos(estadoActual);
   }
 
   // Actualizar leyenda

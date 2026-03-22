@@ -50,6 +50,7 @@ CAPAS_INFO = {
     "ndwi": {"src": "sentinel-2-l2a", "clouds": True},
     "savi": {"src": "sentinel-2-l2a", "clouds": True},
     "sar":  {"src": "sentinel-1-grd",  "clouds": False},
+    "alerta_fusion": {"fusion": True, "clouds": True},
 }
 
 # ── Evalscripts (RGBA UINT8) para cada capa agronomica ───────────────────────
@@ -226,6 +227,55 @@ function evaluatePixel(s) {
   var h=ndmiAHumedad(ndmi);
   return humedadAColor(h);
 }""",
+
+    "alerta_fusion": """//VERSION=3
+function setup() {
+  return {
+    input: [
+      {datasource: "s1", bands: ["VV", "VH"]},
+      {datasource: "s2", bands: ["B04", "B08", "B11", "dataMask"]}
+    ],
+    output: {bands: 4, sampleType: "UINT8"}
+  };
+}
+var cal = [[-16.92,-0.33],[-13.49,-0.11],[-12.42,0.07],[-10.96,0.25],[-8.97,0.44]];
+function vvANdmi(vv) {
+  var x=cal.map(function(p){return p[0];}), y=cal.map(function(p){return p[1];});
+  for (var i=1;i<y.length;i++) if(y[i]<y[i-1]) y[i]=y[i-1];
+  if (vv<=x[0]) return y[0];
+  if (vv>=x[x.length-1]) return y[y.length-1];
+  for (var i=0;i<x.length-1;i++) {
+    if (vv>=x[i]&&vv<=x[i+1]) { var t=(vv-x[i])/(x[i+1]-x[i]); return y[i]+t*(y[i+1]-y[i]); }
+  }
+  return y[0];
+}
+function ndmiAHumedad(ndmi) { return Math.min(100,Math.max(0,100*(ndmi+0.5)/1.0)); }
+
+function evaluatePixel(samples) {
+  var s1 = samples.s1[0];
+  var s2 = samples.s2[0];
+  if (!s2 || !s1 || !s2.dataMask || !s1.VV || !s1.VH || s1.VV<=0 || s1.VH<=0) return [0,0,0,0];
+  var vv = s1.VV, vh = s1.VH;
+  var vv_dB=10*Math.log10(vv+1e-10), vh_dB=10*Math.log10(vh+1e-10);
+  if (vv_dB<-18&&vh_dB<-23) return [0,0,0,0]; // Agua libre
+  var rvi=vh/(vv+vh);
+  var veg=Math.min(1,Math.max(0,(rvi-0.1)/0.4));
+  if (veg>0.7) return [0,0,0,0]; // Veg densa oculta suelo
+  var vv_suelo_dB=vv_dB-veg*2.5;
+  var hum = ndmiAHumedad(vvANdmi(vv_suelo_dB));
+  var nivel_s1 = hum < 15 ? 3 : hum < 25 ? 2 : hum < 50 ? 1 : 0;
+  
+  var ndmi_s2 = (s2.B08 - s2.B11) / (s2.B08 + s2.B11 + 1e-6);
+  var nivel_s2 = ndmi_s2 < -0.10 ? 3 : ndmi_s2 < 0 ? 2 : ndmi_s2 < 0.10 ? 1 : 0;
+  
+  var nivel = Math.max(nivel_s1, nivel_s2);
+  
+  if (nivel === 0) return [46,  204, 113, 180];
+  if (nivel === 1) return [241, 196, 15,  180];
+  if (nivel === 2) return [230, 126, 34,  180];
+  if (nivel === 3) return [231, 76,  60,  180];
+  return [0,0,0,0];
+}""",
 }
 
 
@@ -381,8 +431,24 @@ async def serve_tile(layer: str, z: int, x: int, y: int):
     data_filter = {
         "timeRange": {"from": f"{inicio}T00:00:00Z", "to": f"{hoy}T23:59:59Z"}
     }
-    if info["clouds"]:
+    if info.get("clouds"):
         data_filter["maxCloudCoverage"] = 50
+
+    if info.get("fusion"):
+        data_sources = [
+            {
+                "id": "s1",
+                "type": "sentinel-1-grd",
+                "dataFilter": {"timeRange": {"from": f"{inicio}T00:00:00Z", "to": f"{hoy}T23:59:59Z"}}
+            },
+            {
+                "id": "s2",
+                "type": "sentinel-2-l2a",
+                "dataFilter": data_filter
+            }
+        ]
+    else:
+        data_sources = [{"type": info.get("src"), "dataFilter": data_filter}]
 
     payload = {
         "input": {
@@ -390,7 +456,7 @@ async def serve_tile(layer: str, z: int, x: int, y: int):
                 "bbox": bbox,
                 "properties": {"crs": "http://www.opengis.net/def/crs/EPSG/0/4326"},
             },
-            "data": [{"type": info["src"], "dataFilter": data_filter}],
+            "data": data_sources,
         },
         "output": {
             "width": 256,
@@ -504,7 +570,7 @@ async def health():
 
 # ── Frontend estático ─────────────────────────────────────────────────────────
 # Sirve el dashboard desde /  (tanto en desarrollo como en producción)
-_FRONTEND = Path(__file__).parent.parent / "frontend"
+_FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
 if _FRONTEND.exists():
     app.mount("/static", StaticFiles(directory=str(_FRONTEND)), name="static")
 
@@ -514,4 +580,4 @@ if _FRONTEND.exists():
 
 
 if __name__ == "__main__":
-    uvicorn.run("server:app", host="0.0.0.0", port=8002, reload=False)
+    uvicorn.run("server:app", host="0.0.0.0", port=8003, reload=False)
