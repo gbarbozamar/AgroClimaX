@@ -1,7 +1,8 @@
 """
 AgroClimaX - Backend principal y runtime canonico.
 """
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 import logging
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from app.api.v1.router import api_router
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal, Base, engine
 from app.models import *  # noqa: F401,F403
+from app.services.analysis import ensure_latest_daily_analysis
 from app.services.catalog import seed_catalog_units
 
 logging.basicConfig(level=logging.INFO)
@@ -31,7 +33,21 @@ async def lifespan(_: FastAPI):
     async with AsyncSessionLocal() as session:
         await seed_catalog_units(session)
 
+    async def _warmup_today() -> None:
+        try:
+            async with AsyncSessionLocal() as session:
+                result = await ensure_latest_daily_analysis(session)
+                logger.info("Warmup diario listo: %s", result.get("status", "processed"))
+        except Exception:
+            logger.exception("Fallo el warmup diario del pipeline")
+
+    warmup_task = asyncio.create_task(_warmup_today())
+
     yield
+    if not warmup_task.done():
+        warmup_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await warmup_task
     logger.info("AgroClimaX cerrando")
     await engine.dispose()
 

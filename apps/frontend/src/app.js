@@ -22,6 +22,15 @@ async function loadUnits() {
   setUnitsOnMap(store.units, handleDepartmentSelect);
 }
 
+async function loadUnitsSafe() {
+  try {
+    await loadUnits();
+  } catch (error) {
+    console.warn('No se pudo cargar la lista de unidades al inicio:', error);
+    setStore({ units: [] });
+  }
+}
+
 async function loadSelection(scope, department = null, unitId = null) {
   renderLoading(scope === 'nacional' ? 'Cargando panorama nacional...' : `Cargando ${department || 'unidad'}...`);
   try {
@@ -68,8 +77,6 @@ async function bootstrap() {
     await loadSelection('custom');
   }, handleDepartmentSelect);
 
-  await loadUnits();
-
   const select = document.getElementById('department-select');
   select.addEventListener('change', async (event) => {
     const value = event.target.value;
@@ -81,7 +88,9 @@ async function bootstrap() {
     await loadSelection('departamento', value);
   });
 
+  const unitsPromise = loadUnitsSafe();
   await loadSelection('nacional');
+  await unitsPromise;
 }
 
 document.addEventListener('DOMContentLoaded', bootstrap);

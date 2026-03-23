@@ -84,6 +84,8 @@ STATE_DEFINITIONS = {
     },
 }
 
+PIPELINE_LOCK = asyncio.Lock()
+
 FIXED_CALIBRATION_POINTS = [
     (-16.92, -0.33),
     (-13.49, -0.11),
@@ -1317,32 +1319,42 @@ async def analyze_unit(
     return {"unit": unit, "state": current_state, "event": event, "observation": observation_record}
 
 
-async def ensure_latest_daily_analysis(session: AsyncSession, target_date: date | None = None) -> dict[str, Any]:
-    target_date = target_date or date.today()
-    await seed_catalog_units(session)
+async def _current_analysis_status(session: AsyncSession, target_date: date) -> dict[str, Any]:
     day_start, day_end = _date_bounds(target_date)
     count_result = await session.execute(
         select(func.count()).select_from(AlertState).where(AlertState.scope == "departamento", AlertState.observed_at >= day_start, AlertState.observed_at < day_end)
     )
     current_count = count_result.scalar_one()
-    if current_count >= len(DEPARTMENTS):
-        modes_result = await session.execute(
-            select(AlertState.data_mode).where(AlertState.scope == "departamento", AlertState.observed_at >= day_start, AlertState.observed_at < day_end)
-        )
-        modes = [mode for mode in modes_result.scalars().all() if mode]
-        live_units = sum(1 for mode in modes if mode == "live_copernicus")
-        carry_forward_units = sum(1 for mode in modes if mode == "carry_forward_live")
-        if settings.copernicus_enabled and live_units == 0 and carry_forward_units == 0:
-            return await run_daily_pipeline(session, target_date=target_date)
-        return {
-            "target_date": str(target_date),
-            "status": "already_current",
-            "units": current_count,
-            "live_units": live_units,
-            "carry_forward_units": carry_forward_units,
-            "simulated_units": sum(1 for mode in modes if mode == "simulated"),
-        }
-    return await run_daily_pipeline(session, target_date=target_date)
+    modes_result = await session.execute(
+        select(AlertState.data_mode).where(AlertState.scope == "departamento", AlertState.observed_at >= day_start, AlertState.observed_at < day_end)
+    )
+    modes = [mode for mode in modes_result.scalars().all() if mode]
+    live_units = sum(1 for mode in modes if mode == "live_copernicus")
+    carry_forward_units = sum(1 for mode in modes if mode == "carry_forward_live")
+    simulated_units = sum(1 for mode in modes if mode == "simulated")
+    return {
+        "target_date": str(target_date),
+        "units": current_count,
+        "live_units": live_units,
+        "carry_forward_units": carry_forward_units,
+        "simulated_units": simulated_units,
+        "ready": current_count >= len(DEPARTMENTS),
+        "needs_live_refresh": settings.copernicus_enabled and current_count >= len(DEPARTMENTS) and live_units == 0 and carry_forward_units == 0,
+    }
+
+
+async def ensure_latest_daily_analysis(session: AsyncSession, target_date: date | None = None) -> dict[str, Any]:
+    target_date = target_date or date.today()
+    await seed_catalog_units(session)
+    status = await _current_analysis_status(session, target_date)
+    if status["ready"] and not status["needs_live_refresh"]:
+        return {**status, "status": "already_current"}
+
+    async with PIPELINE_LOCK:
+        status = await _current_analysis_status(session, target_date)
+        if status["ready"] and not status["needs_live_refresh"]:
+            return {**status, "status": "already_current"}
+        return await run_daily_pipeline(session, target_date=target_date)
 
 
 async def run_daily_pipeline(session: AsyncSession, target_date: date | None = None) -> dict[str, Any]:
@@ -1591,7 +1603,6 @@ async def get_unit_traceability(session: AsyncSession, unit_id: str) -> dict[str
 
 
 async def list_units(session: AsyncSession, include_custom: bool = False) -> list[dict[str, Any]]:
-    await ensure_latest_daily_analysis(session)
     query = select(AOIUnit).order_by(AOIUnit.unit_type, AOIUnit.department, AOIUnit.name)
     if not include_custom:
         query = query.where(AOIUnit.unit_type == "department")
