@@ -11,7 +11,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY apps/backend/app ./app
 COPY apps/backend/tasks ./tasks
-COPY apps/backend/alembic ./alembic
 COPY apps/backend/data_fetcher.py ./data_fetcher.py
 COPY apps/backend/.env.example ./.env.example
 COPY evalscripts /evalscripts
