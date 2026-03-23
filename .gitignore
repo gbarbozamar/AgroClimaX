@@ -24,6 +24,10 @@ apps/backend/.tiles_cache/
 # ── Logs ────────────────────────────────────────────────────────
 *.log
 logs/
+server_log.txt
+.playwright-cli/
+apps/backend/agroclimax.db
+apps/backend/test_tile.png
 
 # ── IDEs ────────────────────────────────────────────────────────
 .vscode/

@@ -1,8 +1,20 @@
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from importlib.util import find_spec
+from pathlib import Path
+
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
+
 from app.core.config import settings
 
-engine = create_async_engine(settings.database_url, echo=False, pool_pre_ping=True)
+
+def _resolve_database_url() -> str:
+    if settings.database_url.startswith("postgresql+asyncpg") and find_spec("asyncpg") is None:
+        fallback_db = Path(__file__).resolve().parents[2] / "agroclimax.db"
+        return f"sqlite+aiosqlite:///{fallback_db.as_posix()}"
+    return settings.database_url
+
+
+engine = create_async_engine(_resolve_database_url(), echo=False, future=True)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 

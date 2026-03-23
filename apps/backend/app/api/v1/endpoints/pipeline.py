@@ -1,43 +1,30 @@
-"""
-Endpoints API — Control del pipeline Copernicus.
-Permite ejecutar el pipeline manualmente y consultar su estado.
-"""
 from datetime import date
-from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Query, HTTPException
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.copernicus.pipeline import ejecutar_pipeline
+from app.db.session import get_db
+from app.services.analysis import ensure_latest_daily_analysis, recompute_calibrations, run_daily_pipeline
 
 router = APIRouter(prefix="/pipeline", tags=["pipeline"])
 
 
 @router.post("/ejecutar")
-async def ejecutar_pipeline_manual(
-    background_tasks: BackgroundTasks,
-    fecha: Optional[date] = Query(None, description="Fecha objetivo (por defecto: ayer)"),
-    ventana_dias: int = Query(6, description="Ventana de búsqueda de imágenes en días"),
+async def ejecutar_pipeline(
+    fecha: date | None = Query(None),
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    Ejecuta el pipeline Copernicus manualmente en background.
-    Descarga S1 + S2, calcula humedad y NDMI, evalúa alertas.
-    """
-    background_tasks.add_task(ejecutar_pipeline, fecha, ventana_dias)
-    return {
-        "mensaje": "Pipeline iniciado en background.",
-        "fecha_objetivo": str(fecha or "ayer"),
-        "ventana_dias": ventana_dias,
-    }
+    return await run_daily_pipeline(db, target_date=fecha)
+
+
+@router.post("/recalibrar")
+async def recalibrar(
+    fecha: date | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    return await recompute_calibrations(db, as_of=fecha)
 
 
 @router.get("/estado")
-async def estado_pipeline():
-    """Estado del pipeline y última ejecución."""
-    # En producción: consultar tabla de ejecuciones o Redis
-    return {
-        "estado": "disponible",
-        "descripcion": "Pipeline listo para ejecución manual o automática (cron).",
-        "fuentes": ["Sentinel-1 GRD", "Sentinel-2 L2A", "ERA5 CDS"],
-        "area": "Rivera, Uruguay",
-        "evalscripts": ["ndmi_s2_filtrado.js", "humedad_suelo_s1.js"],
-    }
+async def estado_pipeline(db: AsyncSession = Depends(get_db)):
+    return await ensure_latest_daily_analysis(db)

@@ -557,12 +557,15 @@
 <!-- HEADER -->
 <header>
     <div class="logo">
-      <img src="/static/logo.png" alt="AgroClimaX Logo" onerror="this.src='logo.png'">
-      <img src="/static/AIDeepEconomics.png" alt="AI Deep Economics Logo" onerror="this.src='AIDeepEconomics.png'" class="logo-secundario">
+      <img src="static/logo.png" alt="AgroClimaX Logo">
+      <img src="static/AIDeepEconomics.png" alt="AI Deep Economics Logo" class="logo-secundario">
     </div>
   <div class="header-right">
-    <div class="badge-area">Área: <span>Rivera, Uruguay</span></div>
+    <div class="badge-area">Área: <span id="scope-badge-value">Uruguay</span></div>
     <div class="badge-area">Satélites: <span>Sentinel-1 · Sentinel-2 · ERA5</span></div>
+    <select id="department-select" style="padding:6px 12px;border-radius:6px;border:1px solid #2a3447;background:#111723;color:#d6deea;font-size:0.8rem;font-family:Inter,sans-serif">
+      <option value="nacional">Uruguay (nacional)</option>
+    </select>
     <button id="btn-dibujar" onclick="window._drawingMode ? window.finishDrawing() : window.startDrawing()" style="padding:6px 14px;border-radius:6px;border:1px solid #4a90d9;background:#1a1d2e;color:#4a90d9;cursor:pointer;font-size:0.8rem;font-family:Inter,sans-serif;font-weight:600">✏️ Dibujar Parcela</button>
     <button id="btn-limpiar" onclick="window.clearDrawing()" style="display:none;padding:6px 14px;border-radius:6px;border:1px solid #e74c3c;background:#1a1d2e;color:#e74c3c;cursor:pointer;font-size:0.8rem;font-family:Inter,sans-serif;font-weight:600">🗑 Limpiar</button>
     <div class="last-update" id="last-update">Actualizado: —</div>
@@ -594,12 +597,22 @@
     <div class="kpi-card">
       <div class="kpi-label">Área en Alerta</div>
       <div class="kpi-value" id="kpi-area" style="color: var(--naranja);">—</div>
-      <div class="kpi-sub">% depto. Rivera afectado</div>
+      <div class="kpi-sub">% unidad afectada</div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-label">Días en Déficit</div>
+      <div class="kpi-label">Risk Score</div>
+      <div class="kpi-value" id="kpi-risk" style="color: var(--rojo);">—</div>
+      <div class="kpi-sub">Magnitud + persistencia + meteo</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Confianza</div>
+      <div class="kpi-value" id="kpi-confidence" style="color: var(--accent);">—</div>
+      <div class="kpi-sub">Calidad de dato y calibración</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Persistencia</div>
       <div class="kpi-value" id="kpi-dias" style="color: var(--rojo);">—</div>
-      <div class="kpi-sub">Consecutivos ≥ Alerta</div>
+      <div class="kpi-sub">Días en el estado actual</div>
     </div>
   </div>
 
@@ -697,7 +710,18 @@
         </div>
         <div class="alerta-descripcion" id="alerta-descripcion">Conectando con datos Copernicus...</div>
         <div class="alerta-accion" id="alerta-accion">—</div>
+        <div class="alerta-accion" id="alerta-extra" style="margin-top:8px;color:var(--text-muted)">Calibración y trazabilidad en carga...</div>
       </div>
+    </div>
+
+    <div class="panel-section">
+      <div class="panel-title">Motores de Riesgo</div>
+      <div id="drivers-list" style="display:flex;flex-direction:column;gap:10px;color:var(--text);font-size:0.82rem"></div>
+    </div>
+
+    <div class="panel-section">
+      <div class="panel-title">Forecast 7 Días</div>
+      <div id="forecast-list" style="display:flex;flex-direction:column;gap:8px;color:var(--text);font-size:0.8rem"></div>
     </div>
 
     <!-- BARRAS DE HUMEDAD -->
@@ -766,28 +790,28 @@
     <div class="panel-section">
       <div class="panel-title">Indicadores Técnicos</div>
       <div class="indicador-row">
-        <span class="indicador-label">Puntos calibración S1</span>
-        <span class="indicador-valor" style="color:var(--verde)">5 Rivera</span>
+        <span class="indicador-label">Calibración activa</span>
+        <span class="indicador-valor" id="indicador-calibracion" style="color:var(--verde)">Cargando...</span>
       </div>
       <div class="indicador-row">
-        <span class="indicador-label">Resolución espacial</span>
-        <span class="indicador-valor">20 m</span>
+        <span class="indicador-label">Unidad operativa</span>
+        <span class="indicador-valor" id="indicador-unidad">Departamento / H3 r9</span>
       </div>
       <div class="indicador-row">
-        <span class="indicador-label">Profundidad S1</span>
-        <span class="indicador-valor">~5 cm</span>
+        <span class="indicador-label">Cobertura / suelo</span>
+        <span class="indicador-valor" id="indicador-suelo">Cargando...</span>
       </div>
       <div class="indicador-row">
-        <span class="indicador-label">Anticipación estrés NDMI</span>
-        <span class="indicador-valor" style="color:var(--accent)">7–10 días</span>
+        <span class="indicador-label">Forecast</span>
+        <span class="indicador-valor" id="indicador-forecast" style="color:var(--accent)">3-7 días</span>
       </div>
       <div class="indicador-row">
-        <span class="indicador-label">Fuente climática</span>
-        <span class="indicador-valor">ERA5 CDS</span>
+        <span class="indicador-label">Modo de datos</span>
+        <span class="indicador-valor" id="indicador-mode">Cargando...</span>
       </div>
       <div class="indicador-row">
         <span class="indicador-label">Pipeline</span>
-        <span class="indicador-valor" style="color:var(--verde)">Diario 03:00</span>
+        <span class="indicador-valor" id="indicador-pipeline" style="color:var(--verde)">Diario 03:30</span>
       </div>
     </div>
 
@@ -796,7 +820,7 @@
 </div><!-- /main-grid -->
 
 <footer>
-  <div>AgroClimaX v0.1 — AI Deep Economics · Rivera, Uruguay</div>
+  <div>AgroClimaX v1 nacional — AI Deep Economics · Uruguay</div>
   <div class="footer-sources">
     <span class="source-tag">🛰 Sentinel-1 SAR (Copernicus)</span>
     <span class="source-tag">🛰 Sentinel-2 L2A (Copernicus)</span>
@@ -805,7 +829,8 @@
   </div>
 </footer>
 
-<script>
+<script type="module" src="/static/src/app.js?v=20260323-1"></script>
+<script type="text/plain" data-legacy="disabled">
 // ── API REAL — Copernicus CDSE ─────────────────────────────────
 // API_BASE: en producción usa URL relativa (FastAPI sirve el frontend).
 // En desarrollo local, override via ?api=http://localhost:8003 en la URL.
@@ -1446,6 +1471,7 @@ function setLayer(name, btn) {
       format: 'image/png',
       transparent: true,
       version: '1.1.1',
+      srs: 'EPSG:4326', // El WMS del MGAP no soporta 3857
       attribution: '© MGAP/DGRN Uruguay',
       opacity: parseFloat(document.getElementById('opacity-slider').value) / 100
     });

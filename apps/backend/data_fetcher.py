@@ -6,8 +6,11 @@ Descarga datos reales de Copernicus CDSE:
   - ERA5 CDS        → Precipitación histórica → SPI-30
 """
 
+import concurrent.futures
 import os, json, httpx, numpy as np
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
+import time
+from typing import Any
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -26,6 +29,59 @@ CDS_URL     = os.getenv("CDS_API_URL", "https://cds.climate.copernicus.eu/api")
 # ── AOI Rivera, Uruguay ──────────────────────────────────────
 # BBox más ajustada al departamento de Rivera
 RIVERA_BBOX = [-56.5, -31.5, -54.5, -30.0]  # [W, S, E, N]
+
+
+def _extract_geometry(geom: dict | None) -> dict | None:
+    if not geom:
+        return None
+    if geom.get("type") == "Feature":
+        return geom.get("geometry")
+    return geom
+
+
+def _centroid_from_geom(geom: dict | None, fallback_lat: float = -31.5, fallback_lon: float = -55.5) -> tuple[float, float]:
+    geometry = _extract_geometry(geom)
+    if not geometry:
+        return fallback_lat, fallback_lon
+
+    try:
+        from shapely.geometry import shape
+
+        centroid = shape(geometry).centroid
+        return centroid.y, centroid.x
+    except Exception:
+        pass
+
+    coordinates: list[tuple[float, float]] = []
+    geo_type = geometry.get("type")
+    if geo_type == "Polygon":
+        rings = geometry.get("coordinates", [])
+        if rings:
+            coordinates = [(lon, lat) for lon, lat in rings[0]]
+    elif geo_type == "MultiPolygon":
+        polygons = geometry.get("coordinates", [])
+        for polygon in polygons:
+            if polygon:
+                coordinates.extend((lon, lat) for lon, lat in polygon[0])
+    if not coordinates:
+        return fallback_lat, fallback_lon
+    lons = [lon for lon, _ in coordinates]
+    lats = [lat for _, lat in coordinates]
+    return sum(lats) / len(lats), sum(lons) / len(lons)
+
+
+def _observed_at_from_interval(interval: dict[str, Any] | None) -> str | None:
+    if not interval:
+        return None
+    observed_at = interval.get("to") or interval.get("from")
+    if not observed_at:
+        return None
+    return observed_at.replace("Z", "+00:00")
+
+
+def _build_time_window(reference_date: date | None = None, lookback_days: int = 20) -> tuple[str, str]:
+    today = reference_date or date.today()
+    return str(today - timedelta(days=lookback_days)), str(today)
 
 def get_token() -> str:
     """Obtiene token OAuth2 de CDSE."""
@@ -146,11 +202,13 @@ function evaluatePixel(s) {
     if not intervalos:
         return {"error": "Sin datos en el período", "fuente": "sentinel-2-l2a"}
 
-    ultimo = intervalos[-1]["outputs"]["default"]["bands"]["B0"]["stats"]
+    ultimo_intervalo = intervalos[-1]
+    ultimo = ultimo_intervalo["outputs"]["default"]["bands"]["B0"]["stats"]
     return {
         "fuente":       "sentinel-2-l2a",
         "fecha_inicio": fecha_inicio,
         "fecha_fin":    fecha_fin,
+        "observed_at":  _observed_at_from_interval(ultimo_intervalo.get("interval")),
         "ndmi_media":   round(ultimo.get("mean", 0), 4),
         "ndmi_p10":     round(ultimo["percentiles"].get("10.0", 0), 4),
         "ndmi_p25":     round(ultimo["percentiles"].get("25.0", 0), 4),
@@ -199,7 +257,7 @@ def fetch_s1_stats(token: str, fecha_inicio: str, fecha_fin: str, geom: dict = N
 // el pipeline estadístico departamental. No se aplica filtro espacial explícito.
 function setup() {
   return {
-    input: [{ bands: ["VV", "VH", "localIncidenceAngle"], units: "LINEAR_POWER" }],
+    input: [{ bands: ["VV", "VH", "localIncidenceAngle"], units: ["LINEAR_POWER", "LINEAR_POWER", "DN"] }],
     output: [
       { id: "default",  bands: 1, sampleType: "FLOAT32" },
       { id: "dataMask", bands: 1, sampleType: "UINT8"   }
@@ -246,6 +304,16 @@ function evaluatePixel(s) {
                     "acquisitionMode": "IW",
                     "polarization": "DV"
                 },
+                "processing": {
+                    "orthorectify": True,
+                    "demInstance": "COPERNICUS_30",
+                    "backCoeff": "GAMMA0_ELLIPSOID",
+                    "speckleFilter": {
+                        "type": "LEE",
+                        "windowSizeX": 3,
+                        "windowSizeY": 3
+                    }
+                },
                 "type": "sentinel-1-grd"
             }]
         },
@@ -278,7 +346,8 @@ function evaluatePixel(s) {
     if not intervalos:
         return {"error": "Sin datos S1 en el período", "fuente": "sentinel-1-grd"}
 
-    ultimo = intervalos[-1]["outputs"]["default"]["bands"]["B0"]["stats"]
+    ultimo_intervalo = intervalos[-1]
+    ultimo = ultimo_intervalo["outputs"]["default"]["bands"]["B0"]["stats"]
     # vv_suelo_db ya viene corregido por vegetación (evalscript aplica Díaz 2026 por píxel)
     vv_db_media = ultimo.get("mean", -13.0)
 
@@ -337,6 +406,7 @@ function evaluatePixel(s) {
         "fuente":                "sentinel-1-grd",
         "fecha_inicio":          fecha_inicio,
         "fecha_fin":             fecha_fin,
+        "observed_at":           _observed_at_from_interval(ultimo_intervalo.get("interval")),
         "vv_suelo_db_media":     round(vv_db_media, 3),  # ya corregido por vegetación
         "ndmi_estimado":         round(ndmi_estimado, 4),
         "humedad_media":         round(humedad_media, 1),
@@ -519,10 +589,115 @@ def clasificar_alerta(humedad: float, ndmi: float, spi: float) -> dict:
     }
 
 
+def run_pipeline_with_token(
+    token: str,
+    geom: dict | None = None,
+    *,
+    department: str = "Rivera",
+    lat: float | None = None,
+    lon: float | None = None,
+    reference_date: date | None = None,
+) -> dict:
+    """Ejecuta el pipeline completo para un AOI usando un token ya resuelto."""
+    fecha_inicio, fecha_fin = _build_time_window(reference_date)
+    geometry = _extract_geometry(geom)
+    lat, lon = (lat, lon) if lat is not None and lon is not None else _centroid_from_geom(geometry)
+
+    print(f"Descargando NDMI S2 ({department}: {fecha_inicio} a {fecha_fin})...")
+    s2 = fetch_ndmi_s2(token, fecha_inicio, fecha_fin, geometry)
+
+    print(f"Descargando S1 SAR ({department}: {fecha_inicio} a {fecha_fin})...")
+    s1 = fetch_s1_stats(token, fecha_inicio, fecha_fin, geometry)
+
+    print(f"Obteniendo datos climÃ¡ticos ERA5 para {department}...")
+    print(f"-> Coordenadas para anÃ¡lisis ERA5: {lat:.5f}, {lon:.5f}")
+    era5 = fetch_era5_precipitacion(lat, lon)
+
+    if "error" in s2:
+        raise Exception(f"Copernicus rechazÃ³ el PolÃ­gono para S2: {s2['error']}")
+    if "error" in s1:
+        raise Exception(f"Copernicus rechazÃ³ el PolÃ­gono para S1: {s1['error']}")
+
+    ndmi = s2.get("ndmi_media", -0.05)
+    humedad = s1.get("humedad_media", 30.0)
+    spi = era5.get("spi_30d", 0.0)
+    alerta = clasificar_alerta(humedad, ndmi, spi)
+
+    return {
+        "fecha": fecha_fin,
+        "departamento": department,
+        "alerta": alerta,
+        "sentinel_2": s2,
+        "sentinel_1": s1,
+        "era5": era5,
+        "resumen": {
+            "humedad_s1_pct": humedad,
+            "ndmi_s2": ndmi,
+            "spi_30d": spi,
+            "spi_categoria": era5.get("spi_categoria", "Sin datos"),
+            "nivel": alerta["nivel"],
+            "color": alerta["color"],
+        },
+    }
+
+
+def run_pipeline_batch(areas: list[dict[str, Any]], max_workers: int = 4, reference_date: date | None = None) -> list[dict[str, Any]]:
+    """Ejecuta el pipeline para una lista de AOIs reutilizando un Ãºnico token OAuth."""
+    if not areas:
+        return []
+
+    token = get_token()
+
+    def _run(area: dict[str, Any]) -> dict[str, Any]:
+        department = area.get("department", "Rivera")
+        last_error = "unknown_error"
+        for attempt in range(2):
+            try:
+                payload = run_pipeline_with_token(
+                    token,
+                    area.get("geom"),
+                    department=department,
+                    lat=area.get("lat"),
+                    lon=area.get("lon"),
+                    reference_date=reference_date,
+                )
+                return {
+                    "unit_id": area.get("unit_id"),
+                    "department": department,
+                    "status": "ok",
+                    "payload": payload,
+                    "geometry_source": area.get("geometry_source", "catalog"),
+                }
+            except Exception as exc:
+                last_error = str(exc)
+                if "RATE_LIMIT_EXCEEDED" in last_error and attempt == 0:
+                    time.sleep(12)
+                    continue
+                break
+
+        return {
+            "unit_id": area.get("unit_id"),
+            "department": department,
+            "status": "error",
+            "error": last_error,
+            "geometry_source": area.get("geometry_source", "catalog"),
+        }
+
+    results: list[dict[str, Any]] = []
+    worker_count = max(1, min(max_workers, len(areas)))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = [executor.submit(_run, area) for area in areas]
+        for future in concurrent.futures.as_completed(futures):
+            results.append(future.result())
+
+    return results
+
+
 def run_pipeline(geom: dict = None) -> dict:
     """Ejecuta el pipeline completo y retorna estado hídrico actual."""
     print("Obteniendo token CDSE...")
     token = get_token()
+    return run_pipeline_with_token(token, geom)
 
     hoy          = date.today()
     fecha_fin    = str(hoy)
