@@ -60,6 +60,7 @@ app.include_router(api_router, prefix=settings.legacy_api_prefix)
 
 
 @app.get("/health")
+@app.get("/api/health")
 async def health():
     return {"status": "ok", "runtime": "app.main", "version": "1.0.0"}
 
