@@ -168,8 +168,16 @@ function evaluatePixel(s) {
 }""",
 
     "sar": """//VERSION=3
-// SAR Humedad de Suelo — Método Díaz 2026 completo
-// Pipeline: VV+VH → corrección vegetación → 5 puntos calibración → humedad%
+// SAR Humedad de Suelo — Método Díaz 2026 completo + normalización ángulo incidencia
+//
+// Pipeline por píxel:
+//   VV+VH+localIncidenceAngle
+//   → normalización cos² (Ulaby/Freeman, θ_ref=30°)
+//   → detección agua libre (VV<-18 && VH<-23 dB)
+//   → RVI → exclusión vegetación densa (RVI>0.7)
+//   → corrección vegetación: vv_suelo = vv_norm - veg*2.5
+//   → 5 puntos calibración Díaz → NDMI estimado → humedad%
+//   → color RGBA
 //
 // Leyenda:
 //   Azul       → agua libre
@@ -177,18 +185,20 @@ function evaluatePixel(s) {
 //   Rojo→Amar→Verde→Celeste → gradiente seco→húmedo
 //
 // Calibración: Rivera, Uruguay, 1/3/2026
-//   P1 muy seco   VV=-16.92 dB  NDMI=-0.33
-//   P2 seco        VV=-13.49 dB  NDMI=-0.11
-//   P3 med         VV=-12.42 dB  NDMI= 0.07
-//   P4 húmedo      VV=-10.96 dB  NDMI= 0.25
-//   P5 muy húmedo  VV= -8.97 dB  NDMI= 0.44
+//   P1 muy seco    VV=-16.92 dB  NDMI=-0.33
+//   P2 seco         VV=-13.49 dB  NDMI=-0.11
+//   P3 medio        VV=-12.42 dB  NDMI= 0.07
+//   P4 húmedo       VV=-10.96 dB  NDMI= 0.25
+//   P5 muy húmedo   VV= -8.97 dB  NDMI= 0.44
 //
-// humedad% = 100 × (NDMI − (−0.5)) / (0.5 − (−0.5))
+// humedad% = 100 × (NDMI_est − (−0.5)) / 1.0
 function setup() {
-  return { input:[{bands:["VV","VH"],units:"LINEAR_POWER"}], output:{bands:4,sampleType:"UINT8"} };
+  return { input:[{bands:["VV","VH","localIncidenceAngle"],units:"LINEAR_POWER"}], output:{bands:4,sampleType:"UINT8"} };
 }
+// Ángulo de referencia: 30° (centro rango IW Sentinel-1: 29°-46°)
+var THETA_REF=30*Math.PI/180;
 // Matriz de calibración Díaz 2026
-var cal = [[-16.92,-0.33],[-13.49,-0.11],[-12.42,0.07],[-10.96,0.25],[-8.97,0.44]];
+var cal=[[-16.92,-0.33],[-13.49,-0.11],[-12.42,0.07],[-10.96,0.25],[-8.97,0.44]];
 // VV_suelo_dB → NDMI por interpolación lineal con extrapolación plana
 function vvANdmi(vv) {
   var x=cal.map(function(p){return p[0];}), y=cal.map(function(p){return p[1];});
@@ -215,15 +225,26 @@ function evaluatePixel(s) {
   var vv=s.VV, vh=s.VH;
   if (!vv||!vh||vv<=0||vh<=0) return [0,0,0,0];
   var vv_dB=10*Math.log10(vv+1e-10), vh_dB=10*Math.log10(vh+1e-10);
-  // 1. Agua libre
-  if (vv_dB<-18&&vh_dB<-23) return [20,80,200,200];
-  // 2. Vegetación densa: suelo no observable
+
+  // 1. Normalización por ángulo de incidencia (ley cos², Ulaby/Freeman)
+  //    VV_norm = VV_dB - 20*log10(cos(θ)/cos(θ_ref))
+  var theta=(s.localIncidenceAngle||30)*Math.PI/180;
+  var ia_corr=20*Math.log10(Math.cos(theta)/Math.cos(THETA_REF));
+  var vv_dB_norm=vv_dB-ia_corr;
+  var vh_dB_norm=vh_dB-ia_corr;
+
+  // 2. Agua libre (sobre valores normalizados)
+  if (vv_dB_norm<-18&&vh_dB_norm<-23) return [20,80,200,200];
+
+  // 3. Vegetación densa: suelo no observable
   var rvi=vh/(vv+vh);
   var veg=Math.min(1,Math.max(0,(rvi-0.1)/0.4));
   if (veg>0.7) return [30,110,30,180];
-  // 3. Corrección de vegetación sobre VV (Díaz 2026)
-  var vv_suelo_dB=vv_dB-veg*2.5;
-  // 4. Calibración: vv_suelo_dB → NDMI → humedad%
+
+  // 4. Corrección de vegetación sobre VV normalizado (Díaz 2026)
+  var vv_suelo_dB=vv_dB_norm-veg*2.5;
+
+  // 5. Calibración: vv_suelo_dB → NDMI → humedad%
   var ndmi=vvANdmi(vv_suelo_dB);
   var h=ndmiAHumedad(ndmi);
   return humedadAColor(h);
@@ -246,16 +267,21 @@ function evaluatePixel(s) {
   return [r, g, b, 255];
 }""",
     "alerta_fusion": """//VERSION=3
+// Capa de Alerta Fusión S1+S2 — Método Díaz 2026
+// S1: normalización ángulo incidencia + corrección vegetación + calibración 5 puntos
+// S2: NDMI real (B08-B11)/(B08+B11)
+// Nivel alerta: máximo entre S1 y S2
 function setup() {
   return {
     input: [
-      {datasource: "s1", bands: ["VV", "VH"]},
+      {datasource: "s1", bands: ["VV", "VH", "localIncidenceAngle"]},
       {datasource: "s2", bands: ["B04", "B08", "B11", "dataMask"]}
     ],
     output: {bands: 4, sampleType: "UINT8"}
   };
 }
-var cal = [[-16.92,-0.33],[-13.49,-0.11],[-12.42,0.07],[-10.96,0.25],[-8.97,0.44]];
+var THETA_REF=30*Math.PI/180;
+var cal=[[-16.92,-0.33],[-13.49,-0.11],[-12.42,0.07],[-10.96,0.25],[-8.97,0.44]];
 function vvANdmi(vv) {
   var x=cal.map(function(p){return p[0];}), y=cal.map(function(p){return p[1];});
   for (var i=1;i<y.length;i++) if(y[i]<y[i-1]) y[i]=y[i-1];
@@ -271,26 +297,32 @@ function ndmiAHumedad(ndmi) { return Math.min(100,Math.max(0,100*(ndmi+0.5)/1.0)
 function evaluatePixel(samples) {
   var s1 = samples.s1[0];
   var s2 = samples.s2[0];
-  if (!s2 || !s1 || !s2.dataMask || !s1.VV || !s1.VH || s1.VV<=0 || s1.VH<=0) return [0,0,0,0];
-  var vv = s1.VV, vh = s1.VH;
+  if (!s2||!s1||!s2.dataMask||!s1.VV||!s1.VH||s1.VV<=0||s1.VH<=0) return [0,0,0,0];
+  var vv=s1.VV, vh=s1.VH;
   var vv_dB=10*Math.log10(vv+1e-10), vh_dB=10*Math.log10(vh+1e-10);
-  if (vv_dB<-18&&vh_dB<-23) return [0,0,0,0]; // Agua libre
+
+  // 1. Normalización por ángulo de incidencia (cos², θ_ref=30°)
+  var theta=(s1.localIncidenceAngle||30)*Math.PI/180;
+  var ia_corr=20*Math.log10(Math.cos(theta)/Math.cos(THETA_REF));
+  var vv_dB_norm=vv_dB-ia_corr;
+  var vh_dB_norm=vh_dB-ia_corr;
+
+  if (vv_dB_norm<-18&&vh_dB_norm<-23) return [0,0,0,0]; // Agua libre
   var rvi=vh/(vv+vh);
   var veg=Math.min(1,Math.max(0,(rvi-0.1)/0.4));
   if (veg>0.7) return [0,0,0,0]; // Veg densa oculta suelo
-  var vv_suelo_dB=vv_dB-veg*2.5;
-  var hum = ndmiAHumedad(vvANdmi(vv_suelo_dB));
-  var nivel_s1 = hum < 15 ? 3 : hum < 25 ? 2 : hum < 50 ? 1 : 0;
-  
-  var ndmi_s2 = (s2.B08 - s2.B11) / (s2.B08 + s2.B11 + 1e-6);
-  var nivel_s2 = ndmi_s2 < -0.10 ? 3 : ndmi_s2 < 0 ? 2 : ndmi_s2 < 0.10 ? 1 : 0;
-  
-  var nivel = Math.max(nivel_s1, nivel_s2);
-  
-  if (nivel === 0) return [46,  204, 113, 180];
-  if (nivel === 1) return [241, 196, 15,  180];
-  if (nivel === 2) return [230, 126, 34,  180];
-  if (nivel === 3) return [231, 76,  60,  180];
+  var vv_suelo_dB=vv_dB_norm-veg*2.5;
+  var hum=ndmiAHumedad(vvANdmi(vv_suelo_dB));
+  var nivel_s1=hum<15?3:hum<25?2:hum<50?1:0;
+
+  var ndmi_s2=(s2.B08-s2.B11)/(s2.B08+s2.B11+1e-6);
+  var nivel_s2=ndmi_s2<-0.10?3:ndmi_s2<0?2:ndmi_s2<0.10?1:0;
+
+  var nivel=Math.max(nivel_s1,nivel_s2);
+  if (nivel===0) return [46,  204, 113, 180];
+  if (nivel===1) return [241, 196, 15,  180];
+  if (nivel===2) return [230, 126, 34,  180];
+  if (nivel===3) return [231, 76,  60,  180];
   return [0,0,0,0];
 }""",
 }
@@ -631,6 +663,17 @@ _FRONTEND_LOCAL  = Path(__file__).resolve().parent.parent / "frontend"
 _FRONTEND = _FRONTEND_DOCKER if _FRONTEND_DOCKER.exists() else _FRONTEND_LOCAL
 
 if _FRONTEND.exists():
+    # Servir logos directamente
+    @app.get("/logo.png")
+    @app.get("/static/logo.png")
+    async def get_logo():
+        return FileResponse(_FRONTEND / "logo.png")
+
+    @app.get("/AIDeepEconomics.png")
+    @app.get("/static/AIDeepEconomics.png")
+    async def get_logo_ai():
+        return FileResponse(_FRONTEND / "AIDeepEconomics.png")
+
     app.mount("/static", StaticFiles(directory=str(_FRONTEND)), name="static")
 
     @app.get("/", include_in_schema=False)
@@ -640,4 +683,5 @@ if _FRONTEND.exists():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8005))
-    uvicorn.run("server:app", host="0.0.0.0", port=port, reload=False)
+    print(f"\n🚀 AgroClimaX corriendo en http://localhost:{port}")
+    uvicorn.run(app, host="0.0.0.0", port=port, reload=False)

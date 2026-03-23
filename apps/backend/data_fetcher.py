@@ -176,34 +176,63 @@ def fetch_s1_stats(token: str, fecha_inicio: str, fecha_fin: str, geom: dict = N
     STAT_URL = "https://sh.dataspace.copernicus.eu/api/v1/statistics"
     headers  = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
-    # Evalscript fiel al método Díaz 2026:
-    # retorna vv_suelo_dB (VV corregido por vegetación), excluyendo agua y veg densa
+    # Evalscript fiel al método Díaz 2026 — pipeline completo por píxel:
+    #   1. Normalización por ángulo de incidencia (ley cos², θ_ref=30°, Ulaby/Freeman)
+    #   2. Detección agua libre (VV<-18 dB y VH<-23 dB)
+    #   3. RVI para estimar cobertura vegetal (VH/(VV+VH))
+    #   4. Exclusión vegetación densa (RVI>0.7, suelo no observable)
+    #   5. Corrección de vegetación: vv_suelo_dB = vv_norm_dB - veg*2.5
+    # NOTA speckle: la Statistics API promedia espacialmente todos los píxeles
+    #   del AOI a resolución 200m (resx/resy=0.002°). Ese promedio espacial actúa
+    #   como filtro equivalente a un Boxcar filter de ~20x20 píxeles sobre los
+    #   10m nativos de S1-GRD, reduciendo el speckle sin filtro explícito.
+    #   Este comportamiento está documentado y es suficiente para el pipeline
+    #   estadístico (cf. Díaz 2026, sección 2.3: "promedio departamental").
     evalscript_vv = """
 //VERSION=3
 // Método Díaz 2026 — pipeline completo por píxel
-// Salida: vv_suelo_dB (VV corregido por vegetación, sin agua, sin veg densa)
+// Paso adicional: normalización por ángulo de incidencia (Ulaby/Freeman cos² law)
+// Salida: vv_suelo_dB (VV normalizado + corregido por vegetación)
+//
+// SPECKLE: el promedio espacial de la Statistics API sobre resx=0.002° (~200m)
+// actúa como filtro Boxcar implícito (~20x20 px a 10m nativos). Suficiente para
+// el pipeline estadístico departamental. No se aplica filtro espacial explícito.
 function setup() {
   return {
-    input: [{ bands: ["VV", "VH"], units: "LINEAR_POWER" }],
+    input: [{ bands: ["VV", "VH", "localIncidenceAngle"], units: "LINEAR_POWER" }],
     output: [
       { id: "default",  bands: 1, sampleType: "FLOAT32" },
       { id: "dataMask", bands: 1, sampleType: "UINT8"   }
     ]
   };
 }
+// Ángulo de incidencia de referencia: 30° (centro del rango IW de Sentinel-1)
+var THETA_REF_RAD = 30 * Math.PI / 180;
+
 function evaluatePixel(s) {
   var vv = s.VV; var vh = s.VH;
   if (!vv || !vh || vv <= 0 || vh <= 0) return { default: [NaN], dataMask: [0] };
   var vv_dB = 10 * Math.log10(vv);
   var vh_dB = 10 * Math.log10(vh);
-  // Agua libre: retrodispersión especular muy baja en ambas polarizaciones
-  if (vv_dB < -18 && vh_dB < -23) return { default: [NaN], dataMask: [0] };
-  // Vegetación densa: suelo no observable
+
+  // 1. Normalización por ángulo de incidencia (ley cos², Ulaby et al.)
+  //    VV_norm = VV_dB - 20*log10(cos(θ)/cos(θ_ref))
+  //    Corrige el efecto geométrico: a mayor θ VV es artificialmente más bajo.
+  var theta_rad = (s.localIncidenceAngle || 30) * Math.PI / 180;
+  var ia_corr = 20 * Math.log10(Math.cos(theta_rad) / Math.cos(THETA_REF_RAD));
+  var vv_dB_norm = vv_dB - ia_corr;
+  var vh_dB_norm = vh_dB - ia_corr;
+
+  // 2. Agua libre: retrodispersión especular muy baja en ambas polarizaciones
+  if (vv_dB_norm < -18 && vh_dB_norm < -23) return { default: [NaN], dataMask: [0] };
+
+  // 3-4. Vegetación densa: suelo no observable (RVI > 0.7)
   var rvi = vh / (vv + vh);
   var veg = Math.min(1, Math.max(0, (rvi - 0.1) / 0.4));
   if (veg > 0.7) return { default: [NaN], dataMask: [0] };
-  // Corrección de vegetación sobre VV
-  var vv_suelo_dB = vv_dB - veg * 2.5;
+
+  // 5. Corrección de vegetación sobre VV normalizado (Díaz 2026)
+  var vv_suelo_dB = vv_dB_norm - veg * 2.5;
   return { default: [vv_suelo_dB], dataMask: [1] };
 }
 """
