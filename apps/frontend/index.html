@@ -1,9 +1,10 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AgroClimaX — Alertas Agroclimáticas Rivera, Uruguay</title>
+  <title>AgroClimaX - Alertas Agroclimaticas Rivera, Uruguay</title>
+  <link rel="icon" type="image/png" href="/static/logo_agroclimax_header.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -35,7 +36,7 @@
       flex-direction: column;
     }
 
-    /* ── HEADER ── */
+    /* â”€â”€ HEADER â”€â”€ */
     header {
       background: var(--surface);
       border-bottom: 1px solid var(--border);
@@ -62,8 +63,13 @@
       display: block;
     }
 
+    .logo img.logo-principal {
+      height: 72px;
+    }
+
     .logo img.logo-secundario {
-      height: 62px; /* Reducido un 30% (88px * 0.7 = ~62px) */
+      height: 58px;
+      opacity: 0.9;
     }
 
     .header-right {
@@ -91,7 +97,7 @@
       color: var(--text-muted);
     }
 
-    /* ── ALERTA BANNER ── */
+    /* â”€â”€ ALERTA BANNER â”€â”€ */
     #alerta-banner {
       padding: 10px 24px;
       font-size: 0.85rem;
@@ -114,7 +120,7 @@
       50% { opacity: 0.6; transform: scale(1.3); }
     }
 
-    /* ── LAYOUT ── */
+    /* â”€â”€ LAYOUT â”€â”€ */
     .main-grid {
       display: grid;
       grid-template-columns: 1fr 340px;
@@ -124,43 +130,290 @@
       min-height: 0;
     }
 
-    /* ── KPI BAR ── */
-    .kpi-bar {
+    /* â”€â”€ KPI BAR â”€â”€ */
+    .dashboard-top-strip {
       grid-column: 1 / -1;
+      display: flex;
+      align-items: stretch;
+      gap: 0;
+      width: calc(100% - 16px);
+      margin-left: 16px;
+      align-self: start;
+    }
+
+    .kpi-bar {
       display: grid;
-      grid-template-columns: repeat(5, 1fr);
+      grid-template-columns: repeat(7, minmax(0, 1fr));
       gap: 1px;
       background: var(--border);
       border-bottom: 1px solid var(--border);
+      width: min(1080px, calc(100% - 340px));
+      border-inline: 1px solid var(--border);
+      flex: 0 0 auto;
     }
 
     .kpi-card {
       background: var(--surface);
-      padding: 16px 20px;
+      min-width: 0;
+      padding: 11px 12px;
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 3px;
+      position: relative;
+      overflow: visible;
     }
 
     .kpi-label {
-      font-size: 0.72rem;
+      font-size: 0.66rem;
       color: var(--text-muted);
       text-transform: uppercase;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.42px;
+      line-height: 1.25;
+    }
+
+    .kpi-label-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .metric-tooltip-wrap {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      flex-shrink: 0;
+    }
+
+    .metric-info-btn {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      border: 1px solid rgba(136, 146, 164, 0.45);
+      background: rgba(255,255,255,0.04);
+      color: var(--text-muted);
+      font-size: 0.68rem;
+      font-weight: 700;
+      cursor: help;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+      padding: 0;
+    }
+
+    .metric-info-btn:hover,
+    .metric-info-btn:focus-visible {
+      border-color: var(--accent);
+      color: var(--accent);
+      outline: none;
+    }
+
+    .metric-tooltip-panel {
+      position: absolute;
+      top: calc(100% + 10px);
+      right: 0;
+      min-width: 280px;
+      max-width: 340px;
+      padding: 12px 13px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: rgba(15, 17, 23, 0.97);
+      box-shadow: 0 18px 42px rgba(0,0,0,0.38);
+      color: var(--text);
+      font-size: 0.72rem;
+      line-height: 1.45;
+      z-index: 1200;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(-4px);
+      transition: opacity 0.16s ease, transform 0.16s ease, visibility 0.16s ease;
+      pointer-events: none;
+      text-transform: none;
+      letter-spacing: normal;
+    }
+
+    .metric-tooltip-wrap:hover .metric-tooltip-panel,
+    .metric-tooltip-wrap:focus-within .metric-tooltip-panel {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+
+    .metric-tooltip-title {
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 4px;
+    }
+
+    .metric-tooltip-unit {
+      color: var(--accent);
+      margin-bottom: 6px;
+    }
+
+    .metric-tooltip-copy {
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+
+    .metric-tooltip-copy:last-child {
+      margin-bottom: 0;
+    }
+
+    .metric-tooltip-panel a {
+      color: #7db7ff;
+      text-decoration: none;
+    }
+
+    .metric-tooltip-panel a:hover {
+      text-decoration: underline;
     }
 
     .kpi-value {
-      font-size: 1.6rem;
+      font-size: 1.32rem;
       font-weight: 700;
-      line-height: 1;
+      line-height: 1.02;
     }
 
     .kpi-sub {
-      font-size: 0.72rem;
+      font-size: 0.64rem;
       color: var(--text-muted);
+      line-height: 1.25;
     }
 
-    /* ── MAPA ── */
+    .weather-strip-panel {
+      min-width: 360px;
+      flex: 1 1 380px;
+      display: flex;
+      flex-direction: column;
+      border-bottom: 1px solid var(--border);
+      border-right: 1px solid var(--border);
+      background: var(--border);
+    }
+
+    .weather-strip-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 9px 10px;
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .weather-strip-title {
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      line-height: 1.15;
+    }
+
+    .weather-strip-meta {
+      margin-top: 3px;
+      font-size: 0.72rem;
+      color: var(--text);
+      line-height: 1.25;
+    }
+
+    .weather-strip-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .weather-filter-select {
+      min-width: 170px;
+      max-width: 220px;
+      padding: 6px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #111723;
+      color: var(--text);
+      font-size: 0.74rem;
+      font-family: 'Inter', sans-serif;
+    }
+
+    .weather-kpi-bar {
+      min-width: 0;
+      flex: 1 1 auto;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 1px;
+      background: var(--border);
+      border-left: 1px solid var(--border);
+    }
+
+    .weather-kpi-bar .kpi-card {
+      padding: 10px 9px;
+    }
+
+    .weather-kpi-bar .kpi-label {
+      font-size: 0.58rem;
+      letter-spacing: 0.06em;
+    }
+
+    .weather-kpi-bar .kpi-value {
+      font-size: 0.98rem;
+      line-height: 1.05;
+    }
+
+    .weather-kpi-bar .kpi-sub {
+      font-size: 0.56rem;
+      line-height: 1.25;
+    }
+
+    .overview-grid {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: 1.05fr 1fr 1.45fr 1.05fr;
+      gap: 12px;
+      width: calc(100% - 24px);
+      margin: 12px auto 0;
+      align-self: start;
+    }
+
+    .overview-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 16px;
+      min-width: 0;
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.14);
+    }
+
+    .overview-card .panel-title {
+      margin-bottom: 10px;
+    }
+
+    .overview-card.overview-card-series {
+      min-width: 0;
+    }
+
+    .overview-card.overview-card-alerts {
+      min-width: 0;
+    }
+
+    .overview-card #alertas-recientes {
+      max-height: 168px;
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+
+    .overview-card #alertas-recientes::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    .overview-card #alertas-recientes::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 999px;
+    }
+
+    /* â”€â”€ MAPA â”€â”€ */
     .map-container {
       position: relative;
       background: var(--surface);
@@ -230,12 +483,12 @@
       flex-shrink: 0;
     }
 
-    /* ── LAYER SELECTOR ── */
+    /* â”€â”€ LAYER SELECTOR â”€â”€ */
     .map-controls {
       position: absolute;
       top: 10px;
       left: 10px;
-      right: 10px;
+      right: 150px;
       z-index: 500;
       display: flex;
       gap: 5px;
@@ -318,7 +571,7 @@
       animation: pulse 1.5s infinite;
     }
 
-    /* ── SIDEBAR PANEL ── */
+    /* â”€â”€ SIDEBAR PANEL â”€â”€ */
     .side-panel {
       background: var(--surface);
       overflow-y: auto;
@@ -341,7 +594,250 @@
       font-weight: 600;
     }
 
-    /* ── ALERTA CARD ── */
+    .sidebar-tabs {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 1px;
+      background: var(--border);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 3;
+    }
+
+    .sidebar-tab {
+      border: 0;
+      padding: 12px 14px;
+      background: var(--surface2);
+      color: var(--text-muted);
+      font-family: inherit;
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      cursor: pointer;
+      transition: background 0.2s ease, color 0.2s ease;
+    }
+
+    .sidebar-tab.active {
+      background: rgba(74, 144, 217, 0.16);
+      color: var(--accent);
+    }
+
+    .sidebar-view {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .sidebar-view.hidden {
+      display: none;
+    }
+
+    .settings-card {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 12px;
+      background: rgba(36, 39, 64, 0.72);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+
+    .settings-toolbar {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+    }
+
+    .settings-meta {
+      display: grid;
+      gap: 6px;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+
+    .settings-actions {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+    }
+
+    .settings-btn {
+      padding: 9px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: rgba(15, 17, 23, 0.92);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+    }
+
+    .settings-btn:hover {
+      transform: translateY(-1px);
+      border-color: rgba(74, 144, 217, 0.45);
+      background: rgba(26, 29, 46, 0.96);
+    }
+
+    .settings-btn.primary {
+      border-color: rgba(74, 144, 217, 0.4);
+      background: rgba(74, 144, 217, 0.14);
+      color: #b4d6ff;
+    }
+
+    .settings-btn.warn {
+      border-color: rgba(231, 76, 60, 0.35);
+      background: rgba(231, 76, 60, 0.12);
+      color: #f2b0a7;
+    }
+
+    .settings-input {
+      width: 100%;
+      padding: 9px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: rgba(15, 17, 23, 0.92);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.82rem;
+    }
+
+    .settings-input.invalid {
+      border-color: var(--rojo);
+      box-shadow: 0 0 0 1px rgba(231, 76, 60, 0.2);
+    }
+
+    .settings-json {
+      min-height: 124px;
+      resize: vertical;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 0.74rem;
+      line-height: 1.45;
+    }
+
+    .settings-status {
+      min-height: 40px;
+      padding: 9px 10px;
+      border-radius: 8px;
+      background: rgba(15, 17, 23, 0.72);
+      border: 1px dashed rgba(136, 146, 164, 0.25);
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      line-height: 1.45;
+    }
+
+    .settings-status[data-tone="success"] { color: #8de0b0; border-color: rgba(46, 204, 113, 0.4); }
+    .settings-status[data-tone="error"] { color: #f4b0a8; border-color: rgba(231, 76, 60, 0.4); }
+    .settings-status[data-tone="info"] { color: #b4d6ff; border-color: rgba(74, 144, 217, 0.4); }
+
+    .settings-section-card {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 12px;
+      background: rgba(15, 17, 23, 0.44);
+      border: 1px solid rgba(46, 49, 80, 0.9);
+      border-radius: 10px;
+    }
+
+    .settings-section-title {
+      font-size: 0.88rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .settings-section-copy {
+      font-size: 0.76rem;
+      color: var(--text-muted);
+      line-height: 1.45;
+    }
+
+    .settings-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .settings-field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .settings-field-wide {
+      grid-column: 1 / -1;
+    }
+
+    .settings-field-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .settings-field-help {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+
+    .settings-inherited,
+    .settings-override {
+      padding: 2px 7px;
+      border-radius: 999px;
+      font-size: 0.66rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .settings-inherited {
+      color: var(--text-muted);
+      background: rgba(136, 146, 164, 0.14);
+      border: 1px solid rgba(136, 146, 164, 0.18);
+    }
+
+    .settings-override {
+      color: var(--accent);
+      background: rgba(74, 144, 217, 0.14);
+      border: 1px solid rgba(74, 144, 217, 0.2);
+    }
+
+    .settings-audit-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .settings-audit-item {
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: rgba(15, 17, 23, 0.48);
+      border: 1px solid rgba(46, 49, 80, 0.8);
+    }
+
+    .settings-audit-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 4px;
+      font-size: 0.78rem;
+      color: var(--text);
+    }
+
+    .settings-audit-meta,
+    .settings-audit-empty {
+      font-size: 0.73rem;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+
+    /* â”€â”€ ALERTA CARD â”€â”€ */
     .alerta-card {
       border-radius: 8px;
       padding: 14px;
@@ -386,7 +882,7 @@
       border-left: 3px solid currentColor;
     }
 
-    /* ── INDICADORES ── */
+    /* â”€â”€ INDICADORES â”€â”€ */
     .indicador-row {
       display: flex;
       justify-content: space-between;
@@ -403,6 +899,102 @@
     .indicador-valor {
       font-weight: 600;
       font-variant-numeric: tabular-nums;
+    }
+
+    .import-card {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 12px;
+      background: rgba(36, 39, 64, 0.75);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+
+    .import-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    .import-badge {
+      min-width: 34px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(74, 144, 217, 0.35);
+      background: rgba(74, 144, 217, 0.12);
+      color: var(--accent);
+      text-align: center;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .import-help {
+      font-size: 0.76rem;
+      color: var(--text-muted);
+      line-height: 1.45;
+    }
+
+    .import-select,
+    .import-file {
+      width: 100%;
+      padding: 9px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: rgba(15, 17, 23, 0.92);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.82rem;
+    }
+
+    .import-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .import-btn {
+      flex: 1;
+      padding: 9px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: rgba(15, 17, 23, 0.92);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+    }
+
+    .import-btn:hover:not(:disabled) {
+      transform: translateY(-1px);
+      border-color: rgba(74, 144, 217, 0.45);
+      background: rgba(26, 29, 46, 0.96);
+    }
+
+    .import-btn:disabled {
+      opacity: 0.6;
+      cursor: wait;
+    }
+
+    .import-btn.primary {
+      border-color: rgba(46, 204, 113, 0.35);
+      background: rgba(46, 204, 113, 0.12);
+      color: #9de0b9;
+    }
+
+    .import-status {
+      min-height: 36px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: rgba(15, 17, 23, 0.72);
+      border: 1px dashed rgba(136, 146, 164, 0.2);
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      line-height: 1.45;
     }
 
     /* Barra de humedad */
@@ -431,13 +1023,13 @@
       transition: width 1s ease;
     }
 
-    /* ── CHART ── */
+    /* â”€â”€ CHART â”€â”€ */
     .chart-wrap {
       position: relative;
       height: 160px;
     }
 
-    /* ── ALERTAS RECIENTES ── */
+    /* â”€â”€ ALERTAS RECIENTES â”€â”€ */
     .alerta-item {
       display: flex;
       align-items: center;
@@ -462,7 +1054,7 @@
       margin-left: auto;
     }
 
-    /* ── SPI GAUGE ── */
+    /* â”€â”€ SPI GAUGE â”€â”€ */
     .spi-gauge {
       display: flex;
       flex-direction: column;
@@ -520,12 +1112,12 @@
       margin-top: 4px;
     }
 
-    /* ── SCROLL ── */
+    /* â”€â”€ SCROLL â”€â”€ */
     .side-panel::-webkit-scrollbar { width: 4px; }
     .side-panel::-webkit-scrollbar-track { background: transparent; }
     .side-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
-    /* ── FOOTER ── */
+    /* â”€â”€ FOOTER â”€â”€ */
     footer {
       grid-column: 1 / -1;
       background: var(--surface);
@@ -550,6 +1142,99 @@
       padding: 2px 8px;
       font-size: 0.68rem;
     }
+
+    @media (max-width: 1280px) {
+      .dashboard-top-strip {
+        width: calc(100% - 32px);
+        margin-left: 16px;
+      }
+
+      .kpi-bar { width: min(1080px, calc(100% - 360px)); }
+
+      .overview-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .kpi-card {
+        padding: 10px 11px;
+      }
+
+      .kpi-value {
+        font-size: 1.22rem;
+      }
+    }
+
+    @media (max-width: 900px) {
+      .dashboard-top-strip {
+        display: grid;
+        width: calc(100% - 20px);
+        margin-left: 10px;
+      }
+
+      .kpi-bar {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        width: 100%;
+      }
+
+      .weather-strip-head {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .weather-strip-controls {
+        width: 100%;
+      }
+
+      .weather-filter-select {
+        width: 100%;
+        max-width: none;
+      }
+
+      .weather-kpi-bar {
+        min-width: 0;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .overview-grid {
+        width: calc(100% - 20px);
+      }
+
+      .kpi-card {
+        padding: 10px;
+      }
+
+      .map-controls {
+        right: 10px;
+        top: 58px;
+      }
+
+      .map-opacity-wrap {
+        top: 10px;
+        right: 10px;
+      }
+
+      .settings-toolbar,
+      .settings-actions,
+      .settings-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .kpi-bar {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .weather-kpi-bar { grid-template-columns: 1fr; }
+
+      .overview-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .kpi-value {
+        font-size: 1.16rem;
+      }
+    }
   </style>
 </head>
 <body>
@@ -557,18 +1242,18 @@
 <!-- HEADER -->
 <header>
     <div class="logo">
-      <img src="static/logo.png" alt="AgroClimaX Logo">
+      <img src="static/logo_agroclimax_header.png" alt="AgroClimaX Logo" class="logo-principal">
       <img src="static/AIDeepEconomics.png" alt="AI Deep Economics Logo" class="logo-secundario">
     </div>
   <div class="header-right">
-    <div class="badge-area">Área: <span id="scope-badge-value">Uruguay</span></div>
-    <div class="badge-area">Satélites: <span>Sentinel-1 · Sentinel-2 · ERA5</span></div>
+    <div class="badge-area">Area: <span id="scope-badge-value">Uruguay</span></div>
+    <div class="badge-area">Satelites: <span>Sentinel-1 - Sentinel-2 - ERA5</span></div>
     <select id="department-select" style="padding:6px 12px;border-radius:6px;border:1px solid #2a3447;background:#111723;color:#d6deea;font-size:0.8rem;font-family:Inter,sans-serif">
       <option value="nacional">Uruguay (nacional)</option>
     </select>
-    <button id="btn-dibujar" onclick="window._drawingMode ? window.finishDrawing() : window.startDrawing()" style="padding:6px 14px;border-radius:6px;border:1px solid #4a90d9;background:#1a1d2e;color:#4a90d9;cursor:pointer;font-size:0.8rem;font-family:Inter,sans-serif;font-weight:600">✏️ Dibujar Parcela</button>
-    <button id="btn-limpiar" onclick="window.clearDrawing()" style="display:none;padding:6px 14px;border-radius:6px;border:1px solid #e74c3c;background:#1a1d2e;color:#e74c3c;cursor:pointer;font-size:0.8rem;font-family:Inter,sans-serif;font-weight:600">🗑 Limpiar</button>
-    <div class="last-update" id="last-update">Actualizado: —</div>
+    <button id="btn-dibujar" onclick="window._drawingMode ? window.finishDrawing() : window.startDrawing()" style="padding:6px 14px;border-radius:6px;border:1px solid #4a90d9;background:#1a1d2e;color:#4a90d9;cursor:pointer;font-size:0.8rem;font-family:Inter,sans-serif;font-weight:600">&#9998; Dibujar Parcela</button>
+    <button id="btn-limpiar" onclick="window.clearDrawing()" style="display:none;padding:6px 14px;border-radius:6px;border:1px solid #e74c3c;background:#1a1d2e;color:#e74c3c;cursor:pointer;font-size:0.8rem;font-family:Inter,sans-serif;font-weight:600">&#128465; Limpiar</button>
+    <div class="last-update" id="last-update">Actualizado: -</div>
   </div>
 </header>
 
@@ -578,159 +1263,95 @@
 <div class="main-grid">
 
   <!-- KPI BAR -->
-  <div class="kpi-bar">
-    <div class="kpi-card">
-      <div class="kpi-label">Humedad Suelo (S1)</div>
-      <div class="kpi-value" id="kpi-humedad" style="color: var(--naranja);">—</div>
-      <div class="kpi-sub">Sentinel-1 SAR · ~5 cm prof.</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-label">NDMI Vegetación (S2)</div>
-      <div class="kpi-value" id="kpi-ndmi" style="color: var(--amarillo);">—</div>
-      <div class="kpi-sub">Sentinel-2 · B08/B11</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-label">SPI-30 (ERA5)</div>
-      <div class="kpi-value" id="kpi-spi" style="color: var(--rojo);">—</div>
-      <div class="kpi-sub">Índice Precip. Estandarizado</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-label">Área en Alerta</div>
-      <div class="kpi-value" id="kpi-area" style="color: var(--naranja);">—</div>
-      <div class="kpi-sub">% unidad afectada</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-label">Risk Score</div>
-      <div class="kpi-value" id="kpi-risk" style="color: var(--rojo);">—</div>
-      <div class="kpi-sub">Magnitud + persistencia + meteo</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-label">Confianza</div>
-      <div class="kpi-value" id="kpi-confidence" style="color: var(--accent);">—</div>
-      <div class="kpi-sub">Calidad de dato y calibración</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-label">Persistencia</div>
-      <div class="kpi-value" id="kpi-dias" style="color: var(--rojo);">—</div>
-      <div class="kpi-sub">Días en el estado actual</div>
-    </div>
-  </div>
-
-  <!-- MAPA -->
-  <div class="map-container">
-    <div id="map"></div>
-
-    <!-- SELECTOR DE CAPAS AGRONÓMICAS -->
-    <div class="map-controls">
-      <button class="map-btn active" id="btn-alerta" onclick="setLayer('alerta',this)">
-        <span class="map-btn-icon">🎯</span>
-        <span class="map-btn-name">Alerta</span>
-        <span class="map-btn-desc">S1 + S2</span>
-      </button>
-      <button class="map-btn" id="btn-rgb" onclick="setLayer('rgb',this)">
-        <span class="map-btn-icon">🌍</span>
-        <span class="map-btn-name">RGB</span>
-        <span class="map-btn-formula">B04·B03·B02</span>
-      </button>
-      <button class="map-btn" id="btn-ndvi" onclick="setLayer('ndvi',this)">
-        <span class="map-btn-icon">🌿</span>
-        <span class="map-btn-name">NDVI</span>
-        <span class="map-btn-formula">B08−B04/sum</span>
-      </button>
-      <button class="map-btn" id="btn-ndmi" onclick="setLayer('ndmi',this)">
-        <span class="map-btn-icon">💧</span>
-        <span class="map-btn-name">NDMI</span>
-        <span class="map-btn-formula">B08−B11/sum</span>
-      </button>
-      <button class="map-btn" id="btn-ndwi" onclick="setLayer('ndwi',this)">
-        <span class="map-btn-icon">🔵</span>
-        <span class="map-btn-name">NDWI</span>
-        <span class="map-btn-formula">B03−B08/sum</span>
-      </button>
-      <button class="map-btn" id="btn-savi" onclick="setLayer('savi',this)">
-        <span class="map-btn-icon">🌾</span>
-        <span class="map-btn-name">SAVI</span>
-        <span class="map-btn-formula">(B08−B04)/…·1.5</span>
-      </button>
-      <button class="map-btn" id="btn-sar" onclick="setLayer('sar',this)">
-        <span class="map-btn-icon">📡</span>
-        <span class="map-btn-name">SAR VV</span>
-        <span class="map-btn-formula">S1 · Díaz 2026</span>
-      </button>
-      <button class="map-btn" id="btn-lst" onclick="setLayer('lst',this)">
-        <span class="map-btn-icon">🌡️</span>
-        <span class="map-btn-name">Termal</span>
-        <span class="map-btn-formula">LST S3</span>
-      </button>
-      <button class="map-btn" id="btn-coneat" onclick="setLayer('coneat',this)">
-        <span class="map-btn-icon">🚜</span>
-        <span class="map-btn-name">CONEAT</span>
-        <span class="map-btn-formula">MGAP · Suelos</span>
-      </button>
-      <button class="map-btn" id="btn-judicial" onclick="setLayer('judicial',this)">
-        <span class="map-btn-icon">⚖️</span>
-        <span class="map-btn-name">Judicial</span>
-        <span class="map-btn-formula">IDE · Secciones</span>
-      </button>
-    </div>
-
-    <!-- Control de opacidad -->
-    <div class="map-opacity-wrap" id="opacity-wrap" style="display:none">
-      <span>Opacidad</span>
-      <input type="range" id="opacity-slider" min="20" max="100" value="85"
-             oninput="setTileOpacity(this.value/100)">
-      <span id="opacity-label">85%</span>
-    </div>
-
-    <!-- Indicador de carga -->
-    <div class="map-tile-loading" id="map-tile-loading">⏳ Cargando Sentinel...</div>
-
-    <!-- LEYENDA DINÁMICA -->
-    <div class="map-legend" id="map-legend">
-      <div class="map-legend-title" id="legend-title">Nivel de Alerta · Rivera</div>
-      <div id="legend-content">
-        <div class="legend-item"><div class="legend-dot" style="background:#2ecc71"></div> Verde — Normal (&gt;50%)</div>
-        <div class="legend-item"><div class="legend-dot" style="background:#f1c40f"></div> Amarillo (25–50%)</div>
-        <div class="legend-item"><div class="legend-dot" style="background:#e67e22"></div> Naranja (15–25%)</div>
-        <div class="legend-item"><div class="legend-dot" style="background:#e74c3c"></div> Rojo (&lt;15%)</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- SIDE PANEL -->
-  <div class="side-panel">
-
-    <!-- ESTADO ACTUAL -->
-    <div class="panel-section">
-      <div class="panel-title">Estado Hídrico Actual</div>
-      <div class="alerta-card" id="alerta-card-main">
-        <div class="alerta-header">
-          <div class="alerta-nivel" id="alerta-nivel-text">Cargando...</div>
-          <div class="alerta-badge" id="alerta-tipo-badge">—</div>
+  <div class="dashboard-top-strip">
+    <div class="kpi-bar">
+      <div class="kpi-card">
+        <div class="kpi-label-row">
+          <div class="kpi-label">Humedad Suelo (S1)</div>
+          <div class="metric-tooltip-wrap">
+            <button class="metric-info-btn" type="button" aria-label="Unidad y fuente de Humedad Suelo (S1)">i</button>
+            <div class="metric-tooltip-panel" data-metric-tooltip="humidity_s1"></div>
+          </div>
         </div>
-        <div class="alerta-descripcion" id="alerta-descripcion">Conectando con datos Copernicus...</div>
-        <div class="alerta-accion" id="alerta-accion">—</div>
-        <div class="alerta-accion" id="alerta-extra" style="margin-top:8px;color:var(--text-muted)">Calibración y trazabilidad en carga...</div>
+        <div class="kpi-value" id="kpi-humedad" style="color: var(--naranja);">-</div>
+        <div class="kpi-sub">Sentinel-1 SAR - ~5 cm prof.</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">NDMI Vegetacion (S2)</div>
+        <div class="kpi-value" id="kpi-ndmi" style="color: var(--amarillo);">-</div>
+        <div class="kpi-sub">Sentinel-2 - B08/B11</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">SPI-30 (ERA5)</div>
+        <div class="kpi-value" id="kpi-spi" style="color: var(--rojo);">-</div>
+        <div class="kpi-sub">Indice Precip. Estandarizado</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Area en Alerta</div>
+        <div class="kpi-value" id="kpi-area" style="color: var(--naranja);">-</div>
+        <div class="kpi-sub">% unidad afectada</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Risk Score</div>
+        <div class="kpi-value" id="kpi-risk" style="color: var(--rojo);">-</div>
+        <div class="kpi-sub">Magnitud + persistencia + meteo</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Confianza</div>
+        <div class="kpi-value" id="kpi-confidence" style="color: var(--accent);">-</div>
+        <div class="kpi-sub">Calidad de dato y calibracion</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Persistencia</div>
+        <div class="kpi-value" id="kpi-dias" style="color: var(--rojo);">-</div>
+        <div class="kpi-sub">Dias en el estado actual</div>
       </div>
     </div>
 
-    <div class="panel-section">
-      <div class="panel-title">Motores de Riesgo</div>
-      <div id="drivers-list" style="display:flex;flex-direction:column;gap:10px;color:var(--text);font-size:0.82rem"></div>
+    <div class="weather-strip-panel">
+      <div class="weather-strip-head">
+        <div>
+          <div class="weather-strip-title">Meteorologia y forecast operativo</div>
+          <div class="weather-strip-meta" id="weather-filter-label">Seleccion actual</div>
+        </div>
+        <div class="weather-strip-controls">
+          <select id="weather-filter-select" class="weather-filter-select" aria-label="Filtrar meteorologia por ambito">
+            <option value="current">Seleccion actual</option>
+          </select>
+        </div>
+      </div>
+      <div class="weather-kpi-bar">
+        <div class="kpi-card">
+          <div class="kpi-label" id="weather-card-title-1">Lluvia 24h</div>
+          <div class="kpi-value" id="weather-card-value-1">-</div>
+          <div class="kpi-sub" id="weather-card-sub-1">Prob. de precipitacion</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label" id="weather-card-title-2">Temperatura</div>
+          <div class="kpi-value" id="weather-card-value-2">-</div>
+          <div class="kpi-sub" id="weather-card-sub-2">Humedad relativa media</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label" id="weather-card-title-3">Viento</div>
+          <div class="kpi-value" id="weather-card-value-3">-</div>
+          <div class="kpi-sub" id="weather-card-sub-3">Direccion y rachas</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label" id="weather-card-title-4">ET0 / Balance</div>
+          <div class="kpi-value" id="weather-card-value-4">-</div>
+          <div class="kpi-sub" id="weather-card-sub-4">Balance y presion prevista</div>
+        </div>
+      </div>
     </div>
+  </div>
 
-    <div class="panel-section">
-      <div class="panel-title">Forecast 7 Días</div>
-      <div id="forecast-list" style="display:flex;flex-direction:column;gap:8px;color:var(--text);font-size:0.8rem"></div>
-    </div>
-
-    <!-- BARRAS DE HUMEDAD -->
-    <div class="panel-section">
+  <div class="overview-grid">
+    <div class="overview-card">
       <div class="panel-title">Humedad Superficial del Suelo</div>
       <div class="humedad-bar-wrap">
         <div class="humedad-bar-label">
           <span>Humedad S1 (Sentinel-1)</span>
-          <span id="hum-s1-pct">—</span>
+          <span id="hum-s1-pct">-</span>
         </div>
         <div class="humedad-bar">
           <div class="humedad-bar-fill" id="hum-s1-bar" style="width:0%;background:var(--naranja)"></div>
@@ -739,7 +1360,7 @@
       <div class="humedad-bar-wrap" style="margin-top:10px">
         <div class="humedad-bar-label">
           <span>NDMI normalizado (S2)</span>
-          <span id="hum-ndmi-pct">—</span>
+          <span id="hum-ndmi-pct">-</span>
         </div>
         <div class="humedad-bar">
           <div class="humedad-bar-fill" id="hum-ndmi-bar" style="width:0%;background:var(--amarillo)"></div>
@@ -747,11 +1368,10 @@
       </div>
     </div>
 
-    <!-- SPI GAUGE -->
-    <div class="panel-section">
-      <div class="panel-title">SPI-30 — Precipitación Estandarizada (ERA5)</div>
+    <div class="overview-card">
+      <div class="panel-title">SPI-30 - Precipitacion Estandarizada (ERA5)</div>
       <div class="spi-gauge">
-        <div class="spi-value-big" id="spi-big">—</div>
+        <div class="spi-value-big" id="spi-big">-</div>
         <div class="spi-label" id="spi-cat">Sin datos</div>
         <div class="spi-bar-wrap">
           <div class="spi-scale">
@@ -770,27 +1390,176 @@
       </div>
     </div>
 
-    <!-- SERIE TEMPORAL -->
-    <div class="panel-section">
-      <div class="panel-title">Serie Temporal — Últimos 30 días</div>
+    <div class="overview-card overview-card-series">
+      <div class="panel-title">Serie Temporal - Ultimos 30 dias</div>
       <div class="chart-wrap">
         <canvas id="chart-humedad"></canvas>
       </div>
     </div>
 
-    <!-- ALERTAS RECIENTES -->
-    <div class="panel-section">
+    <div class="overview-card overview-card-alerts">
       <div class="panel-title">Alertas Recientes</div>
       <div id="alertas-recientes">
         <!-- poblado por JS -->
       </div>
     </div>
+  </div>
 
-    <!-- INDICADORES TÉCNICOS -->
+  <!-- MAPA -->
+  <div class="map-container">
+    <div id="map"></div>
+
+    <!-- SELECTOR DE CAPAS AGRONÃ“MICAS -->
+    <div class="map-controls">
+      <button class="map-btn active" id="btn-alerta" onclick="setLayer('alerta',this)">
+        <span class="map-btn-icon">&#127919;</span>
+        <span class="map-btn-name">Alerta</span>
+        <span class="map-btn-desc">S1 + S2</span>
+      </button>
+      <button class="map-btn" id="btn-rgb" onclick="setLayer('rgb',this)">
+        <span class="map-btn-icon">&#127760;</span>
+        <span class="map-btn-name">RGB</span>
+        <span class="map-btn-formula">B04-B03-B02</span>
+      </button>
+      <button class="map-btn" id="btn-ndvi" onclick="setLayer('ndvi',this)">
+        <span class="map-btn-icon">&#127807;</span>
+        <span class="map-btn-name">NDVI</span>
+        <span class="map-btn-formula">B08-B04/sum</span>
+      </button>
+      <button class="map-btn" id="btn-ndmi" onclick="setLayer('ndmi',this)">
+        <span class="map-btn-icon">&#128167;</span>
+        <span class="map-btn-name">NDMI</span>
+        <span class="map-btn-formula">B08-B11/sum</span>
+      </button>
+      <button class="map-btn" id="btn-ndwi" onclick="setLayer('ndwi',this)">
+        <span class="map-btn-icon">&#128309;</span>
+        <span class="map-btn-name">NDWI</span>
+        <span class="map-btn-formula">B03-B08/sum</span>
+      </button>
+      <button class="map-btn" id="btn-savi" onclick="setLayer('savi',this)">
+        <span class="map-btn-icon">&#127806;</span>
+        <span class="map-btn-name">SAVI</span>
+        <span class="map-btn-formula">(B08-B04)/...*1.5</span>
+      </button>
+      <button class="map-btn" id="btn-sar" onclick="setLayer('sar',this)">
+        <span class="map-btn-icon">&#128225;</span>
+        <span class="map-btn-name">SAR VV</span>
+        <span class="map-btn-formula">S1 - Diaz 2026</span>
+      </button>
+      <button class="map-btn" id="btn-lst" onclick="setLayer('lst',this)">
+        <span class="map-btn-icon">&#127777;</span>
+        <span class="map-btn-name">Termal</span>
+        <span class="map-btn-formula">LST S3</span>
+      </button>
+      <button class="map-btn" id="btn-coneat" onclick="setLayer('coneat',this)">
+        <span class="map-btn-icon">&#128668;</span>
+        <span class="map-btn-name">CONEAT</span>
+        <span class="map-btn-formula">MGAP - zoom 11+</span>
+      </button>
+      <button class="map-btn" id="btn-judicial" onclick="setLayer('judicial',this)">
+        <span class="map-btn-icon">&#9878;</span>
+        <span class="map-btn-name">Secciones</span>
+        <span class="map-btn-formula">SNIG - Policiales</span>
+      </button>
+      <button class="map-btn" id="btn-productiva" onclick="setLayer('productiva',this)">
+        <span class="map-btn-icon">&#127806;</span>
+        <span class="map-btn-name">Predios</span>
+        <span class="map-btn-formula">Importados - AOI</span>
+      </button>
+      <button class="map-btn" id="btn-hex" onclick="setLayer('hex',this)">
+        <span class="map-btn-icon">&#11042;</span>
+        <span class="map-btn-name">H3</span>
+        <span class="map-btn-formula">Fallback - r6</span>
+      </button>
+    </div>
+
+    <!-- Control de opacidad -->
+    <div class="map-opacity-wrap" id="opacity-wrap" style="display:none">
+      <span>Opacidad</span>
+      <input type="range" id="opacity-slider" min="20" max="100" value="85"
+             oninput="setTileOpacity(this.value/100)">
+      <span id="opacity-label">85%</span>
+    </div>
+
+    <!-- Indicador de carga -->
+    <div class="map-tile-loading" id="map-tile-loading">&#9203; Cargando Sentinel...</div>
+
+    <!-- LEYENDA DINAMICA -->
+    <div class="map-legend" id="map-legend">
+      <div class="map-legend-title" id="legend-title">Nivel de Alerta - Rivera</div>
+      <div id="legend-content">
+        <div class="legend-item"><div class="legend-dot" style="background:#2ecc71"></div> Verde - Normal (&gt;50%)</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#f1c40f"></div> Amarillo (25-50%)</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#e67e22"></div> Naranja (15-25%)</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#e74c3c"></div> Rojo (&lt;15%)</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SIDE PANEL -->
+  <div class="side-panel">
+    <div class="sidebar-tabs">
+      <button class="sidebar-tab active" id="sidebar-monitor-tab" type="button">Monitor</button>
+      <button class="sidebar-tab" id="sidebar-settings-tab" type="button">Settings</button>
+    </div>
+
+    <div class="sidebar-view" id="sidebar-monitor-view">
+
+    <!-- ESTADO ACTUAL -->
     <div class="panel-section">
-      <div class="panel-title">Indicadores Técnicos</div>
+      <div class="panel-title">Estado Hidrico Actual</div>
+      <div class="alerta-card" id="alerta-card-main">
+        <div class="alerta-header">
+          <div class="alerta-nivel" id="alerta-nivel-text">Cargando...</div>
+          <div class="alerta-badge" id="alerta-tipo-badge">-</div>
+        </div>
+        <div class="alerta-descripcion" id="alerta-descripcion">Conectando con datos Copernicus...</div>
+        <div class="alerta-accion" id="alerta-accion">-</div>
+        <div class="alerta-accion" id="alerta-extra" style="margin-top:8px;color:var(--text-muted)">Calibracion y trazabilidad en carga...</div>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <div class="panel-title">Forecast 7 Dias</div>
+      <div id="forecast-list" style="display:flex;flex-direction:column;gap:8px;color:var(--text);font-size:0.8rem"></div>
+    </div>
+
+    <div class="panel-section">
+      <div class="panel-title">Motores de Riesgo</div>
+      <div id="drivers-list" style="display:flex;flex-direction:column;gap:8px;color:var(--text);font-size:0.8rem"></div>
+    </div>
+
+    <div class="panel-section">
+      <div class="panel-title">Unidades Productivas</div>
+      <div class="import-card">
+        <div class="import-row">
+          <span>Capa activa por archivo importado</span>
+          <span class="import-badge" id="productive-import-count">0</span>
+        </div>
+        <div class="import-help">
+          Subi un <strong>.geojson</strong>, <strong>.json</strong> o <strong>.zip</strong> con shapefile para dibujar predios o potreros reales sobre el mapa.
+        </div>
+        <label class="import-help" for="productive-category">Categoria de unidad</label>
+        <select class="import-select" id="productive-category">
+          <option value="predio">Predio</option>
+          <option value="potrero">Potrero</option>
+          <option value="lote">Lote</option>
+        </select>
+        <label class="import-help" for="productive-file">Archivo geoespacial</label>
+        <input class="import-file" id="productive-file" type="file" accept=".geojson,.json,.zip" />
+        <div class="import-actions">
+          <button class="import-btn primary" id="productive-upload-btn" type="button">Importar capa</button>
+          <button class="import-btn" id="productive-template-btn" type="button">Descargar plantilla</button>
+        </div>
+        <div class="import-status" id="productive-import-status">Preparando importador...</div>
+      </div>
+    </div>
+
+    <!-- INDICADORES TECNICOS -->
+    <div class="panel-section">
+      <div class="panel-title">Indicadores Tecnicos</div>
       <div class="indicador-row">
-        <span class="indicador-label">Calibración activa</span>
+        <span class="indicador-label">Calibracion activa</span>
         <span class="indicador-valor" id="indicador-calibracion" style="color:var(--verde)">Cargando...</span>
       </div>
       <div class="indicador-row">
@@ -803,7 +1572,7 @@
       </div>
       <div class="indicador-row">
         <span class="indicador-label">Forecast</span>
-        <span class="indicador-valor" id="indicador-forecast" style="color:var(--accent)">3-7 días</span>
+        <span class="indicador-valor" id="indicador-forecast" style="color:var(--accent)">3-7 dias</span>
       </div>
       <div class="indicador-row">
         <span class="indicador-label">Modo de datos</span>
@@ -815,24 +1584,70 @@
       </div>
     </div>
 
+    </div><!-- /sidebar-monitor-view -->
+
+    <div class="sidebar-view hidden" id="sidebar-settings-view">
+      <div class="panel-section">
+        <div class="panel-title">Motor Configurable</div>
+        <div class="settings-card">
+          <div class="settings-toolbar">
+            <label class="settings-field">
+              <span class="settings-field-label">Modo</span>
+              <select class="settings-input" id="settings-mode-select">
+                <option value="global">Global</option>
+                <option value="coverage">Por cobertura</option>
+              </select>
+            </label>
+            <label class="settings-field">
+              <span class="settings-field-label">Cobertura</span>
+              <select class="settings-input" id="settings-coverage-select"></select>
+            </label>
+          </div>
+          <label class="settings-field">
+            <span class="settings-field-label">Operador</span>
+            <input class="settings-input" id="settings-operator-input" type="text" placeholder="Nombre o iniciales para auditoria" />
+            <span class="settings-field-help">Se guarda en la auditoria de cambios junto con IP y user-agent.</span>
+          </label>
+          <div class="settings-status" id="settings-status">La configuracion editable del motor aparecera aqui.</div>
+          <div class="settings-meta" id="settings-meta"></div>
+          <div class="settings-actions">
+            <button class="settings-btn" id="settings-refresh-btn" type="button">Recargar</button>
+            <button class="settings-btn primary" id="settings-save-btn" type="button">Guardar</button>
+            <button class="settings-btn warn" id="settings-reset-btn" type="button">Reset global</button>
+            <button class="settings-btn" id="settings-clear-override-btn" type="button">Borrar override</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-title">Parametros</div>
+        <div id="settings-form" style="display:flex;flex-direction:column;gap:12px"></div>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-title">Auditoria</div>
+        <div class="settings-audit-list" id="settings-audit"></div>
+      </div>
+    </div><!-- /sidebar-settings-view -->
+
   </div><!-- /side-panel -->
 
 </div><!-- /main-grid -->
 
 <footer>
-  <div>AgroClimaX v1 nacional — AI Deep Economics · Uruguay</div>
+  <div>AgroClimaX v1 nacional - AI Deep Economics - Uruguay</div>
   <div class="footer-sources">
-    <span class="source-tag">🛰 Sentinel-1 SAR (Copernicus)</span>
-    <span class="source-tag">🛰 Sentinel-2 L2A (Copernicus)</span>
-    <span class="source-tag">🌦 ERA5 CDS (Copernicus)</span>
-    <span class="source-tag">📐 Método: Díaz, G. 2026</span>
+    <span class="source-tag">S1 Sentinel-1 SAR (Copernicus)</span>
+    <span class="source-tag">S2 Sentinel-2 L2A (Copernicus)</span>
+    <span class="source-tag">ERA5 CDS (Copernicus)</span>
+    <span class="source-tag">Metodo: Diaz, G. 2026</span>
   </div>
 </footer>
 
-<script type="module" src="/static/src/app.js?v=20260323-1"></script>
+<script type="module" src="/static/src/app.js?v=20260327-15"></script>
 <script type="text/plain" data-legacy="disabled">
-// ── API REAL — Copernicus CDSE ─────────────────────────────────
-// API_BASE: en producción usa URL relativa (FastAPI sirve el frontend).
+// â”€â”€ API REAL â€” Copernicus CDSE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// API_BASE: en producciÃ³n usa URL relativa (FastAPI sirve el frontend).
 // En desarrollo local, override via ?api=http://localhost:8003 en la URL.
 const _urlParams = new URLSearchParams(window.location.search);
 const API_BASE = _urlParams.get('api') || (window.location.port === '' || window.location.port === '80' || window.location.port === '443'
@@ -847,7 +1662,7 @@ let historialDatos = [];
 function mostrarCargando() {
   document.getElementById('alerta-banner').innerHTML =
     `<div class="banner-dot" style="background:#4a90d9;animation:pulse 1s infinite"></div>
-     <span style="color:#4a90d9">Conectando con Copernicus Data Space — descargando datos reales...</span>`;
+     <span style="color:#4a90d9">Conectando con Copernicus Data Space â€” descargando datos reales...</span>`;
   document.getElementById('alerta-banner').style.background = '#4a90d922';
   document.getElementById('alerta-banner').style.borderBottom = '1px solid #4a90d944';
   ['kpi-humedad','kpi-ndmi','kpi-spi','kpi-area','kpi-dias'].forEach(id => {
@@ -860,19 +1675,19 @@ async function cargarEstadoActual() {
   try {
     const r = await fetch(`${API_BASE}/estado-actual`);
     const data = await r.json();
-    if (!r.ok) throw new Error(data.error || 'Compruebe que el polígono sea válido.');
+    if (!r.ok) throw new Error(data.error || 'Compruebe que el polÃ­gono sea vÃ¡lido.');
     estadoActual = normalizar(data);
     renderTodo(estadoActual);
   } catch(e) {
     document.getElementById('alerta-banner').innerHTML =
-      `<span style="color:#e74c3c">Error conectando con API: ${e.message}. Verifique que el servidor esté accesible en ${API_BASE}.</span>`;
+      `<span style="color:#e74c3c">Error conectando con API: ${e.message}. Verifique que el servidor estÃ© accesible en ${API_BASE}.</span>`;
   }
 }
 
 
 async function cargarEstadoActualCustom(geojson) {
   mostrarCargando();
-  document.querySelector('.badge-area span').textContent = 'Mi Parcela (analizando…)';
+  document.querySelector('.badge-area span').textContent = 'Mi Parcela (analizandoâ€¦)';
   try {
     const r = await fetch(`${API_BASE}/stats/custom`, {
       method: 'POST',
@@ -886,7 +1701,7 @@ async function cargarEstadoActualCustom(geojson) {
     document.querySelector('.badge-area span').textContent = 'Mi Parcela (actualizada)';
   } catch(e) {
     document.getElementById('alerta-banner').innerHTML =
-      `<span style="color:#e74c3c">⚠ Error analizando parcela: ${e.message}</span>`;
+      `<span style="color:#e74c3c">âš  Error analizando parcela: ${e.message}</span>`;
     document.getElementById('alerta-banner').style.background = '#e74c3c22';
     document.querySelector('.badge-area span').textContent = 'Mi Parcela (error)';
   }
@@ -907,7 +1722,7 @@ async function cargarHistorico() {
       renderAlertasRecientes(historialDatos);
     }
   } catch(e) {
-    console.warn('No se pudo cargar histórico:', e.message);
+    console.warn('No se pudo cargar histÃ³rico:', e.message);
   }
 }
 
@@ -942,7 +1757,7 @@ function normalizar(data) {
     tipo:            alerta.nivel_s1 && alerta.nivel_s2
                      ? `S1:${alerta.nivel_s1} | S2:${alerta.nivel_s2}`
                      : 'Combinado S1+S2',
-    // Detalles técnicos
+    // Detalles tÃ©cnicos
     vv_db:           s1.vv_db_media     ?? null,
     ndmi_p10:        s2.ndmi_p10        ?? null,
     ndmi_p90:        s2.ndmi_p90        ?? null,
@@ -963,7 +1778,7 @@ function renderTodo(d) {
   actualizarMarcadorRivera(d);
 }
 
-// ── BANNER ────────────────────────────────────────────────────
+// â”€â”€ BANNER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function renderBanner(d) {
   const banner = document.getElementById('alerta-banner');
   banner.style.background = d.color + '22';
@@ -971,13 +1786,13 @@ function renderBanner(d) {
   banner.style.color = d.color;
   banner.innerHTML = `
     <div class="banner-dot" style="background:${d.color}"></div>
-    <strong>ALERTA ${d.nivel}</strong> — ${d.descripcion}
-    ${d.es_prolongada ? `<span style="margin-left:12px;background:${d.color}33;padding:2px 10px;border-radius:12px;font-size:0.75rem">⚠ PROLONGADA: ${d.dias_deficit} días consecutivos</span>` : ''}
-    <span style="margin-left:auto;font-size:0.75rem;color:var(--text-muted)">Rivera · ${d.fecha}</span>
+    <strong>ALERTA ${d.nivel}</strong> â€” ${d.descripcion}
+    ${d.es_prolongada ? `<span style="margin-left:12px;background:${d.color}33;padding:2px 10px;border-radius:12px;font-size:0.75rem">âš  PROLONGADA: ${d.dias_deficit} dÃ­as consecutivos</span>` : ''}
+    <span style="margin-left:auto;font-size:0.75rem;color:var(--text-muted)">Rivera Â· ${d.fecha}</span>
   `;
 }
 
-// ── KPIs ─────────────────────────────────────────────────────
+// â”€â”€ KPIs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function renderKPIs(d) {
   const h = d.humedad_s1_pct;
   document.getElementById('kpi-humedad').textContent = h.toFixed(1) + '%';
@@ -993,34 +1808,34 @@ function renderKPIs(d) {
   document.getElementById('kpi-area').textContent = (d.pct_area_afectada ?? 0).toFixed(1) + '%';
   document.getElementById('kpi-area').style.color = d.color;
 
-  // VV dB como indicador técnico en lugar de días deficit
+  // VV dB como indicador tÃ©cnico en lugar de dÃ­as deficit
   const vv = d.vv_db ?? d.dias_deficit;
   document.getElementById('kpi-dias').textContent = d.vv_db ? d.vv_db.toFixed(1) + ' dB' : (d.dias_deficit ?? 0);
   document.getElementById('kpi-dias').style.color = d.vv_db ? '#4a90d9' : '#e67e22';
 
-  document.getElementById('last-update').textContent = 'Datos: ' + d.fecha + ' · Fuente: Copernicus CDSE';
+  document.getElementById('last-update').textContent = 'Datos: ' + d.fecha + ' Â· Fuente: Copernicus CDSE';
   if (d.advertencia) {
     document.getElementById('last-update').style.color = '#e67e22';
-    document.getElementById('last-update').textContent += ' ⚠';
+    document.getElementById('last-update').textContent += ' âš ';
   }
 }
 
-// ── ALERTA CARD ───────────────────────────────────────────────
+// â”€â”€ ALERTA CARD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function renderAlertaCard(d) {
   const card = document.getElementById('alerta-card-main');
   card.style.borderColor = d.color + '88';
   card.style.background = d.color + '11';
   card.style.color = d.color;
-  document.getElementById('alerta-nivel-text').textContent = '● ' + d.nivel;
+  document.getElementById('alerta-nivel-text').textContent = 'â— ' + d.nivel;
   document.getElementById('alerta-tipo-badge').textContent = d.tipo;
   document.getElementById('alerta-descripcion').textContent = d.descripcion;
   const accion = document.getElementById('alerta-accion');
-  accion.textContent = '→ ' + d.accion;
+  accion.textContent = 'â†’ ' + d.accion;
   accion.style.color = d.color;
   accion.style.borderLeftColor = d.color;
 }
 
-// ── BARRAS HUMEDAD ────────────────────────────────────────────
+// â”€â”€ BARRAS HUMEDAD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function renderBarras(d) {
   const hPct = d.humedad_s1_pct;
   document.getElementById('hum-s1-pct').textContent = hPct.toFixed(1) + '%';
@@ -1035,17 +1850,17 @@ function renderBarras(d) {
   barN.style.background = d.ndmi_medio < -0.1 ? '#e74c3c' : d.ndmi_medio < 0 ? '#e67e22' : d.ndmi_medio < 0.1 ? '#f1c40f' : '#2ecc71';
 }
 
-// ── SPI GAUGE ─────────────────────────────────────────────────
+// â”€â”€ SPI GAUGE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function renderSPI(d) {
   document.getElementById('spi-big').textContent = d.spi_30d.toFixed(2);
   document.getElementById('spi-big').style.color = d.spi_30d < -1.5 ? '#e74c3c' : d.spi_30d < 0 ? '#e67e22' : '#2ecc71';
   document.getElementById('spi-cat').textContent = d.spi_categoria;
-  // Posición marcador: SPI -3 → 0%, SPI +3 → 100%
+  // PosiciÃ³n marcador: SPI -3 â†’ 0%, SPI +3 â†’ 100%
   const pos = Math.max(0, Math.min(100, ((d.spi_30d + 3) / 6) * 100));
   document.getElementById('spi-marker').style.left = pos + '%';
 }
 
-// ── CHART ─────────────────────────────────────────────────────
+// â”€â”€ CHART â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function renderChart(hist) {
   const ctx = document.getElementById('chart-humedad').getContext('2d');
   const labels = hist.map(h => h.fecha.substring(5)).reverse();
@@ -1123,7 +1938,7 @@ function renderChart(hist) {
   });
 }
 
-// ── ALERTAS RECIENTES ─────────────────────────────────────────
+// â”€â”€ ALERTAS RECIENTES â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function renderAlertasRecientes(hist) {
   const alertas = hist.filter(h => h.nivel >= 2).slice(0, 5);
   const container = document.getElementById('alertas-recientes');
@@ -1134,13 +1949,13 @@ function renderAlertasRecientes(hist) {
   container.innerHTML = alertas.map(a => `
     <div class="alerta-item">
       <div class="alerta-item-dot" style="background:${COLORES[a.nivel]}"></div>
-      <span>${NOMBRES[a.nivel]} — Humedad ${a.humedad.toFixed(1)}%</span>
+      <span>${NOMBRES[a.nivel]} â€” Humedad ${a.humedad.toFixed(1)}%</span>
       <span class="alerta-item-fecha">${a.fecha.substring(5)}</span>
     </div>
   `).join('');
 }
 
-// ── MAPA LEAFLET ──────────────────────────────────────────────
+// â”€â”€ MAPA LEAFLET â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 let map, heatLayer;
 let currentLayer = 'humedad';
 let riveraMarker = null;
@@ -1151,7 +1966,7 @@ function agregarMarcadorRivera() {
     padding:5px 8px;font-family:Inter,sans-serif;font-size:0.7rem;
     color:var(--text);white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.4);
     min-width:90px;text-align:center">
-    <div style="font-weight:700;color:#4a90d9">📍 Rivera</div>
+    <div style="font-weight:700;color:#4a90d9">ðŸ“ Rivera</div>
     <div id="marker-humedad" style="color:#f1c40f">Cargando...</div>
   </div>`;
 
@@ -1169,7 +1984,7 @@ function actualizarMarcadorRivera(d) {
   const el = document.getElementById('marker-humedad');
   if (el && d) {
     el.innerHTML = `
-      <span style="color:${d.color}">● ${d.nivel}</span><br>
+      <span style="color:${d.color}">â— ${d.nivel}</span><br>
       <span style="color:#aaa">H:</span> ${d.humedad_s1_pct.toFixed(1)}%
       <span style="color:#aaa">NDMI:</span> ${d.ndmi_medio.toFixed(3)}
     `;
@@ -1193,15 +2008,15 @@ function initMap() {
 
   // Basemap oscuro CartoDB
   L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    attribution: '© OpenStreetMap © CARTO',
+    attribution: 'Â© OpenStreetMap Â© CARTO',
     maxZoom: 18,
     pane: 'tilePane',
   }).addTo(map);
 
-  // Puntos de calibración reales (Díaz 2026)
+  // Puntos de calibraciÃ³n reales (DÃ­az 2026)
   addCalibrationPoints();
 
-  // ── DIBUJADOR NATIVO DE PARCELA ──────────────────────────────────────────
+  // â”€â”€ DIBUJADOR NATIVO DE PARCELA â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // Variables de estado en scope global para acceso desde botones del header
   window._drawingMode   = false;
   window._drawingPoints = [];
@@ -1217,11 +2032,11 @@ function initMap() {
     window._previewMarkers = [];
     if (window._savedPoly) { map.removeLayer(window._savedPoly); window._savedPoly = null; }
     map.getContainer().style.cursor = 'crosshair';
-    document.getElementById('btn-dibujar').textContent = '✅ Finalizar Parcela';
+    document.getElementById('btn-dibujar').textContent = 'âœ… Finalizar Parcela';
     document.getElementById('btn-dibujar').style.backgroundColor = '#2ecc71';
     document.getElementById('btn-dibujar').style.color = '#000';
     document.getElementById('btn-limpiar').style.display = 'inline-block';
-    document.querySelector('.badge-area span').textContent = 'Dibujando… (Clic en el mapa = punto · Doble-clic = cerrar)';
+    document.querySelector('.badge-area span').textContent = 'Dibujandoâ€¦ (Clic en el mapa = punto Â· Doble-clic = cerrar)';
   };
 
   window.finishDrawing = function() {
@@ -1242,10 +2057,10 @@ function initMap() {
 
     window._drawingMode = false;
     map.getContainer().style.cursor = '';
-    document.getElementById('btn-dibujar').textContent = '✏️ Dibujar Parcela';
+    document.getElementById('btn-dibujar').textContent = 'âœï¸ Dibujar Parcela';
     document.getElementById('btn-dibujar').style.backgroundColor = '';
     document.getElementById('btn-dibujar').style.color = '#4a90d9';
-    document.querySelector('.badge-area span').textContent = 'Mi Parcela (analizando…)';
+    document.querySelector('.badge-area span').textContent = 'Mi Parcela (analizandoâ€¦)';
 
     var geojson = { type: 'Polygon', coordinates: [coords] };
     cargarEstadoActualCustom(geojson);
@@ -1259,14 +2074,14 @@ function initMap() {
     window._previewMarkers = [];
     if (window._savedPoly) { map.removeLayer(window._savedPoly); window._savedPoly = null; }
     map.getContainer().style.cursor = '';
-    document.getElementById('btn-dibujar').textContent = '✏️ Dibujar Parcela';
+    document.getElementById('btn-dibujar').textContent = 'âœï¸ Dibujar Parcela';
     document.getElementById('btn-dibujar').style.backgroundColor = '';
     document.getElementById('btn-dibujar').style.color = '#4a90d9';
     document.getElementById('btn-limpiar').style.display = 'none';
     document.querySelector('.badge-area span').textContent = 'Rivera, Uruguay';
   };
 
-  // Click para añadir punto
+  // Click para aÃ±adir punto
   map.on('click', function(e) {
     if (!window._drawingMode) return;
     window._drawingPoints.push(e.latlng);
@@ -1284,14 +2099,14 @@ function initMap() {
     }
   });
 
-  // Doble-clic para cerrar polígono
+  // Doble-clic para cerrar polÃ­gono
   map.on('dblclick', function(e) {
     if (!window._drawingMode) return;
     L.DomEvent.stop(e);
     window.finishDrawing();
   });
 
-  // Cargar límite real de Rivera desde GADM
+  // Cargar lÃ­mite real de Rivera desde GADM
   fetch(`${API_BASE}/geojson/rivera`)
     .then(r => r.json())
     .then(geojson => {
@@ -1305,7 +2120,7 @@ function initMap() {
         }
       }).addTo(map);
     })
-    .catch(() => console.warn('No se pudo cargar límite de Rivera'));
+    .catch(() => console.warn('No se pudo cargar lÃ­mite de Rivera'));
 
   // Marcador Rivera con datos en tiempo real
   agregarMarcadorRivera();
@@ -1319,8 +2134,8 @@ function addCalibrationPoints() {
     { id: 'P1', lat: -31.4896, lon: -54.9933, desc: 'Suelo muy seco', vv: -16.92, ndmi: -0.33 },
     { id: 'P2', lat: -31.4892, lon: -54.9887, desc: 'Suelo seco', vv: -13.49, ndmi: -0.11 },
     { id: 'P3', lat: -31.5004, lon: -54.9907, desc: 'Humedad media', vv: -12.42, ndmi: 0.07 },
-    { id: 'P4', lat: -31.5045, lon: -54.9755, desc: 'Suelo húmedo', vv: -10.96, ndmi: 0.25 },
-    { id: 'P5', lat: -31.5026, lon: -55.0046, desc: 'Suelo muy húmedo', vv: -8.97, ndmi: 0.44 },
+    { id: 'P4', lat: -31.5045, lon: -54.9755, desc: 'Suelo hÃºmedo', vv: -10.96, ndmi: 0.25 },
+    { id: 'P5', lat: -31.5026, lon: -55.0046, desc: 'Suelo muy hÃºmedo', vv: -8.97, ndmi: 0.44 },
   ];
 
   pts.forEach(p => {
@@ -1334,94 +2149,94 @@ function addCalibrationPoints() {
     })
     .bindPopup(`
       <div style="font-family:Inter,sans-serif;min-width:180px">
-        <strong style="color:#4a90d9">${p.id} — Punto de Calibración</strong><br>
-        <span style="color:#aaa">Descripción:</span> ${p.desc}<br>
+        <strong style="color:#4a90d9">${p.id} â€” Punto de CalibraciÃ³n</strong><br>
+        <span style="color:#aaa">DescripciÃ³n:</span> ${p.desc}<br>
         <span style="color:#aaa">VV (dB):</span> ${p.vv}<br>
         <span style="color:#aaa">NDMI:</span> ${p.ndmi}<br>
-        <span style="color:#aaa">Fuente:</span> Díaz, G. 01/03/2026
+        <span style="color:#aaa">Fuente:</span> DÃ­az, G. 01/03/2026
       </div>
     `)
     .addTo(map);
   });
 }
 
-// ── LEYENDAS POR CAPA ─────────────────────────────────────────────────────
+// â”€â”€ LEYENDAS POR CAPA â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const LAYER_LEGENDS = {
   alerta: {
-    title: 'Nivel de Alerta · Rivera',
+    title: 'Nivel de Alerta Â· Rivera',
     html: `
-      <div class="legend-item"><div class="legend-dot" style="background:#2ecc71"></div> Verde — Normal (&gt;50%)</div>
-      <div class="legend-item"><div class="legend-dot" style="background:#f1c40f"></div> Amarillo (25–50%)</div>
-      <div class="legend-item"><div class="legend-dot" style="background:#e67e22"></div> Naranja (15–25%)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#2ecc71"></div> Verde â€” Normal (&gt;50%)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#f1c40f"></div> Amarillo (25â€“50%)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#e67e22"></div> Naranja (15â€“25%)</div>
       <div class="legend-item"><div class="legend-dot" style="background:#e74c3c"></div> Rojo (&lt;15%)</div>`
   },
   rgb: {
-    title: 'RGB — Color Natural S2',
+    title: 'RGB â€” Color Natural S2',
     html: `<div style="font-size:0.7rem;color:var(--text-muted);line-height:1.5">
-      Imagen óptica Sentinel-2 L2A<br>
-      <span style="color:rgba(136,146,164,0.6);font-family:monospace">R=B04 · G=B03 · B=B02</span><br>
-      Últimos 45 días · nubes &lt;50%
+      Imagen Ã³ptica Sentinel-2 L2A<br>
+      <span style="color:rgba(136,146,164,0.6);font-family:monospace">R=B04 Â· G=B03 Â· B=B02</span><br>
+      Ãšltimos 45 dÃ­as Â· nubes &lt;50%
     </div>`
   },
   ndvi: {
-    title: 'NDVI — Salud Vegetación',
+    title: 'NDVI â€” Salud VegetaciÃ³n',
     html: `
       <div class="legend-gradient" style="background:linear-gradient(to right,#a06428,#c8a000,#c8b400,#50b432,#006400)"></div>
       <div class="legend-scale-labels">
         <span>&lt;0 Suelo</span><span>0.2</span><span>0.5</span><span>&gt;0.7</span>
       </div>
-      <div class="legend-formula">B08−B04 / B08+B04</div>
+      <div class="legend-formula">B08âˆ’B04 / B08+B04</div>
       <div style="font-size:0.62rem;color:var(--text-muted);margin-top:3px">Salud y densidad de cultivos/pastizales</div>`
   },
   ndmi: {
-    title: 'NDMI — Humedad Foliar',
+    title: 'NDMI â€” Humedad Foliar',
     html: `
       <div class="legend-gradient" style="background:linear-gradient(to right,#b44614,#f0a050,#50b4be,#0050d2)"></div>
       <div class="legend-scale-labels">
-        <span>&lt;-0.3 Seco</span><span>0</span><span>&gt;0.3 Húmedo</span>
+        <span>&lt;-0.3 Seco</span><span>0</span><span>&gt;0.3 HÃºmedo</span>
       </div>
-      <div class="legend-formula">B08−B11 / B08+B11</div>
-      <div style="font-size:0.62rem;color:var(--text-muted);margin-top:3px">Estrés hídrico foliar (7–10 días antes)</div>`
+      <div class="legend-formula">B08âˆ’B11 / B08+B11</div>
+      <div style="font-size:0.62rem;color:var(--text-muted);margin-top:3px">EstrÃ©s hÃ­drico foliar (7â€“10 dÃ­as antes)</div>`
   },
   ndwi: {
-    title: 'NDWI — Agua Superficial',
+    title: 'NDWI â€” Agua Superficial',
     html: `
       <div class="legend-gradient" style="background:linear-gradient(to right,#afa082,#82aac8,#0050dc)"></div>
       <div class="legend-scale-labels">
         <span>&lt;-0.3 Suelo</span><span>0</span><span>&gt;0.1 Agua</span>
       </div>
-      <div class="legend-formula">B03−B08 / B03+B08</div>
+      <div class="legend-formula">B03âˆ’B08 / B03+B08</div>
       <div style="font-size:0.62rem;color:var(--text-muted);margin-top:3px">Cuerpos de agua e inundaciones</div>`
   },
   savi: {
-    title: 'SAVI — Veg. Ajustada Suelo',
+    title: 'SAVI â€” Veg. Ajustada Suelo',
     html: `
       <div class="legend-gradient" style="background:linear-gradient(to right,#d2af82,#96c87d,#148200)"></div>
       <div class="legend-scale-labels">
         <span>&lt;0.1 Suelo</span><span>0.35</span><span>&gt;0.6 Densa</span>
       </div>
-      <div class="legend-formula">(B08−B04)/(…+0.5)·1.5</div>
+      <div class="legend-formula">(B08âˆ’B04)/(â€¦+0.5)Â·1.5</div>
       <div style="font-size:0.62rem;color:var(--text-muted);margin-top:3px">Ideal para pastizales / suelo variable</div>`
   },
   sar: {
-    title: 'SAR VV — Humedad Suelo',
+    title: 'SAR VV â€” Humedad Suelo',
     html: `
       <div class="legend-gradient" style="background:linear-gradient(to right,#dc5014,#5090be,#14bcd2)"></div>
       <div class="legend-scale-labels">
-        <span>Seco −18dB</span><span>−13</span><span>Húmedo −8dB</span>
+        <span>Seco âˆ’18dB</span><span>âˆ’13</span><span>HÃºmedo âˆ’8dB</span>
       </div>
-      <div class="legend-formula">S1 VV · Calibración Díaz 2026</div>
+      <div class="legend-formula">S1 VV Â· CalibraciÃ³n DÃ­az 2026</div>
       <div style="font-size:0.62rem;color:var(--text-muted);margin-top:3px">Humedad suelo ~5 cm profundidad</div>`
   },
   lst: {
-    title: 'LST — Temperatura Superficial',
+    title: 'LST â€” Temperatura Superficial',
     html: `
       <div class="legend-gradient" style="background:linear-gradient(to right,#0000ff,#00ff00,#ffff00,#ff0000)"></div>
       <div class="legend-scale-labels">
-        <span>10°C</span><span>20°</span><span>30°</span><span>>40°</span>
+        <span>10Â°C</span><span>20Â°</span><span>30Â°</span><span>>40Â°</span>
       </div>
       <div class="legend-formula">S3 SLSTR S8 Band</div>
-      <div style="font-size:0.62rem;color:var(--text-muted);margin-top:3px">Radiación térmica terrestre (estrés evaporativo)</div>`
+      <div style="font-size:0.62rem;color:var(--text-muted);margin-top:3px">RadiaciÃ³n tÃ©rmica terrestre (estrÃ©s evaporativo)</div>`
   },
   coneat: {
     title: 'Productividad Suelos CONEAT',
@@ -1432,22 +2247,22 @@ const LAYER_LEGENDS = {
       <div style="font-size:0.62rem;color:var(--text-muted);margin-top:3px">Datos oficiales MGAP Uruguay</div>`
   },
   judicial: {
-    title: 'Secciones Judiciales — IGM',
+    title: 'Secciones Judiciales â€” IGM',
     html: `
       <div class="legend-item" style="border:1px solid #4a90d9;padding:2px;border-radius:3px">
-        <div class="legend-dot" style="background:rgba(74,144,217,0.2);border:1px solid #4a90d9"></div> Límite Judicial
+        <div class="legend-dot" style="background:rgba(74,144,217,0.2);border:1px solid #4a90d9"></div> LÃ­mite Judicial
       </div>
-      <div style="font-size:0.62rem;color:var(--text-muted);margin-top:3px">División administrativa Judicial Uruguay</div>`
+      <div style="font-size:0.62rem;color:var(--text-muted);margin-top:3px">DivisiÃ³n administrativa Judicial Uruguay</div>`
   }
 };
 
-// ── GESTIÓN DE CAPAS TILE ─────────────────────────────────────────────────
+// â”€â”€ GESTIÃ“N DE CAPAS TILE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 let activeTileLayer = null;
 
 function setLayer(name, btn) {
   currentLayer = name;
 
-  // Activar botón
+  // Activar botÃ³n
   document.querySelectorAll('.map-btn').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
 
@@ -1460,29 +2275,29 @@ function setLayer(name, btn) {
   const opacityWrap = document.getElementById('opacity-wrap');
   const tileLayerName = name === 'alerta' ? 'alerta_fusion' : name;
 
-  // Cargar satélite real siempre, incluso en la alerta de fusión
+  // Cargar satÃ©lite real siempre, incluso en la alerta de fusiÃ³n
   opacityWrap.style.display = 'flex';
   const loading = document.getElementById('map-tile-loading');
 
   if (name === 'coneat') {
-    // Capa CONEAT vía Proxy de Backend (evita Mixed Content HTTP/HTTPS)
+    // Capa CONEAT vÃ­a Proxy de Backend (evita Mixed Content HTTP/HTTPS)
     activeTileLayer = L.tileLayer.wms(`${API_BASE}/proxy/coneat`, {
       layers: '2,5', // CONEAT + Padrones Rurales
       format: 'image/png',
       transparent: true,
       version: '1.1.1',
       srs: 'EPSG:4326', // El WMS del MGAP no soporta 3857
-      attribution: '© MGAP/DGRN Uruguay',
+      attribution: 'Â© MGAP/DGRN Uruguay',
       opacity: parseFloat(document.getElementById('opacity-slider').value) / 100
     });
   } else if (name === 'judicial') {
-    // Capa Secciones Judiciales vía IDE Uruguay (HTTPS nativo)
+    // Capa Secciones Judiciales vÃ­a IDE Uruguay (HTTPS nativo)
     activeTileLayer = L.tileLayer.wms('https://mapas.ide.uy/geoservicios/WMS/WMS_Uruguay', {
       layers: 'sec_judicial_poligono',
       format: 'image/png',
       transparent: true,
       version: '1.1.1',
-      attribution: '© IDE Uruguay',
+      attribution: 'Â© IDE Uruguay',
       opacity: parseFloat(document.getElementById('opacity-slider').value) / 100
     });
   } else {
@@ -1495,14 +2310,14 @@ function setLayer(name, btn) {
         minZoom:    7,
         opacity:    parseFloat(document.getElementById('opacity-slider').value) / 100,
         tileSize:   256,
-        attribution: `© Copernicus/ESA · ${tileLayerName.toUpperCase()} · AgroClimaX`,
+        attribution: `Â© Copernicus/ESA Â· ${tileLayerName.toUpperCase()} Â· AgroClimaX`,
       }
     );
   }
 
   activeTileLayer.on('loading', () => { loading.style.display = 'block'; });
   activeTileLayer.on('load',    () => { loading.style.display = 'none';  });
-  activeTileLayer.on('tileerror', () => { /* silencio — tile transparente del backend */ });
+  activeTileLayer.on('tileerror', () => { /* silencio â€” tile transparente del backend */ });
 
   activeTileLayer.addTo(map);
 
@@ -1521,18 +2336,18 @@ function setTileOpacity(val) {
   if (activeTileLayer) activeTileLayer.setOpacity(val);
 }
 
-// ── FUNCIÓN MAPA con datos reales ─────────────────────────────
+// â”€â”€ FUNCIÃ“N MAPA con datos reales â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function actualizarMapaConDatos(d) {
   if (!map) return;
   actualizarMarcadorRivera(d);
 }
 
-// ── INIT ──────────────────────────────────────────────────────
+// â”€â”€ INIT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 document.addEventListener('DOMContentLoaded', async () => {
   initMap();
   // Cargar datos reales de Copernicus
   await cargarEstadoActual();
-  // Cargar histórico en paralelo (puede tardar más)
+  // Cargar histÃ³rico en paralelo (puede tardar mÃ¡s)
   cargarHistorico();
   // Refrescar cada 30 minutos
   setInterval(cargarEstadoActual, 30 * 60 * 1000);
@@ -1540,3 +2355,5 @@ document.addEventListener('DOMContentLoaded', async () => {
 </script>
 </body>
 </html>
+
+

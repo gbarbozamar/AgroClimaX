@@ -26,11 +26,11 @@ def run_pipeline_nacional(self):
     import asyncio
 
     from app.db.session import AsyncSessionLocal
-    from app.services.analysis import run_daily_pipeline
+    from app.services.pipeline_ops import execute_daily_pipeline_job
 
     async def _run():
         async with AsyncSessionLocal() as session:
-            return await run_daily_pipeline(session)
+            return await execute_daily_pipeline_job(session, trigger_source="celery", force=False)
 
     try:
         return asyncio.run(_run())
@@ -43,11 +43,11 @@ def run_recalibration(self):
     import asyncio
 
     from app.db.session import AsyncSessionLocal
-    from app.services.analysis import recompute_calibrations
+    from app.services.pipeline_ops import execute_recalibration_job
 
     async def _run():
         async with AsyncSessionLocal() as session:
-            return await recompute_calibrations(session)
+            return await execute_recalibration_job(session, trigger_source="celery", force=False)
 
     try:
         return asyncio.run(_run())

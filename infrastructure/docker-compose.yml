@@ -20,8 +20,8 @@ services:
 
   backend:
     build:
-      context: ../apps/backend
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: apps/backend/Dockerfile
     ports:
       - "8000:8000"
     env_file:
@@ -30,13 +30,16 @@ services:
       - db
       - redis
     volumes:
-      - ../apps/backend:/app
+      - ../apps/backend/app:/app/app
+      - ../apps/backend/tasks:/app/tasks
+      - ../apps/backend/data_fetcher.py:/app/data_fetcher.py
+      - ../apps/frontend:/frontend
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   celery-worker:
     build:
-      context: ../apps/backend
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: apps/backend/Dockerfile
     env_file:
       - ../apps/backend/.env
     depends_on:
@@ -46,8 +49,8 @@ services:
 
   celery-beat:
     build:
-      context: ../apps/backend
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: apps/backend/Dockerfile
     env_file:
       - ../apps/backend/.env
     depends_on:

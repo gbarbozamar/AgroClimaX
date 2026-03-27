@@ -1,10 +1,21 @@
 from pathlib import Path
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
+
+
+def _normalize_postgres_scheme(value: str, *, async_driver: bool) -> str:
+    normalized = value.strip()
+    if normalized.startswith("postgres://"):
+        normalized = "postgresql://" + normalized[len("postgres://"):]
+    if async_driver and normalized.startswith("postgresql://"):
+        normalized = "postgresql+asyncpg://" + normalized[len("postgresql://"):]
+    if not async_driver and normalized.startswith("postgresql+asyncpg://"):
+        normalized = "postgresql://" + normalized[len("postgresql+asyncpg://"):]
+    return normalized
 
 
 class Settings(BaseSettings):
@@ -23,13 +34,22 @@ class Settings(BaseSettings):
 
     # Base de datos
     database_url: str = f"sqlite+aiosqlite:///{(BASE_DIR / 'agroclimax.db').as_posix()}"
-    database_sync_url: str = f"sqlite:///{(BASE_DIR / 'agroclimax.db').as_posix()}"
+    database_sync_url: str | None = None
+    database_use_postgis: bool = True
 
     # Redis / workers
     redis_url: str = "redis://localhost:6379/0"
     pipeline_cron_hour: int = 3
     pipeline_cron_minute: int = 30
     recalibration_weekday: str = "monday"
+    pipeline_scheduler_enabled: bool = False
+    pipeline_scheduler_poll_seconds: int = 300
+    pipeline_bootstrap_backfill_days: int = 7
+    pipeline_stale_after_hours: int = 6
+    pipeline_startup_warmup_enabled: bool = True
+    coneat_cache_ttl_hours: int = 168
+    coneat_prewarm_enabled: bool = True
+    coneat_prewarm_zoom_levels: list[int] = Field(default_factory=lambda: [6, 7, 8])
 
     # Copernicus / Sentinel Hub
     copernicus_client_id: str = ""
@@ -52,6 +72,7 @@ class Settings(BaseSettings):
     aoi_bbox_east: float = -53.5
     aoi_bbox_north: float = -30.0
     default_hex_resolution: int = 9
+    hex_display_resolution: int = 6
     default_scope: str = "departamento"
     calibration_window_days: int = 56
     calibration_min_samples: int = 8
@@ -96,6 +117,38 @@ class Settings(BaseSettings):
         if isinstance(value, list):
             return [str(item).strip() for item in value if str(item).strip()]
         return [part.strip() for part in str(value).split(",") if part.strip()]
+
+    @field_validator("coneat_prewarm_zoom_levels", mode="before")
+    @classmethod
+    def parse_coneat_zoom_levels(cls, value: object) -> list[int]:
+        if value is None or value == "":
+            return [6, 7, 8]
+        if isinstance(value, list):
+            return [int(item) for item in value]
+        return [int(part.strip()) for part in str(value).split(",") if part.strip()]
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def normalize_database_url(cls, value: object) -> str:
+        if value is None or value == "":
+            return f"sqlite+aiosqlite:///{(BASE_DIR / 'agroclimax.db').as_posix()}"
+        return _normalize_postgres_scheme(str(value), async_driver=True)
+
+    @field_validator("database_sync_url", mode="before")
+    @classmethod
+    def normalize_database_sync_url(cls, value: object) -> str:
+        if value is None or value == "":
+            return ""
+        return _normalize_postgres_scheme(str(value), async_driver=False)
+
+    @model_validator(mode="after")
+    def finalize_database_urls(self) -> "Settings":
+        if not self.database_sync_url:
+            if self.database_url.startswith("postgresql+asyncpg://"):
+                self.database_sync_url = _normalize_postgres_scheme(self.database_url, async_driver=False)
+            else:
+                self.database_sync_url = f"sqlite:///{(BASE_DIR / 'agroclimax.db').as_posix()}"
+        return self
 
     @property
     def copernicus_enabled(self) -> bool:

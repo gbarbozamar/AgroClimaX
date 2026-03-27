@@ -8,6 +8,16 @@ from app.models.humedad import (
     IngestionQualityLog,
     SatelliteObservation,
 )
+from app.models.materialized import (
+    ExternalMapCacheEntry,
+    LatestStateCache,
+    SatelliteLayerCatalog,
+    SatelliteLayerSnapshot,
+    SpatialLayerFeature,
+    UnitIndexSnapshot,
+)
+from app.models.pipeline import PipelineRun
+from app.models.settings import BusinessSettingsAudit, BusinessSettingsProfile
 
 __all__ = [
     "AlertState",
@@ -21,4 +31,13 @@ __all__ = [
     "HumedadSuelo",
     "IngestionQualityLog",
     "SatelliteObservation",
+    "ExternalMapCacheEntry",
+    "LatestStateCache",
+    "SatelliteLayerCatalog",
+    "SatelliteLayerSnapshot",
+    "SpatialLayerFeature",
+    "UnitIndexSnapshot",
+    "PipelineRun",
+    "BusinessSettingsProfile",
+    "BusinessSettingsAudit",
 ]

@@ -20,14 +20,24 @@ build/
 apps/backend/.cache_agroclimax.json
 apps/backend/.tile_cache/
 apps/backend/.tiles_cache/
+apps/backend/.catalog_cache/
+apps/backend/.coneat_cache/
+apps/backend/*.db
+apps/backend/*.db-shm
+apps/backend/*.db-wal
+apps/backend/tests/*.db
+apps/backend/tests/*.db-shm
+apps/backend/tests/*.db-wal
 
 # ── Logs ────────────────────────────────────────────────────────
 *.log
 logs/
 server_log.txt
 .playwright-cli/
+output/
 apps/backend/agroclimax.db
 apps/backend/test_tile.png
+Analisis_Alertas_AgroClimaX.docx
 
 # ── IDEs ────────────────────────────────────────────────────────
 .vscode/

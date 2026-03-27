@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.services.analysis import analyze_custom_geojson, get_alert_history, get_scope_snapshot
+from app.services.analysis import analyze_custom_geojson, get_alert_history, get_scope_snapshot, get_scope_weather_forecast
 
 router = APIRouter(prefix="/alertas", tags=["alertas"])
 
@@ -26,6 +26,16 @@ async def historico(
     db: AsyncSession = Depends(get_db),
 ):
     return await get_alert_history(db, scope=scope, unit_id=unit_id, department=department, limit=limit)
+
+
+@router.get("/pronostico")
+async def pronostico(
+    scope: str = Query("departamento", pattern="^(nacional|departamento|unidad)$"),
+    unit_id: str | None = Query(None),
+    department: str | None = Query("Rivera"),
+    db: AsyncSession = Depends(get_db),
+):
+    return await get_scope_weather_forecast(db, scope=scope, unit_id=unit_id, department=department)
 
 
 @router.post("/unidad/custom")

@@ -1,15 +1,21 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import math
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlencode
 
 import httpx
 import requests
+from sqlalchemy import select
 
 from app.core.config import settings
+from app.db.session import AsyncSessionLocal
+from app.models.humedad import AOIUnit
+from app.models.materialized import ExternalMapCacheEntry
 
 try:
     from data_fetcher import get_token as legacy_get_token
@@ -20,8 +26,12 @@ except Exception:  # pragma: no cover
 SH_PROCESS_URL = "https://sh.dataspace.copernicus.eu/api/v1/process"
 TILE_CACHE_DIR = Path(__file__).resolve().parents[2] / ".tile_cache"
 TILE_CACHE_DIR.mkdir(exist_ok=True)
+CONEAT_CACHE_DIR = Path(__file__).resolve().parents[2] / ".coneat_cache"
+CONEAT_CACHE_DIR.mkdir(exist_ok=True)
 GADM_RIVERA_CACHE = Path(__file__).resolve().parents[2] / ".geojson_rivera.json"
 GADM_URL = "https://geodata.ucdavis.edu/gadm/gadm4.1/json/gadm41_URY_1.json"
+CONEAT_PROXY_SEMAPHORE = asyncio.Semaphore(2)
+CONEAT_PROXY_RETRY_DELAYS = (0.45, 1.2, 2.4)
 
 TRANSPARENT_PNG = (
     b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
@@ -186,8 +196,301 @@ async def fetch_rivera_geojson() -> dict:
     }
 
 
+def _coneat_request_name(params: dict) -> str:
+    return str(params.get("REQUEST") or params.get("request") or "").upper()
+
+
+def _coneat_default_content_type(params: dict) -> str:
+    if _coneat_request_name(params) == "GETMAP":
+        return str(params.get("FORMAT") or params.get("format") or "image/png")
+    return "text/xml; charset=utf-8"
+
+
+def _normalize_coneat_params(params: dict) -> dict[str, str]:
+    normalized: dict[str, str] = {}
+    for key, value in params.items():
+        key_str = str(key).upper()
+        value_str = str(value).strip()
+        if key_str == "BBOX":
+            try:
+                parts = [f"{float(part):.6f}" for part in value_str.split(",")[:4]]
+                value_str = ",".join(parts)
+            except Exception:
+                value_str = value_str
+        elif key_str in {"WIDTH", "HEIGHT"}:
+            try:
+                value_str = str(int(float(value_str)))
+            except Exception:
+                value_str = value_str
+        normalized[key_str] = value_str
+    return normalized
+
+
+def _coneat_cache_key(params: dict) -> str:
+    normalized = _normalize_coneat_params(params)
+    encoded = urlencode(sorted(normalized.items()), doseq=True)
+    return hashlib.sha1(encoded.encode("utf-8")).hexdigest()
+
+
+def _coneat_cache_entry_paths(params: dict) -> tuple[Path, Path]:
+    digest = _coneat_cache_key(params)
+    return CONEAT_CACHE_DIR / f"{digest}.bin", CONEAT_CACHE_DIR / f"{digest}.json"
+
+
+def _read_coneat_cache(cache_path: Path, meta_path: Path, default_content_type: str) -> tuple[bytes, str] | None:
+    if not cache_path.exists():
+        return None
+    content_type = default_content_type
+    if meta_path.exists():
+        try:
+            metadata = json.loads(meta_path.read_text(encoding="utf-8"))
+            content_type = metadata.get("content_type") or default_content_type
+        except Exception:
+            content_type = default_content_type
+    return cache_path.read_bytes(), content_type
+
+
+def _write_coneat_cache(cache_path: Path, meta_path: Path, content: bytes, content_type: str) -> None:
+    cache_path.write_bytes(content)
+    meta_path.write_text(json.dumps({"content_type": content_type}), encoding="utf-8")
+
+
+async def _read_coneat_cache_db(cache_key: str, default_content_type: str) -> tuple[bytes, str] | None:
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(ExternalMapCacheEntry).where(
+                ExternalMapCacheEntry.provider == "coneat",
+                ExternalMapCacheEntry.cache_key == cache_key,
+            ).limit(1)
+        )
+        row = result.scalar_one_or_none()
+        if row is None:
+            return None
+        if row.expires_at:
+            now = datetime.now(row.expires_at.tzinfo) if row.expires_at.tzinfo else datetime.utcnow()
+            if row.expires_at < now:
+                await session.delete(row)
+                await session.commit()
+                return None
+        return bytes(row.content), row.content_type or default_content_type
+
+
+async def _write_coneat_cache_db(
+    cache_key: str,
+    params: dict,
+    content: bytes,
+    content_type: str,
+) -> None:
+    normalized = _normalize_coneat_params(params)
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(ExternalMapCacheEntry).where(
+                ExternalMapCacheEntry.provider == "coneat",
+                ExternalMapCacheEntry.cache_key == cache_key,
+            ).limit(1)
+        )
+        row = result.scalar_one_or_none()
+        if row is None:
+            row = ExternalMapCacheEntry(
+                cache_key=cache_key,
+                provider="coneat",
+                request_name=_coneat_request_name(normalized),
+                content_type=content_type,
+                content=content,
+                content_hash=hashlib.sha1(content).hexdigest(),
+                expires_at=datetime.utcnow() + timedelta(hours=settings.coneat_cache_ttl_hours),
+                metadata_extra={"params": normalized},
+            )
+            session.add(row)
+        else:
+            row.request_name = _coneat_request_name(normalized)
+            row.content_type = content_type
+            row.content = content
+            row.content_hash = hashlib.sha1(content).hexdigest()
+            row.expires_at = datetime.utcnow() + timedelta(hours=settings.coneat_cache_ttl_hours)
+            row.metadata_extra = {"params": normalized}
+        await session.commit()
+
+
+async def _fetch_coneat_remote(url: str, params: dict) -> tuple[bytes, str]:
+    headers = {
+        "User-Agent": "AgroClimaX/1.0 CONEAT proxy",
+        "Accept": _coneat_default_content_type(params),
+    }
+    timeout = httpx.Timeout(connect=8.0, read=30.0, write=15.0, pool=15.0)
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        response = await client.get(url, params=params, headers=headers)
+        response.raise_for_status()
+    return response.content, response.headers.get("content-type", _coneat_default_content_type(params))
+
+
 async def proxy_coneat_request(params: dict) -> tuple[bytes, str]:
     url = "http://dgrn.mgap.gub.uy/arcgis/services/TEMATICOS/IntConeat/MapServer/WMSServer"
-    async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.get(url, params=params)
-    return response.content, response.headers.get("content-type", "image/png")
+    normalized_params = _normalize_coneat_params(params)
+    default_content_type = _coneat_default_content_type(normalized_params)
+    cache_key = _coneat_cache_key(normalized_params)
+    cache_path, meta_path = _coneat_cache_entry_paths(normalized_params)
+    cached = _read_coneat_cache(cache_path, meta_path, default_content_type)
+    if cached:
+        return cached
+    cached = await _read_coneat_cache_db(cache_key, default_content_type)
+    if cached:
+        _write_coneat_cache(cache_path, meta_path, cached[0], cached[1])
+        return cached
+
+    last_error: Exception | None = None
+    async with CONEAT_PROXY_SEMAPHORE:
+        cached = _read_coneat_cache(cache_path, meta_path, default_content_type)
+        if cached:
+            return cached
+        cached = await _read_coneat_cache_db(cache_key, default_content_type)
+        if cached:
+            _write_coneat_cache(cache_path, meta_path, cached[0], cached[1])
+            return cached
+
+        for attempt, delay in enumerate(CONEAT_PROXY_RETRY_DELAYS, start=1):
+            try:
+                content, content_type = await _fetch_coneat_remote(url, normalized_params)
+                _write_coneat_cache(cache_path, meta_path, content, content_type)
+                await _write_coneat_cache_db(cache_key, normalized_params, content, content_type)
+                return content, content_type
+            except (httpx.TimeoutException, httpx.RequestError, httpx.HTTPStatusError) as exc:
+                last_error = exc
+                if attempt < len(CONEAT_PROXY_RETRY_DELAYS):
+                    await asyncio.sleep(delay)
+
+    cached = _read_coneat_cache(cache_path, meta_path, default_content_type)
+    if cached:
+        return cached
+    cached = await _read_coneat_cache_db(cache_key, default_content_type)
+    if cached:
+        _write_coneat_cache(cache_path, meta_path, cached[0], cached[1])
+        return cached
+
+    if _coneat_request_name(normalized_params) == "GETMAP":
+        return TRANSPARENT_PNG, "image/png"
+
+    if last_error is not None:
+        message = str(last_error).replace("&", "and").replace("<", "").replace(">", "")
+        xml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            "<ServiceExceptionReport>"
+            f"<ServiceException>{message}</ServiceException>"
+            "</ServiceExceptionReport>"
+        ).encode("utf-8")
+        return xml, "text/xml; charset=utf-8"
+
+    return b"", default_content_type
+
+
+def _iter_geometry_coordinates(node):
+    if isinstance(node, (list, tuple)):
+        if len(node) >= 2 and isinstance(node[0], (int, float)) and isinstance(node[1], (int, float)):
+            yield float(node[0]), float(node[1])
+            return
+        for item in node:
+            yield from _iter_geometry_coordinates(item)
+
+
+def _geometry_bounds(geometry: dict | None) -> tuple[float, float, float, float] | None:
+    if not geometry:
+        return None
+    coords = list(_iter_geometry_coordinates(geometry.get("coordinates")))
+    if not coords:
+        return None
+    lons = [lon for lon, _ in coords]
+    lats = [lat for _, lat in coords]
+    return min(lons), min(lats), max(lons), max(lats)
+
+
+def _lon_to_tile_x(lon: float, zoom: int) -> int:
+    n = 2**zoom
+    lon = max(-180.0, min(180.0, lon))
+    return max(0, min(n - 1, int(math.floor((lon + 180.0) / 360.0 * n))))
+
+
+def _lat_to_tile_y(lat: float, zoom: int) -> int:
+    n = 2**zoom
+    lat = max(-85.05112878, min(85.05112878, lat))
+    lat_rad = math.radians(lat)
+    tile_y = int(math.floor((1.0 - math.asinh(math.tan(lat_rad)) / math.pi) / 2.0 * n))
+    return max(0, min(n - 1, tile_y))
+
+
+def _tile_ranges_for_bounds(bounds: tuple[float, float, float, float], zoom: int) -> tuple[range, range]:
+    west, south, east, north = bounds
+    x_min = _lon_to_tile_x(west, zoom)
+    x_max = _lon_to_tile_x(east, zoom)
+    y_min = _lat_to_tile_y(north, zoom)
+    y_max = _lat_to_tile_y(south, zoom)
+    return range(min(x_min, x_max), max(x_min, x_max) + 1), range(min(y_min, y_max), max(y_min, y_max) + 1)
+
+
+def _build_coneat_map_params(z: int, x: int, y: int) -> dict[str, str]:
+    bbox = tile_to_bbox(z, x, y)
+    return _normalize_coneat_params(
+        {
+            "SERVICE": "WMS",
+            "REQUEST": "GetMap",
+            "LAYERS": "2,5",
+            "STYLES": "",
+            "FORMAT": "image/png",
+            "TRANSPARENT": "true",
+            "VERSION": "1.1.1",
+            "WIDTH": "256",
+            "HEIGHT": "256",
+            "SRS": "EPSG:4326",
+            "BBOX": ",".join(f"{value:.6f}" for value in bbox),
+        }
+    )
+
+
+async def prewarm_coneat_tiles(department: str | None = None) -> dict[str, object]:
+    zoom_levels = sorted({int(level) for level in settings.coneat_prewarm_zoom_levels})
+    national_bounds = (-58.7, -35.2, -53.0, -30.0)
+    viewport_specs: list[tuple[str, tuple[float, float, float, float], list[int]]] = [
+        ("nacional", national_bounds, [level for level in zoom_levels if level <= 7] or zoom_levels),
+    ]
+
+    async with AsyncSessionLocal() as session:
+        query = select(AOIUnit).where(AOIUnit.active.is_(True), AOIUnit.unit_type == "department")
+        if department:
+            query = query.where(AOIUnit.department == department)
+        result = await session.execute(query)
+        units = result.scalars().all()
+
+    for unit in units:
+        bounds = _geometry_bounds(unit.geometry_geojson)
+        if bounds is None:
+            continue
+        viewport_specs.append((unit.department, bounds, [level for level in zoom_levels if level >= 7] or zoom_levels))
+
+    tile_params: dict[str, dict[str, str]] = {}
+    for _, bounds, spec_zooms in viewport_specs:
+        for zoom in spec_zooms:
+            x_range, y_range = _tile_ranges_for_bounds(bounds, zoom)
+            for x in x_range:
+                for y in y_range:
+                    params = _build_coneat_map_params(zoom, x, y)
+                    tile_params[_coneat_cache_key(params)] = params
+
+    warmed = 0
+    reused = 0
+    for params in tile_params.values():
+        cache_key = _coneat_cache_key(params)
+        cache_path, meta_path = _coneat_cache_entry_paths(params)
+        if _read_coneat_cache(cache_path, meta_path, "image/png") or await _read_coneat_cache_db(cache_key, "image/png"):
+            reused += 1
+            continue
+        await proxy_coneat_request(params)
+        warmed += 1
+
+    return {
+        "status": "success",
+        "department_filter": department,
+        "zoom_levels": zoom_levels,
+        "planned_tiles": len(tile_params),
+        "reused_tiles": reused,
+        "warmed_tiles": warmed,
+        "cache_backend": "database+filesystem",
+    }

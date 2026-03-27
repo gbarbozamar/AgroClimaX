@@ -10,9 +10,16 @@ router = APIRouter(prefix="/unidades", tags=["unidades"])
 @router.get("")
 async def unidades(
     include_custom: bool = Query(False),
+    include_hex: bool = Query(False),
+    include_productive: bool = Query(False),
     db: AsyncSession = Depends(get_db),
 ):
-    datos = await list_units(db, include_custom=include_custom)
+    datos = await list_units(
+        db,
+        include_custom=include_custom,
+        include_hex=include_hex,
+        include_productive=include_productive,
+    )
     return {"total": len(datos), "datos": datos}
 
 
