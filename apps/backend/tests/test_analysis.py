@@ -10,6 +10,7 @@ os.environ["DATABASE_SYNC_URL"] = f"sqlite:///{TEST_DB.as_posix()}"
 
 from app.models.alerta import AlertState, AlertaEvento
 from app.models.humedad import AOIUnit, SatelliteObservation
+from app.models.materialized import UnitIndexSnapshot
 from app.services.business_settings import DEFAULT_ALERT_RULESET
 from app.services.analysis import (
     _apply_hysteresis,
@@ -24,6 +25,11 @@ from app.services.analysis import (
 
 
 class AnalysisLogicTests(unittest.TestCase):
+    def test_calibration_reference_columns_allow_long_transient_keys(self):
+        self.assertEqual(UnitIndexSnapshot.__table__.columns["calibration_ref"].type.length, 255)
+        self.assertEqual(AlertState.__table__.columns["calibration_ref"].type.length, 255)
+        self.assertEqual(AlertaEvento.__table__.columns["calibration_ref"].type.length, 255)
+
     def test_fixed_calibration_is_monotonic(self):
         calibration = {
             "quantiles": _fixed_calibration_quantiles(),

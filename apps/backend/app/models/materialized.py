@@ -76,7 +76,7 @@ class UnitIndexSnapshot(Base):
     s2_ndmi_mean = Column(Float)
     estimated_ndmi = Column(Float)
     spi_30d = Column(Float)
-    calibration_ref = Column(String(64))
+    calibration_ref = Column(String(255))
     data_mode = Column(String(32), default="simulated")
     raw_metrics = Column(JSON, default=dict)
     forecast = Column(JSON, default=list)
