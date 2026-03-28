@@ -27,6 +27,7 @@ class Settings(BaseSettings):
 
     # App
     app_env: str = "development"
+    app_runtime_role: str = "all-in-one"
     secret_key: str = "change_in_production"
     api_prefix: str = "/api/v1"
     legacy_api_prefix: str = "/api"
@@ -50,6 +51,15 @@ class Settings(BaseSettings):
     coneat_cache_ttl_hours: int = 168
     coneat_prewarm_enabled: bool = True
     coneat_prewarm_zoom_levels: list[int] = Field(default_factory=lambda: [6, 7, 8])
+
+    # Object storage / buckets
+    storage_backend: str = "filesystem"
+    storage_s3_endpoint_url: str = ""
+    storage_s3_region: str = "us-east-1"
+    storage_s3_bucket: str = ""
+    storage_s3_access_key_id: str = ""
+    storage_s3_secret_access_key: str = ""
+    storage_s3_prefix: str = "agroclimax"
 
     # Copernicus / Sentinel Hub
     copernicus_client_id: str = ""
@@ -150,6 +160,20 @@ class Settings(BaseSettings):
                 self.database_sync_url = f"sqlite:///{(BASE_DIR / 'agroclimax.db').as_posix()}"
         return self
 
+    @field_validator("app_runtime_role", mode="before")
+    @classmethod
+    def normalize_runtime_role(cls, value: object) -> str:
+        normalized = str(value or "all-in-one").strip().lower()
+        allowed = {"all-in-one", "web", "worker"}
+        return normalized if normalized in allowed else "all-in-one"
+
+    @field_validator("storage_backend", mode="before")
+    @classmethod
+    def normalize_storage_backend(cls, value: object) -> str:
+        normalized = str(value or "filesystem").strip().lower()
+        allowed = {"filesystem", "s3"}
+        return normalized if normalized in allowed else "filesystem"
+
     @property
     def copernicus_enabled(self) -> bool:
         return bool(self.copernicus_client_id and self.copernicus_client_secret)
@@ -165,6 +189,16 @@ class Settings(BaseSettings):
     @property
     def twilio_enabled(self) -> bool:
         return bool(self.twilio_account_sid and self.twilio_auth_token)
+
+    @property
+    def storage_bucket_enabled(self) -> bool:
+        return (
+            self.storage_backend == "s3"
+            and bool(self.storage_s3_endpoint_url)
+            and bool(self.storage_s3_bucket)
+            and bool(self.storage_s3_access_key_id)
+            and bool(self.storage_s3_secret_access_key)
+        )
 
 
 settings = Settings()

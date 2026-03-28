@@ -16,6 +16,7 @@ from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.models.humedad import AOIUnit
 from app.models.materialized import ExternalMapCacheEntry
+from app.services.object_storage import storage_get_bytes, storage_put_bytes
 
 try:
     from data_fetcher import get_token as legacy_get_token
@@ -89,21 +90,36 @@ def tile_to_bbox(z: int, x: int, y: int) -> list[float]:
     ]
 
 
+def _tile_bucket_key(layer: str, z: int, x: int, y: int, *, target_date: date | None = None) -> str:
+    target_date = target_date or date.today()
+    return f"tiles/{target_date.isoformat()}/{layer}/{z}/{x}/{y}.png"
+
+
+def _coneat_bucket_object_key(cache_key: str) -> str:
+    return f"external-map-cache/coneat/{cache_key}.bin"
+
+
 async def fetch_tile_png(layer: str, z: int, x: int, y: int) -> bytes:
     if layer not in EVALSCRIPTS or z < 7 or z > 13:
         return TRANSPARENT_PNG
 
-    cache_path = TILE_CACHE_DIR / f"{layer}_{date.today()}_{z}_{x}_{y}.png"
+    today = date.today()
+    cache_path = TILE_CACHE_DIR / f"{layer}_{today}_{z}_{x}_{y}.png"
     if cache_path.exists():
         return cache_path.read_bytes()
+
+    tile_bucket_key = _tile_bucket_key(layer, z, x, y, target_date=today)
+    bucket_cached = await storage_get_bytes(tile_bucket_key)
+    if bucket_cached:
+        cache_path.write_bytes(bucket_cached[0])
+        return bucket_cached[0]
 
     if legacy_get_token is None or not settings.copernicus_enabled:
         return TRANSPARENT_PNG
 
     info = CAPAS_INFO[layer]
     bbox = tile_to_bbox(z, x, y)
-    today = str(date.today())
-    start = str(date.today() - timedelta(days=45))
+    start = str(today - timedelta(days=45))
     data_filter = {"timeRange": {"from": f"{start}T00:00:00Z", "to": f"{today}T23:59:59Z"}}
     if info.get("clouds"):
         data_filter["maxCloudCoverage"] = 50
@@ -145,6 +161,7 @@ async def fetch_tile_png(layer: str, z: int, x: int, y: int) -> bytes:
         )
         if response.status_code == 200 and "image" in response.headers.get("content-type", ""):
             cache_path.write_bytes(response.content)
+            await storage_put_bytes(tile_bucket_key, response.content, content_type="image/png")
             return response.content
     except Exception:
         return TRANSPARENT_PNG
@@ -337,6 +354,13 @@ async def proxy_coneat_request(params: dict) -> tuple[bytes, str]:
     if cached:
         _write_coneat_cache(cache_path, meta_path, cached[0], cached[1])
         return cached
+    bucket_cached = await storage_get_bytes(_coneat_bucket_object_key(cache_key))
+    if bucket_cached:
+        content, content_type, _metadata = bucket_cached
+        resolved_content_type = content_type or default_content_type
+        _write_coneat_cache(cache_path, meta_path, content, resolved_content_type)
+        await _write_coneat_cache_db(cache_key, normalized_params, content, resolved_content_type)
+        return content, resolved_content_type
 
     last_error: Exception | None = None
     async with CONEAT_PROXY_SEMAPHORE:
@@ -347,12 +371,24 @@ async def proxy_coneat_request(params: dict) -> tuple[bytes, str]:
         if cached:
             _write_coneat_cache(cache_path, meta_path, cached[0], cached[1])
             return cached
+        bucket_cached = await storage_get_bytes(_coneat_bucket_object_key(cache_key))
+        if bucket_cached:
+            content, content_type, _metadata = bucket_cached
+            resolved_content_type = content_type or default_content_type
+            _write_coneat_cache(cache_path, meta_path, content, resolved_content_type)
+            await _write_coneat_cache_db(cache_key, normalized_params, content, resolved_content_type)
+            return content, resolved_content_type
 
         for attempt, delay in enumerate(CONEAT_PROXY_RETRY_DELAYS, start=1):
             try:
                 content, content_type = await _fetch_coneat_remote(url, normalized_params)
                 _write_coneat_cache(cache_path, meta_path, content, content_type)
                 await _write_coneat_cache_db(cache_key, normalized_params, content, content_type)
+                await storage_put_bytes(
+                    _coneat_bucket_object_key(cache_key),
+                    content,
+                    content_type=content_type,
+                )
                 return content, content_type
             except (httpx.TimeoutException, httpx.RequestError, httpx.HTTPStatusError) as exc:
                 last_error = exc
@@ -366,6 +402,13 @@ async def proxy_coneat_request(params: dict) -> tuple[bytes, str]:
     if cached:
         _write_coneat_cache(cache_path, meta_path, cached[0], cached[1])
         return cached
+    bucket_cached = await storage_get_bytes(_coneat_bucket_object_key(cache_key))
+    if bucket_cached:
+        content, content_type, _metadata = bucket_cached
+        resolved_content_type = content_type or default_content_type
+        _write_coneat_cache(cache_path, meta_path, content, resolved_content_type)
+        await _write_coneat_cache_db(cache_key, normalized_params, content, resolved_content_type)
+        return content, resolved_content_type
 
     if _coneat_request_name(normalized_params) == "GETMAP":
         return TRANSPARENT_PNG, "image/png"
@@ -492,5 +535,5 @@ async def prewarm_coneat_tiles(department: str | None = None) -> dict[str, objec
         "planned_tiles": len(tile_params),
         "reused_tiles": reused,
         "warmed_tiles": warmed,
-        "cache_backend": "database+filesystem",
+        "cache_backend": "database+filesystem+s3" if settings.storage_bucket_enabled else "database+filesystem",
     }

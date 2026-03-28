@@ -19,3 +19,4 @@ aiosmtplib>=3.0.1
 celery[redis]>=5.4.0
 redis>=5.0.4
 python-multipart>=0.0.9
+boto3>=1.35.0
