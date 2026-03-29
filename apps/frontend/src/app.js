@@ -1,8 +1,10 @@
-import { API_BASE, API_V1, downloadJsonFile, fetchCustomState, fetchDepartmentLayers, fetchHexagonsGeojson, fetchHistory, fetchProductiveTemplate, fetchProductiveUnits, fetchProductiveUnitsGeojson, fetchScopeState, fetchSectionsGeojson, fetchUnits, fetchWeatherForecast, uploadProductiveUnitsFile } from './api.js?v=20260327-15';
-import { highlightDepartment, highlightHex, highlightProductive, highlightSection, initMap, setDepartmentsOnMap, setHexesOnMap, setProductivesOnMap, setSectionsOnMap, updateFocus } from './map.js?v=20260327-15';
+import { API_BASE, API_V1, downloadJsonFile, fetchCustomState, fetchDepartmentLayers, fetchHexagonsGeojson, fetchHistory, fetchProductiveTemplate, fetchProductiveUnits, fetchProductiveUnitsGeojson, fetchScopeState, fetchSectionsGeojson, fetchUnits, fetchWeatherForecast, uploadProductiveUnitsFile } from './api.js?v=20260329-7';
+import { initAuth } from './auth.js?v=20260329-7';
+import { highlightDepartment, highlightHex, highlightProductive, highlightSection, initMap, setDepartmentsOnMap, setHexesOnMap, setProductivesOnMap, setSectionsOnMap, updateFocus } from './map.js?v=20260329-2';
+import { initProfilePanel, refreshProfilePanel } from './profile.js?v=20260329-6';
 import { normalizeState, populateDepartmentSelect, renderChart, renderDashboard, renderDrivers, renderError, renderForecast, renderHistory, renderLoading, renderWeatherCards } from './render.js?v=20260327-15';
-import { initSettingsPanel } from './settings.js?v=20260327-15';
-import { setStore, store } from './state.js?v=20260327-15';
+import { initSettingsPanel } from './settings.js?v=20260329-5';
+import { setStore, store } from './state.js?v=20260329-2';
 
 setStore({ apiBase: API_BASE, apiV1: API_V1 });
 
@@ -280,7 +282,7 @@ async function downloadProductiveTemplateFile() {
   try {
     const payload = await fetchProductiveTemplate();
     downloadJsonFile('agroclimax_plantilla_productivas.geojson', payload);
-    setProductiveImportStatus('Plantilla descargada. Podés completarla y volver a subirla.', 'success');
+    setProductiveImportStatus('Plantilla descargada. Podes completarla y volver a subirla.', 'success');
   } catch (error) {
     setProductiveImportStatus(`No se pudo descargar la plantilla: ${error.message}`, 'error');
   }
@@ -291,7 +293,7 @@ async function handleProductiveFileUpload() {
   const categorySelect = document.getElementById('productive-category');
   const uploadButton = document.getElementById('productive-upload-btn');
   if (!fileInput?.files?.length) {
-    setProductiveImportStatus('Seleccioná un archivo .geojson, .json o .zip.', 'error');
+    setProductiveImportStatus('Selecciona un archivo .geojson, .json o .zip.', 'error');
     return;
   }
   const file = fileInput.files[0];
@@ -303,7 +305,7 @@ async function handleProductiveFileUpload() {
   try {
     const result = await uploadProductiveUnitsFile(file, { category, sourceName });
     const summary = `${result.created} nuevas, ${result.updated} actualizadas, ${result.skipped} omitidas`;
-    setProductiveImportStatus(`Importación lista: ${summary}.`, 'success');
+    setProductiveImportStatus(`Importacion lista: ${summary}.`, 'success');
     fileInput.value = '';
     await refreshProductiveImportSummary(currentDepartmentFilter());
     const btn = document.getElementById('btn-productiva');
@@ -460,6 +462,9 @@ async function refreshCurrentLayer() {
 }
 
 async function bootstrap() {
+  const authenticated = await initAuth();
+  if (!authenticated) return;
+
   await initMap(async (geojson) => {
     setStore({ customGeojson: geojson, selectedSectionId: null, selectedProductiveId: null, selectedHexId: null });
     await loadSelection('custom');
@@ -546,7 +551,9 @@ async function bootstrap() {
     onRefreshSelection: refreshCurrentSelection,
     onRefreshLayers: refreshCurrentLayer,
   });
-  setProductiveImportStatus('Subí un .geojson o .zip shapefile para activar la capa Predios.', 'muted');
+  initProfilePanel();
+  await refreshProfilePanel();
+  setProductiveImportStatus('Subi un .geojson o .zip shapefile para activar la capa Predios.', 'muted');
 }
 
 document.addEventListener('DOMContentLoaded', bootstrap);

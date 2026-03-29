@@ -32,10 +32,18 @@ export const store = {
   settingsMode: 'global',
   settingsCoverageClass: 'pastura_cultivo',
   settingsDraft: null,
+  profileSchema: null,
+  profilePayload: null,
+  profileDraft: null,
+  profileStatus: null,
   currentModel: null,
   weatherFilterValue: 'current',
   weatherFilterOptions: [],
   weatherModel: null,
+  authUser: null,
+  authCsrfToken: null,
+  authSession: null,
+  authReady: false,
 };
 
 export function setStore(patch) {

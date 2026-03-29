@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
+from app.services.auth import AuthContext, actor_label_from_context, require_auth_context
 from app.services.business_settings import (
     clear_coverage_override,
     get_settings_payload,
@@ -65,6 +66,7 @@ async def settings_audit(
 async def update_global_settings(
     payload: SettingsWriteRequest,
     request: Request,
+    auth: AuthContext = Depends(require_auth_context),
     db: AsyncSession = Depends(get_db),
 ):
     try:
@@ -72,7 +74,7 @@ async def update_global_settings(
             db,
             payload.rules,
             updated_from=payload.updated_from,
-            operator_label=payload.operator_label,
+            operator_label=actor_label_from_context(auth),
             request_ip=_request_ip(request),
             user_agent=request.headers.get("user-agent"),
         )
@@ -85,6 +87,7 @@ async def update_coverage_settings(
     coverage_class: str,
     payload: SettingsWriteRequest,
     request: Request,
+    auth: AuthContext = Depends(require_auth_context),
     db: AsyncSession = Depends(get_db),
 ):
     try:
@@ -93,7 +96,7 @@ async def update_coverage_settings(
             coverage_class,
             payload.rules,
             updated_from=payload.updated_from,
-            operator_label=payload.operator_label,
+            operator_label=actor_label_from_context(auth),
             request_ip=_request_ip(request),
             user_agent=request.headers.get("user-agent"),
         )
@@ -105,6 +108,7 @@ async def update_coverage_settings(
 async def delete_coverage_override(
     coverage_class: str,
     request: Request,
+    auth: AuthContext = Depends(require_auth_context),
     db: AsyncSession = Depends(get_db),
 ):
     try:
@@ -112,7 +116,7 @@ async def delete_coverage_override(
             db,
             coverage_class,
             updated_from="settings_ui",
-            operator_label="anonymous",
+            operator_label=actor_label_from_context(auth),
             request_ip=_request_ip(request),
             user_agent=request.headers.get("user-agent"),
         )
@@ -124,12 +128,13 @@ async def delete_coverage_override(
 async def reset_global(
     payload: SettingsResetRequest,
     request: Request,
+    auth: AuthContext = Depends(require_auth_context),
     db: AsyncSession = Depends(get_db),
 ):
     return await reset_global_settings(
         db,
         updated_from=payload.updated_from,
-        operator_label=payload.operator_label,
+        operator_label=actor_label_from_context(auth),
         request_ip=_request_ip(request),
         user_agent=request.headers.get("user-agent"),
     )
@@ -140,6 +145,7 @@ async def reset_coverage_override(
     coverage_class: str,
     payload: SettingsResetRequest,
     request: Request,
+    auth: AuthContext = Depends(require_auth_context),
     db: AsyncSession = Depends(get_db),
 ):
     try:
@@ -147,7 +153,7 @@ async def reset_coverage_override(
             db,
             coverage_class,
             updated_from=payload.updated_from,
-            operator_label=payload.operator_label,
+            operator_label=actor_label_from_context(auth),
             request_ip=_request_ip(request),
             user_agent=request.headers.get("user-agent"),
         )

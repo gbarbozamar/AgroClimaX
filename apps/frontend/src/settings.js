@@ -6,8 +6,8 @@ import {
   resetGlobalSettings,
   saveCoverageSettings,
   saveGlobalSettings,
-} from './api.js?v=20260327-13';
-import { setStore, store } from './state.js?v=20260327-13';
+} from './api.js?v=20260329-5';
+import { setStore, store } from './state.js?v=20260329-2';
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value ?? {}));
@@ -76,16 +76,25 @@ function ensureDraft() {
   return store.settingsDraft;
 }
 
-function syncSidebarView() {
+export function syncSidebarView() {
   const monitorView = getNode('sidebar-monitor-view');
   const settingsView = getNode('sidebar-settings-view');
+  const profileView = getNode('sidebar-profile-view');
   const monitorTab = getNode('sidebar-monitor-tab');
   const settingsTab = getNode('sidebar-settings-tab');
-  const showSettings = store.sidebarView === 'settings';
-  monitorView?.classList.toggle('hidden', showSettings);
-  settingsView?.classList.toggle('hidden', !showSettings);
-  monitorTab?.classList.toggle('active', !showSettings);
-  settingsTab?.classList.toggle('active', showSettings);
+  const profileTab = getNode('sidebar-profile-tab');
+  const activeView = store.sidebarView || 'monitor';
+  monitorView?.classList.toggle('hidden', activeView !== 'monitor');
+  settingsView?.classList.toggle('hidden', activeView !== 'settings');
+  profileView?.classList.toggle('hidden', activeView !== 'profile');
+  monitorTab?.classList.toggle('active', activeView === 'monitor');
+  settingsTab?.classList.toggle('active', activeView === 'settings');
+  profileTab?.classList.toggle('active', activeView === 'profile');
+}
+
+export function setSidebarView(view) {
+  setStore({ sidebarView: view });
+  syncSidebarView();
 }
 
 function renderCoverageOptions() {
@@ -101,15 +110,20 @@ function renderCoverageOptions() {
 
 function renderMeta() {
   const meta = getNode('settings-meta');
+  const operatorNode = getNode('settings-authenticated-operator');
   if (!meta || !store.settingsPayload) return;
   const coverageClass = activeCoverageClass();
   const override = store.settingsPayload.overrides?.[coverageClass];
+  if (operatorNode) {
+    operatorNode.textContent = store.authUser?.email || 'Sin sesion activa';
+  }
   meta.innerHTML = `
     <div><strong>Version global:</strong> ${store.settingsPayload.global_version ?? 0}</div>
     <div><strong>Actualizado:</strong> ${formatDate(store.settingsPayload.global_updated_at)}</div>
-    <div><strong>Operador:</strong> ${store.settingsPayload.global_updated_by_label || '—'}</div>
+    <div><strong>Operador:</strong> ${store.settingsPayload.global_updated_by_label || '-'}</div>
+    <div><strong>Usuario activo:</strong> ${store.authUser?.email || '-'}</div>
     <div><strong>Modo:</strong> ${store.settingsMode === 'coverage' ? `Override ${coverageClass}` : 'Global'}</div>
-    <div><strong>Version efectiva:</strong> ${store.settingsPayload.rules_version || '—'}</div>
+    <div><strong>Version efectiva:</strong> ${store.settingsPayload.rules_version || '-'}</div>
     ${store.settingsMode === 'coverage' ? `<div><strong>Override actual:</strong> ${override?.version ? `v${override.version}` : 'heredado'}</div>` : ''}
   `;
 }
@@ -236,13 +250,12 @@ async function refreshSettingsData() {
 }
 
 async function saveCurrentSettings(onRefreshSelection, onRefreshLayers) {
-  const operatorLabel = getNode('settings-operator-input')?.value?.trim() || '';
   const draft = ensureDraft();
   setStatus('Guardando cambios y recalculando reglas recientes...', 'info');
   if (store.settingsMode === 'coverage') {
-    await saveCoverageSettings(activeCoverageClass(), draft, operatorLabel);
+    await saveCoverageSettings(activeCoverageClass(), draft);
   } else {
-    await saveGlobalSettings(draft, operatorLabel);
+    await saveGlobalSettings(draft);
   }
   await refreshSettingsData();
   await onRefreshSelection?.();
@@ -251,10 +264,9 @@ async function saveCurrentSettings(onRefreshSelection, onRefreshLayers) {
 }
 
 async function resetCurrentSettings(onRefreshSelection, onRefreshLayers) {
-  const operatorLabel = getNode('settings-operator-input')?.value?.trim() || '';
   if (!window.confirm('Esto restaurara la configuracion global por defecto. ¿Continuar?')) return;
   setStatus('Restaurando defaults globales...', 'info');
-  await resetGlobalSettings(operatorLabel);
+  await resetGlobalSettings();
   setStore({ settingsMode: 'global' });
   await refreshSettingsData();
   await onRefreshSelection?.();
@@ -263,10 +275,9 @@ async function resetCurrentSettings(onRefreshSelection, onRefreshLayers) {
 }
 
 async function clearCurrentOverride(onRefreshSelection, onRefreshLayers) {
-  const operatorLabel = getNode('settings-operator-input')?.value?.trim() || '';
   if (!window.confirm(`Se eliminara el override para ${activeCoverageClass()}. ¿Continuar?`)) return;
   setStatus('Eliminando override de cobertura...', 'info');
-  await clearCoverageOverride(activeCoverageClass(), operatorLabel);
+  await clearCoverageOverride(activeCoverageClass());
   await refreshSettingsData();
   await onRefreshSelection?.();
   await onRefreshLayers?.();
@@ -290,12 +301,10 @@ export function initSettingsPanel({ onRefreshSelection, onRefreshLayers } = {}) 
   if (!monitorTab || !settingsTab) return;
 
   monitorTab.addEventListener('click', () => {
-    setStore({ sidebarView: 'monitor' });
-    syncSidebarView();
+    setSidebarView('monitor');
   });
   settingsTab.addEventListener('click', async () => {
-    setStore({ sidebarView: 'settings' });
-    syncSidebarView();
+    setSidebarView('settings');
     if (!store.settingsPayload) {
       await refreshSettingsData();
     }

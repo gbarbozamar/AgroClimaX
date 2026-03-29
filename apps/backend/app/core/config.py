@@ -38,6 +38,18 @@ class Settings(BaseSettings):
     database_sync_url: str | None = None
     database_use_postgis: bool = True
 
+    # Auth / Google OAuth
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_discovery_url: str = "https://accounts.google.com/.well-known/openid-configuration"
+    google_redirect_uri: str = ""
+    auth_cookie_name: str = "agroclimax_session"
+    auth_session_ttl_hours: int = 72
+    auth_state_ttl_minutes: int = 10
+    auth_csrf_header_name: str = "X-CSRF-Token"
+    auth_login_success_redirect: str = "/"
+    auth_bypass_for_tests: bool = False
+
     # Redis / workers
     redis_url: str = "redis://localhost:6379/0"
     pipeline_cron_hour: int = 3
@@ -199,6 +211,10 @@ class Settings(BaseSettings):
             and bool(self.storage_s3_access_key_id)
             and bool(self.storage_s3_secret_access_key)
         )
+
+    @property
+    def google_oauth_enabled(self) -> bool:
+        return bool(self.google_client_id and self.google_client_secret)
 
 
 settings = Settings()

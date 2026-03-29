@@ -1,3 +1,4 @@
+from app.models.auth import AppUser, AppUserProfile, AuthSession
 from app.models.alerta import AlertState, AlertaEvento, NotificationEvent, SuscriptorAlerta
 from app.models.humedad import (
     AOIUnit,
@@ -20,6 +21,9 @@ from app.models.pipeline import PipelineRun
 from app.models.settings import BusinessSettingsAudit, BusinessSettingsProfile
 
 __all__ = [
+    "AppUser",
+    "AppUserProfile",
+    "AuthSession",
     "AlertState",
     "AlertaEvento",
     "NotificationEvent",

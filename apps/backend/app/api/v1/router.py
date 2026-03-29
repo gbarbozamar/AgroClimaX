@@ -1,31 +1,38 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from app.api.v1.endpoints import (
     alertas,
+    auth,
     ground_truth,
     hexagonos,
     legacy,
     layers,
     notifications,
     pipeline,
+    profile,
     productivas,
     public,
     sections,
     settings,
     unidades,
 )
+from app.services.auth import require_authenticated_request
 
 api_router = APIRouter()
+protected_router = APIRouter(dependencies=[Depends(require_authenticated_request)])
 
-api_router.include_router(alertas.router)
-api_router.include_router(unidades.router)
-api_router.include_router(layers.router)
-api_router.include_router(hexagonos.router)
-api_router.include_router(sections.router)
-api_router.include_router(ground_truth.router)
-api_router.include_router(notifications.router)
-api_router.include_router(pipeline.router)
-api_router.include_router(productivas.router)
-api_router.include_router(public.router)
-api_router.include_router(settings.router)
-api_router.include_router(legacy.router)
+api_router.include_router(auth.router)
+protected_router.include_router(alertas.router)
+protected_router.include_router(unidades.router)
+protected_router.include_router(layers.router)
+protected_router.include_router(hexagonos.router)
+protected_router.include_router(sections.router)
+protected_router.include_router(ground_truth.router)
+protected_router.include_router(notifications.router)
+protected_router.include_router(pipeline.router)
+protected_router.include_router(productivas.router)
+protected_router.include_router(profile.router)
+protected_router.include_router(public.router)
+protected_router.include_router(settings.router)
+protected_router.include_router(legacy.router)
+api_router.include_router(protected_router)

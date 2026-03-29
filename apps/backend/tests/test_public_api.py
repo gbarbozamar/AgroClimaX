@@ -9,6 +9,8 @@ import httpx
 TEST_DB = Path(__file__).resolve().parent / "test_suite.db"
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{TEST_DB.as_posix()}"
 os.environ["DATABASE_SYNC_URL"] = f"sqlite:///{TEST_DB.as_posix()}"
+os.environ["APP_ENV"] = "testing"
+os.environ["AUTH_BYPASS_FOR_TESTS"] = "true"
 
 from app.services.public_api import TRANSPARENT_PNG, _coneat_cache_entry_paths, _coneat_cache_key, proxy_coneat_request
 

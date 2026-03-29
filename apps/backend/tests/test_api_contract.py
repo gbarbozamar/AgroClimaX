@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, patch
 TEST_DB = Path(__file__).resolve().parent / "test_suite.db"
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{TEST_DB.as_posix()}"
 os.environ["DATABASE_SYNC_URL"] = f"sqlite:///{TEST_DB.as_posix()}"
+os.environ["APP_ENV"] = "testing"
+os.environ["AUTH_BYPASS_FOR_TESTS"] = "true"
 
 from fastapi.testclient import TestClient
 
@@ -372,6 +374,70 @@ class ApiContractTests(unittest.TestCase):
                 )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["scope_type"], "global")
+
+    def test_v1_profile_schema_contract(self):
+        payload = {
+            "questionnaire_version": "v1",
+            "required_fields": ["role_code", "organization_type"],
+            "catalogs": {
+                "organization_types": [{"value": "productor", "label": "Productor"}],
+                "role_codes": [{"value": "productor", "label": "Productor"}],
+                "scope_types": [{"value": "nacional", "label": "Nacional"}],
+                "production_types": [{"value": "ganaderia", "label": "Ganaderia"}],
+                "use_cases": [{"value": "monitoreo_diario", "label": "Monitoreo diario"}],
+                "alert_channels": [{"value": "email", "label": "Email"}],
+                "min_alert_states": [{"value": "Alerta", "label": "Alerta"}],
+                "preferred_languages": [{"value": "es-UY", "label": "Espanol (Uruguay)"}],
+                "departments": [{"id": "department-rivera", "label": "Rivera"}],
+                "jurisdictions": [{"id": "section-police-1301", "label": "Seccion Policial SP 1 - Rivera", "department": "Rivera"}],
+            },
+        }
+        with patch("app.api.v1.endpoints.profile.get_profile_schema", new=AsyncMock(return_value=payload)):
+            with TestClient(app) as client:
+                response = client.get("/api/v1/profile/schema")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["questionnaire_version"], "v1")
+
+    def test_v1_profile_me_contract(self):
+        payload = {
+            "google_identity": {
+                "id": "user-1",
+                "google_sub": "google-123",
+                "email": "demo@example.com",
+                "email_verified": True,
+                "full_name": "Usuario Demo",
+                "given_name": "Usuario",
+                "family_name": "Demo",
+                "picture_url": None,
+                "locale": "es-UY",
+                "is_active": True,
+                "last_login_at": "2026-03-29T00:00:00+00:00",
+                "created_at": "2026-03-28T00:00:00+00:00",
+            },
+            "profile": {
+                "organization_type": "productor",
+                "scope_type": "nacional",
+                "scope_ids_json": [],
+                "use_cases_json": ["monitoreo_diario"],
+                "alert_channels_json": ["email"],
+                "completion_pct": 100.0,
+            },
+            "completion": {
+                "is_complete": True,
+                "completion_pct": 100.0,
+                "questionnaire_version": "v1",
+                "completed_at": "2026-03-29T00:10:00+00:00",
+                "missing_fields": [],
+            },
+            "options": {
+                "organization_types": [{"value": "productor", "label": "Productor"}],
+            },
+        }
+        with patch("app.api.v1.endpoints.profile.get_profile_me", new=AsyncMock(return_value=payload)):
+            with TestClient(app) as client:
+                response = client.get("/api/v1/profile/me")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["completion"]["is_complete"])
 
     def test_legacy_estado_actual_contract(self):
         payload = {

@@ -78,6 +78,10 @@
       gap: 16px;
     }
 
+    .hidden {
+      display: none !important;
+    }
+
     .badge-area {
       background: var(--surface2);
       border: 1px solid var(--border);
@@ -95,6 +99,141 @@
     .last-update {
       font-size: 0.75rem;
       color: var(--text-muted);
+    }
+
+    .auth-user-badge {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 10px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.03);
+      min-width: 0;
+      max-width: 280px;
+      cursor: pointer;
+    }
+
+    .auth-user-avatar {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      object-fit: cover;
+      flex-shrink: 0;
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .auth-user-copy {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .auth-user-name {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .auth-user-subtitle {
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .auth-header-btn {
+      padding: 6px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #141828;
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.78rem;
+      font-family: Inter, sans-serif;
+      font-weight: 600;
+    }
+
+    .auth-header-btn.primary {
+      border-color: #4a90d9;
+      color: #d9ebff;
+    }
+
+    .auth-gate {
+      position: fixed;
+      inset: 0;
+      z-index: 2200;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: rgba(5, 8, 14, 0.74);
+      backdrop-filter: blur(4px);
+    }
+
+    .auth-gate-card {
+      width: min(520px, 100%);
+      border-radius: 24px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: linear-gradient(160deg, rgba(26,29,46,0.98) 0%, rgba(15,17,23,0.98) 100%);
+      box-shadow: 0 40px 90px rgba(0,0,0,0.45);
+      padding: 32px 30px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .auth-gate-kicker {
+      font-size: 0.74rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--accent);
+    }
+
+    .auth-gate-title {
+      font-size: 1.9rem;
+      line-height: 1.08;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .auth-gate-copy {
+      font-size: 0.96rem;
+      line-height: 1.6;
+      color: var(--text-muted);
+    }
+
+    .auth-gate-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .auth-gate-btn {
+      padding: 12px 18px;
+      border-radius: 12px;
+      border: 1px solid #4a90d9;
+      background: linear-gradient(135deg, #1d4f86 0%, #2f76c5 100%);
+      color: #f8fbff;
+      cursor: pointer;
+      font-size: 0.92rem;
+      font-family: Inter, sans-serif;
+      font-weight: 700;
+    }
+
+    .auth-gate-note {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+
+    body.auth-blocked {
+      overflow: hidden;
     }
 
     /* â”€â”€ ALERTA BANNER â”€â”€ */
@@ -596,7 +735,7 @@
 
     .sidebar-tabs {
       display: grid;
-      grid-template-columns: repeat(2, 1fr);
+      grid-template-columns: repeat(3, 1fr);
       gap: 1px;
       background: var(--border);
       border-bottom: 1px solid var(--border);
@@ -784,6 +923,201 @@
       font-size: 0.72rem;
       color: var(--text-muted);
       line-height: 1.4;
+    }
+
+    .profile-completion-banner {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 12px 16px;
+      margin: 0 16px;
+      border-bottom: 1px solid rgba(74, 144, 217, 0.3);
+      background: rgba(74, 144, 217, 0.08);
+      cursor: pointer;
+      transition: background 0.18s ease, border-color 0.18s ease;
+    }
+
+    .profile-completion-banner:hover,
+    .profile-completion-banner:focus-visible {
+      background: rgba(74, 144, 217, 0.12);
+      border-bottom-color: rgba(98, 176, 255, 0.5);
+      outline: none;
+    }
+
+    .profile-completion-copy {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      font-size: 0.8rem;
+      color: #dbeafe;
+    }
+
+    .profile-completion-pill {
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(125, 183, 255, 0.35);
+      background: rgba(125, 183, 255, 0.12);
+      color: #d9ebff;
+      font-size: 0.72rem;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    .profile-completion-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .profile-identity-head {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .profile-identity-avatar {
+      width: 54px;
+      height: 54px;
+      border-radius: 50%;
+      object-fit: cover;
+      border: 1px solid rgba(255,255,255,0.1);
+      background: rgba(255,255,255,0.04);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text);
+      font-weight: 700;
+    }
+
+    .profile-identity-avatar-fallback {
+      font-size: 1.2rem;
+    }
+
+    .profile-identity-name {
+      font-size: 0.98rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .profile-identity-email {
+      margin-top: 3px;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    .profile-identity-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      font-size: 0.76rem;
+    }
+
+    .profile-identity-grid div {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 9px 10px;
+      border-radius: 8px;
+      border: 1px solid rgba(46, 49, 80, 0.9);
+      background: rgba(15, 17, 23, 0.44);
+      min-width: 0;
+    }
+
+    .profile-identity-grid strong {
+      color: var(--text-muted);
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .profile-identity-grid span {
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .profile-summary-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+      font-size: 0.84rem;
+    }
+
+    .profile-progress {
+      width: 100%;
+      height: 8px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: rgba(255,255,255,0.06);
+      margin-bottom: 10px;
+    }
+
+    .profile-progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #1f78d1 0%, #62b0ff 100%);
+    }
+
+    .profile-summary-copy {
+      font-size: 0.76rem;
+      line-height: 1.45;
+      color: var(--text-muted);
+    }
+
+    .profile-checkbox-group {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .profile-checkbox {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 9px 10px;
+      border-radius: 8px;
+      border: 1px solid rgba(46, 49, 80, 0.9);
+      background: rgba(15, 17, 23, 0.44);
+      font-size: 0.78rem;
+      line-height: 1.4;
+      color: var(--text);
+    }
+
+    .profile-checkbox input {
+      margin-top: 2px;
+    }
+
+    .profile-multiselect {
+      min-height: 160px;
+    }
+
+    .profile-scope-note {
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px dashed rgba(136, 146, 164, 0.24);
+      background: rgba(15, 17, 23, 0.44);
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+
+    .profile-form-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding-top: 4px;
+    }
+
+    .profile-form-meta {
+      font-size: 0.74rem;
+      color: var(--text-muted);
     }
 
     .settings-inherited,
@@ -1251,11 +1585,43 @@
     <select id="department-select" style="padding:6px 12px;border-radius:6px;border:1px solid #2a3447;background:#111723;color:#d6deea;font-size:0.8rem;font-family:Inter,sans-serif">
       <option value="nacional">Uruguay (nacional)</option>
     </select>
-    <button id="btn-dibujar" onclick="window._drawingMode ? window.finishDrawing() : window.startDrawing()" style="padding:6px 14px;border-radius:6px;border:1px solid #4a90d9;background:#1a1d2e;color:#4a90d9;cursor:pointer;font-size:0.8rem;font-family:Inter,sans-serif;font-weight:600">&#9998; Dibujar Parcela</button>
+    <button id="btn-dibujar" onclick="window._drawingMode ? window.finishDrawing() : window.startDrawing()" style="padding:6px 14px;border-radius:6px;border:1px solid #4a90d9;background:#1a1d2e;color:#4a90d9;cursor:pointer;font-size:0.8rem;font-family:Inter,sans-serif;font-weight:600">DIB Dibujar Parcela</button>
     <button id="btn-limpiar" onclick="window.clearDrawing()" style="display:none;padding:6px 14px;border-radius:6px;border:1px solid #e74c3c;background:#1a1d2e;color:#e74c3c;cursor:pointer;font-size:0.8rem;font-family:Inter,sans-serif;font-weight:600">&#128465; Limpiar</button>
+    <div class="auth-user-badge hidden" id="auth-user-badge">
+      <img class="auth-user-avatar hidden" id="auth-user-avatar" alt="Avatar usuario" />
+      <div class="auth-user-copy">
+        <div class="auth-user-name" id="auth-user-name">Usuario</div>
+        <div class="auth-user-subtitle" id="auth-user-subtitle">Cuenta Google</div>
+      </div>
+    </div>
+    <button class="auth-header-btn primary hidden" id="auth-login-btn" type="button">Entrar con Google</button>
+    <button class="auth-header-btn hidden" id="auth-logout-btn" type="button">Cerrar sesion</button>
     <div class="last-update" id="last-update">Actualizado: -</div>
   </div>
 </header>
+
+<div class="auth-gate hidden" id="auth-gate">
+  <div class="auth-gate-card">
+    <div class="auth-gate-kicker">Acceso protegido</div>
+    <div class="auth-gate-title">AgroClimaX requiere inicio de sesion con Google</div>
+    <div class="auth-gate-copy" id="auth-gate-message">Inicia sesion con Google para entrar a AgroClimaX.</div>
+    <div class="auth-gate-copy" id="auth-welcome">Necesitas autenticarte con Google para usar el dashboard y las APIs operativas.</div>
+    <div class="auth-gate-actions">
+      <button class="auth-gate-btn" id="auth-gate-login-btn" type="button">Continuar con Google</button>
+    </div>
+    <div class="auth-gate-note">La sesion se gestiona desde el backend con cookie segura y expiracion controlada.</div>
+  </div>
+</div>
+
+<div class="profile-completion-banner hidden" id="profile-completion-banner" role="button" tabindex="0" aria-label="Abrir perfil completo">
+  <div class="profile-completion-copy">
+    <span class="profile-completion-pill" id="profile-completion-pct">0%</span>
+    <span id="profile-completion-copy">Completa tu perfil operativo para usar la plataforma con mejor contexto.</span>
+  </div>
+  <div class="profile-completion-actions">
+    <button class="settings-btn primary" id="profile-completion-open-btn" type="button">Completar perfil</button>
+  </div>
+</div>
 
 <!-- ALERTA BANNER -->
 <div id="alerta-banner"></div>
@@ -1412,62 +1778,62 @@
     <!-- SELECTOR DE CAPAS AGRONÃ“MICAS -->
     <div class="map-controls">
       <button class="map-btn active" id="btn-alerta" onclick="setLayer('alerta',this)">
-        <span class="map-btn-icon">&#127919;</span>
+        <span class="map-btn-icon">AL</span>
         <span class="map-btn-name">Alerta</span>
         <span class="map-btn-desc">S1 + S2</span>
       </button>
       <button class="map-btn" id="btn-rgb" onclick="setLayer('rgb',this)">
-        <span class="map-btn-icon">&#127760;</span>
+        <span class="map-btn-icon">RG</span>
         <span class="map-btn-name">RGB</span>
         <span class="map-btn-formula">B04-B03-B02</span>
       </button>
       <button class="map-btn" id="btn-ndvi" onclick="setLayer('ndvi',this)">
-        <span class="map-btn-icon">&#127807;</span>
+        <span class="map-btn-icon">VI</span>
         <span class="map-btn-name">NDVI</span>
         <span class="map-btn-formula">B08-B04/sum</span>
       </button>
       <button class="map-btn" id="btn-ndmi" onclick="setLayer('ndmi',this)">
-        <span class="map-btn-icon">&#128167;</span>
+        <span class="map-btn-icon">MI</span>
         <span class="map-btn-name">NDMI</span>
         <span class="map-btn-formula">B08-B11/sum</span>
       </button>
       <button class="map-btn" id="btn-ndwi" onclick="setLayer('ndwi',this)">
-        <span class="map-btn-icon">&#128309;</span>
+        <span class="map-btn-icon">WI</span>
         <span class="map-btn-name">NDWI</span>
         <span class="map-btn-formula">B03-B08/sum</span>
       </button>
       <button class="map-btn" id="btn-savi" onclick="setLayer('savi',this)">
-        <span class="map-btn-icon">&#127806;</span>
+        <span class="map-btn-icon">SV</span>
         <span class="map-btn-name">SAVI</span>
         <span class="map-btn-formula">(B08-B04)/...*1.5</span>
       </button>
       <button class="map-btn" id="btn-sar" onclick="setLayer('sar',this)">
-        <span class="map-btn-icon">&#128225;</span>
+        <span class="map-btn-icon">SA</span>
         <span class="map-btn-name">SAR VV</span>
         <span class="map-btn-formula">S1 - Diaz 2026</span>
       </button>
       <button class="map-btn" id="btn-lst" onclick="setLayer('lst',this)">
-        <span class="map-btn-icon">&#127777;</span>
+        <span class="map-btn-icon">LT</span>
         <span class="map-btn-name">Termal</span>
         <span class="map-btn-formula">LST S3</span>
       </button>
       <button class="map-btn" id="btn-coneat" onclick="setLayer('coneat',this)">
-        <span class="map-btn-icon">&#128668;</span>
+        <span class="map-btn-icon">CN</span>
         <span class="map-btn-name">CONEAT</span>
         <span class="map-btn-formula">MGAP - zoom 11+</span>
       </button>
       <button class="map-btn" id="btn-judicial" onclick="setLayer('judicial',this)">
-        <span class="map-btn-icon">&#9878;</span>
+        <span class="map-btn-icon">SC</span>
         <span class="map-btn-name">Secciones</span>
         <span class="map-btn-formula">SNIG - Policiales</span>
       </button>
       <button class="map-btn" id="btn-productiva" onclick="setLayer('productiva',this)">
-        <span class="map-btn-icon">&#127806;</span>
+        <span class="map-btn-icon">PR</span>
         <span class="map-btn-name">Predios</span>
         <span class="map-btn-formula">Importados - AOI</span>
       </button>
       <button class="map-btn" id="btn-hex" onclick="setLayer('hex',this)">
-        <span class="map-btn-icon">&#11042;</span>
+        <span class="map-btn-icon">H3</span>
         <span class="map-btn-name">H3</span>
         <span class="map-btn-formula">Fallback - r6</span>
       </button>
@@ -1501,6 +1867,7 @@
     <div class="sidebar-tabs">
       <button class="sidebar-tab active" id="sidebar-monitor-tab" type="button">Monitor</button>
       <button class="sidebar-tab" id="sidebar-settings-tab" type="button">Settings</button>
+      <button class="sidebar-tab" id="sidebar-profile-tab" type="button">Perfil</button>
     </div>
 
     <div class="sidebar-view" id="sidebar-monitor-view">
@@ -1603,11 +1970,11 @@
               <select class="settings-input" id="settings-coverage-select"></select>
             </label>
           </div>
-          <label class="settings-field">
-            <span class="settings-field-label">Operador</span>
-            <input class="settings-input" id="settings-operator-input" type="text" placeholder="Nombre o iniciales para auditoria" />
-            <span class="settings-field-help">Se guarda en la auditoria de cambios junto con IP y user-agent.</span>
-          </label>
+          <div class="settings-field">
+            <span class="settings-field-label">Usuario autenticado</span>
+            <div class="settings-input" id="settings-authenticated-operator" style="display:flex;align-items:center;min-height:42px">La auditoria usa automaticamente la identidad del login actual.</div>
+            <span class="settings-field-help">Cada cambio queda auditado con la sesion Google activa, IP y user-agent.</span>
+          </div>
           <div class="settings-status" id="settings-status">La configuracion editable del motor aparecera aqui.</div>
           <div class="settings-meta" id="settings-meta"></div>
           <div class="settings-actions">
@@ -1630,6 +1997,27 @@
       </div>
     </div><!-- /sidebar-settings-view -->
 
+    <div class="sidebar-view hidden" id="sidebar-profile-view">
+      <div class="panel-section">
+        <div class="panel-title">Perfil del usuario</div>
+        <div class="settings-card">
+          <div class="settings-status" id="profile-status">Carga pendiente.</div>
+          <div id="profile-completion-summary"></div>
+          <button class="settings-btn primary" id="profile-open-full-btn" type="button">Abrir version completa</button>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-title">Cuenta Google</div>
+        <div class="settings-card" id="profile-google-identity"></div>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-title">Cuestionario operativo</div>
+        <div class="settings-card" id="profile-form"></div>
+      </div>
+    </div><!-- /sidebar-profile-view -->
+
   </div><!-- /side-panel -->
 
 </div><!-- /main-grid -->
@@ -1644,7 +2032,7 @@
   </div>
 </footer>
 
-<script type="module" src="/static/src/app.js?v=20260327-15"></script>
+<script type="module" src="/static/src/app.js?v=20260329-7"></script>
 <script type="text/plain" data-legacy="disabled">
 // â”€â”€ API REAL â€” Copernicus CDSE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // API_BASE: en producciÃ³n usa URL relativa (FastAPI sirve el frontend).

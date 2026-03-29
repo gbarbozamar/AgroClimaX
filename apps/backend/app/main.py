@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.sessions import SessionMiddleware
 
 from app.api.v1.router import api_router
 from app.bootstrap import initialize_application_state, run_startup_warmup
@@ -65,6 +66,14 @@ app = FastAPI(
 )
 
 app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.secret_key,
+    session_cookie="agroclimax_oauth",
+    same_site="lax",
+    https_only=settings.app_env == "production",
+)
+
+app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
@@ -87,6 +96,15 @@ async def root():
     if index_path.exists():
         return FileResponse(index_path)
     return {"sistema": "AgroClimaX", "docs": "/docs"}
+
+
+@app.get("/perfil")
+@app.get("/perfil/")
+async def profile_page():
+    profile_path = FRONTEND_ROOT / "profile.html"
+    if profile_path.exists():
+        return FileResponse(profile_path)
+    return FileResponse(FRONTEND_ROOT / "index.html")
 
 
 if FRONTEND_ROOT.exists():

@@ -14,6 +14,7 @@ from app.services.warehouse import seed_layer_catalog
 
 
 logger = logging.getLogger(__name__)
+SCHEMA_INIT_ADVISORY_LOCK_ID = 420260329
 
 
 async def _ensure_runtime_schema_compatibility() -> None:
@@ -41,11 +42,19 @@ async def initialize_application_state() -> None:
                 logger.exception("No se pudo habilitar PostGIS; se sigue sin extension espacial")
 
     async with engine.begin() as conn:
+        advisory_lock_acquired = False
         if SQLITE_BACKEND_ENABLED:
             await conn.execute(text("PRAGMA journal_mode=WAL"))
             await conn.execute(text("PRAGMA synchronous=NORMAL"))
             await conn.execute(text("PRAGMA busy_timeout=30000"))
-        await conn.run_sync(Base.metadata.create_all)
+        elif SPATIAL_BACKEND_ENABLED:
+            await conn.execute(text(f"SELECT pg_advisory_lock({SCHEMA_INIT_ADVISORY_LOCK_ID})"))
+            advisory_lock_acquired = True
+        try:
+            await conn.run_sync(Base.metadata.create_all)
+        finally:
+            if advisory_lock_acquired:
+                await conn.execute(text(f"SELECT pg_advisory_unlock({SCHEMA_INIT_ADVISORY_LOCK_ID})"))
 
     await _ensure_runtime_schema_compatibility()
 

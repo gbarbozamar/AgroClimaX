@@ -1,3 +1,5 @@
+import { store } from './state.js?v=20260329-2';
+
 const params = new URLSearchParams(window.location.search);
 const isHttpOrigin = window.location.protocol === 'http:' || window.location.protocol === 'https:';
 const defaultApiBase = isHttpOrigin ? '/api' : 'http://localhost:8000/api';
@@ -7,9 +9,28 @@ export const API_BASE =
   defaultApiBase;
 
 export const API_V1 = `${API_BASE}/v1`;
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 async function fetchJson(url, options = {}) {
-  const response = await fetch(url, options);
+  const {
+    suppressUnauthorizedEvent = false,
+    includeCsrf = true,
+    headers: inputHeaders = {},
+    ...fetchOptions
+  } = options;
+  const method = (fetchOptions.method || 'GET').toUpperCase();
+  const headers = new Headers(inputHeaders);
+  if (!headers.has('Accept')) headers.set('Accept', 'application/json');
+  if (includeCsrf && !SAFE_METHODS.has(method) && store.authCsrfToken && !headers.has('X-CSRF-Token')) {
+    headers.set('X-CSRF-Token', store.authCsrfToken);
+  }
+
+  const response = await fetch(url, {
+    credentials: 'same-origin',
+    ...fetchOptions,
+    method,
+    headers,
+  });
   const raw = await response.text();
   let data;
   try {
@@ -18,7 +39,25 @@ async function fetchJson(url, options = {}) {
     data = { detail: raw || `HTTP ${response.status}` };
   }
   if (!response.ok) {
-    throw new Error(data.detail || data.error || `HTTP ${response.status}`);
+    let detail = data.detail || data.error || `HTTP ${response.status}`;
+    if (Array.isArray(detail)) {
+      detail = detail
+        .map((item) => {
+          if (!item || typeof item !== 'object') return String(item);
+          const field = Array.isArray(item.loc) ? item.loc.filter((value) => value !== 'body').join('.') : '';
+          return field ? `${field}: ${item.msg || 'Valor invalido'}` : (item.msg || 'Valor invalido');
+        })
+        .join(' | ');
+    } else if (detail && typeof detail === 'object') {
+      detail = detail.msg || JSON.stringify(detail);
+    }
+    const error = new Error(detail || `HTTP ${response.status}`);
+    error.status = response.status;
+    error.payload = data;
+    if (response.status === 401 && !suppressUnauthorizedEvent) {
+      window.dispatchEvent(new CustomEvent('agroclimax:unauthorized', { detail: data }));
+    }
+    throw error;
   }
   return data;
 }
@@ -66,15 +105,10 @@ export async function uploadProductiveUnitsFile(file, { category = 'predio', sou
   formData.append('file', file);
   formData.append('category', category);
   formData.append('source_name', sourceName);
-  const response = await fetch(`${API_V1}/productivas/import-archivo`, {
+  return fetchJson(`${API_V1}/productivas/import-archivo`, {
     method: 'POST',
     body: formData,
   });
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.detail || data.error || `HTTP ${response.status}`);
-  }
-  return data;
 }
 
 export function downloadJsonFile(filename, payload) {
@@ -186,4 +220,41 @@ export async function clearCoverageOverride(coverageClass, operatorLabel = '') {
       updated_from: 'settings_ui',
     }),
   });
+}
+
+export async function fetchAuthMe() {
+  return fetchJson(`${API_V1}/auth/me`, {
+    suppressUnauthorizedEvent: true,
+  });
+}
+
+export async function fetchProfileSchema() {
+  return fetchJson(`${API_V1}/profile/schema`);
+}
+
+export async function fetchProfileMe() {
+  return fetchJson(`${API_V1}/profile/me`);
+}
+
+export async function saveProfileMe(payload) {
+  return fetchJson(`${API_V1}/profile/me`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function logoutCurrentUser() {
+  return fetchJson(`${API_V1}/auth/logout`, {
+    method: 'POST',
+  });
+}
+
+export function googleLoginUrl(nextPath = null) {
+  const nextValue = nextPath || `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  return `${API_V1}/auth/google/login?next=${encodeURIComponent(nextValue)}`;
+}
+
+export function profilePageUrl() {
+  return '/perfil';
 }

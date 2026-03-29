@@ -6,6 +6,8 @@ from pathlib import Path
 TEST_DB = Path(__file__).resolve().parent / "test_suite.db"
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{TEST_DB.as_posix()}"
 os.environ["DATABASE_SYNC_URL"] = f"sqlite:///{TEST_DB.as_posix()}"
+os.environ["APP_ENV"] = "testing"
+os.environ["AUTH_BYPASS_FOR_TESTS"] = "true"
 
 from app.models.alerta import AlertState
 from app.services.notifications import _notification_reasons
