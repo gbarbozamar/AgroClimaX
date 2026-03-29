@@ -94,6 +94,44 @@
       font-weight: 600;
     }
 
+    .btn-login {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 14px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .btn-login:hover { background: var(--border); }
+
+    .btn-logout {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-family: inherit;
+      font-size: 0.75rem;
+      cursor: pointer;
+      text-decoration: underline;
+    }
+
+    #user-info {
+      display: none;
+      align-items: center;
+      gap: 8px;
+    }
+    .user-avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+    }
+    .user-name {
+      font-size: 0.8rem;
+      color: var(--text);
+    }
+
     .last-update {
       font-size: 0.75rem;
       color: var(--text-muted);
@@ -575,6 +613,14 @@
     <div class="badge-area">Área: <span>Rivera, Uruguay</span></div>
     <div class="badge-area">Satélites: <span>Sentinel-1 · Sentinel-2 · ERA5</span></div>
     <div class="last-update" id="last-update">Actualizado: —</div>
+    <div id="auth-area">
+      <button id="login-btn" class="btn-login" onclick="loginWithGoogle()">Login con Google</button>
+      <div id="user-info">
+        <img id="user-avatar" class="user-avatar" alt="" />
+        <span id="user-name" class="user-name"></span>
+        <button onclick="logout()" class="btn-logout">Salir</button>
+      </div>
+    </div>
   </div>
 </header>
 
@@ -801,7 +847,7 @@
 
 <script>
 // ── API REAL — Copernicus CDSE ─────────────────────────────────
-const API_BASE = 'http://localhost:8002/api';
+const API_BASE = window.location.origin + '/api/v1';
 const COLORES  = { 0: '#2ecc71', 1: '#f1c40f', 2: '#e67e22', 3: '#e74c3c' };
 const NOMBRES  = { 0: 'VERDE', 1: 'AMARILLO', 2: 'NARANJA', 3: 'ROJO' };
 
@@ -1141,7 +1187,7 @@ function initMap() {
   addCalibrationPoints();
 
   // Cargar límite real de Rivera desde GADM
-  fetch('http://localhost:8002/api/geojson/rivera')
+  fetch(`${API_BASE}/geojson/rivera`)
     .then(r => r.json())
     .then(geojson => {
       L.geoJSON(geojson, {
@@ -1292,7 +1338,7 @@ function setLayer(name, btn) {
     const loading = document.getElementById('map-tile-loading');
 
     activeTileLayer = L.tileLayer(
-      `http://localhost:8002/api/tiles/${name}/{z}/{x}/{y}.png`,
+      `${API_BASE}/tiles/${name}/{z}/{x}/{y}.png`,
       {
         pane:       'satellitePane',
         maxZoom:    13,
@@ -1327,8 +1373,57 @@ function actualizarMapaConDatos(d) {
   actualizarMarcadorRivera(d);
 }
 
+// ── AUTH ─────────────────────────────────────────────────────
+function loginWithGoogle() {
+  window.location.href = API_BASE + '/auth/google/login';
+}
+
+function logout() {
+  localStorage.removeItem('token');
+  updateAuthUI();
+}
+
+function updateAuthUI() {
+  const token = localStorage.getItem('token');
+  const loginBtn = document.getElementById('login-btn');
+  const userInfo = document.getElementById('user-info');
+  if (token) {
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      loginBtn.style.display = 'none';
+      userInfo.style.display = 'flex';
+      document.getElementById('user-name').textContent = payload.name;
+      const avatar = document.getElementById('user-avatar');
+      if (payload.picture) {
+        avatar.src = payload.picture;
+        avatar.style.display = 'block';
+      } else {
+        avatar.style.display = 'none';
+      }
+    } catch (e) {
+      localStorage.removeItem('token');
+      loginBtn.style.display = 'block';
+      userInfo.style.display = 'none';
+    }
+  } else {
+    loginBtn.style.display = 'block';
+    userInfo.style.display = 'none';
+  }
+}
+
+// Handle token from OAuth redirect
+(function handleAuthRedirect() {
+  const hash = window.location.hash;
+  if (hash.startsWith('#token=')) {
+    const token = hash.substring(7);
+    localStorage.setItem('token', token);
+    window.history.replaceState(null, '', window.location.pathname);
+  }
+})();
+
 // ── INIT ──────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
+  updateAuthUI();
   initMap();
   // Cargar datos reales de Copernicus
   await cargarEstadoActual();

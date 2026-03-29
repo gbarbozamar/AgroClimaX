@@ -46,6 +46,18 @@ class Settings(BaseSettings):
     alert_amarillo_min: float = 25.0
     alert_naranja_min: float = 15.0
 
+    # Google OAuth
+    google_client_id: str = ""
+    google_client_secret: str = ""
+
+    # JWT
+    jwt_secret_key: str = "change_in_production"
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 1440  # 24 hours
+
+    # Frontend (optional override; defaults to request origin)
+    frontend_url: str = ""
+
     # Notificaciones
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587
