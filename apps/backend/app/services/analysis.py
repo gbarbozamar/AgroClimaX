@@ -1808,8 +1808,16 @@ async def run_daily_pipeline(
         )
 
     national_payload = _aggregate_states(formatted_payloads)
+    previous_national_payload = await get_cached_state_payload(session, scope="nacional", department="Uruguay")
     if materialize_latest:
         await upsert_latest_state_cache(session, national_payload, scope="nacional", department="Uruguay")
+        from app.services.notifications import notification_service
+
+        await notification_service.dispatch_national_alert_subscriptions(
+            session,
+            current_payload=national_payload,
+            previous_payload=previous_national_payload,
+        )
 
     from app.services.sections import materialize_police_section_cache
 

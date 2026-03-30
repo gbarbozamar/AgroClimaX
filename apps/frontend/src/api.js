@@ -244,6 +244,38 @@ export async function saveProfileMe(payload) {
   });
 }
 
+export async function fetchAlertSubscriptionOptions() {
+  return fetchJson(`${API_V1}/alert-subscriptions/options`);
+}
+
+export async function fetchAlertSubscriptions() {
+  return fetchJson(`${API_V1}/alert-subscriptions`);
+}
+
+export async function saveAlertSubscription(payload) {
+  const method = payload?.id ? 'PUT' : 'POST';
+  const url = payload?.id
+    ? `${API_V1}/alert-subscriptions/${encodeURIComponent(payload.id)}`
+    : `${API_V1}/alert-subscriptions`;
+  return fetchJson(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteAlertSubscription(subscriptionId) {
+  return fetchJson(`${API_V1}/alert-subscriptions/${encodeURIComponent(subscriptionId)}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function testAlertSubscription(subscriptionId) {
+  return fetchJson(`${API_V1}/alert-subscriptions/${encodeURIComponent(subscriptionId)}/test-send`, {
+    method: 'POST',
+  });
+}
+
 export async function logoutCurrentUser() {
   return fetchJson(`${API_V1}/auth/logout`, {
     method: 'POST',

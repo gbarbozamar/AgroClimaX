@@ -1,4 +1,15 @@
-import { fetchAuthMe, fetchProfileMe, googleLoginUrl, logoutCurrentUser, saveProfileMe } from './api.js?v=20260329-5';
+import {
+  deleteAlertSubscription,
+  fetchAlertSubscriptionOptions,
+  fetchAlertSubscriptions,
+  fetchAuthMe,
+  fetchProfileMe,
+  googleLoginUrl,
+  logoutCurrentUser,
+  saveAlertSubscription,
+  saveProfileMe,
+  testAlertSubscription,
+} from './api.js?v=20260330-1';
 import { setStore } from './state.js?v=20260329-2';
 
 const state = {
@@ -7,6 +18,11 @@ const state = {
   profilePayload: null,
   profileDraft: null,
   isSaving: false,
+  subscriptionOptions: null,
+  subscriptions: [],
+  subscriptionDraft: null,
+  subscriptionSaving: false,
+  subscriptionBusyId: null,
 };
 
 function getNode(id) {
@@ -39,15 +55,6 @@ function serializeDraftForSave(profile = {}) {
   return draft;
 }
 
-function formatDate(value) {
-  if (!value) return '-';
-  try {
-    return new Date(value).toLocaleString('es-UY');
-  } catch {
-    return value;
-  }
-}
-
 function normalizeDraft(profile = {}) {
   return {
     phone_e164: profile.phone_e164 || '',
@@ -71,8 +78,47 @@ function normalizeDraft(profile = {}) {
   };
 }
 
+function defaultSubscriptionDraft() {
+  return {
+    id: null,
+    scope_type: 'productive_unit',
+    scope_id: '',
+    channels_json: ['email'],
+    min_alert_state: 'Alerta',
+    active: true,
+  };
+}
+
+function normalizeSubscriptionDraft(subscription = null) {
+  if (!subscription) return defaultSubscriptionDraft();
+  return {
+    id: subscription.id || null,
+    scope_type: subscription.scope_type || 'productive_unit',
+    scope_id: subscription.scope_id || '',
+    channels_json: Array.isArray(subscription.channels_json) ? [...subscription.channels_json] : [],
+    min_alert_state: subscription.min_alert_state || 'Alerta',
+    active: subscription.active !== false,
+  };
+}
+
+function formatDate(value) {
+  if (!value) return '-';
+  try {
+    return new Date(value).toLocaleString('es-UY');
+  } catch {
+    return value;
+  }
+}
+
 function setStatus(message, tone = 'muted') {
   const node = getNode('profile-page-status');
+  if (!node) return;
+  node.textContent = message;
+  node.dataset.tone = tone;
+}
+
+function setSubscriptionsStatus(message, tone = 'muted') {
+  const node = getNode('profile-page-subscriptions-status');
   if (!node) return;
   node.textContent = message;
   node.dataset.tone = tone;
@@ -84,6 +130,17 @@ function setSavingState(isSaving) {
   if (!button) return;
   button.disabled = state.isSaving;
   button.textContent = state.isSaving ? 'Guardando...' : 'Guardar perfil';
+}
+
+function setSubscriptionSavingState(isSaving) {
+  state.subscriptionSaving = Boolean(isSaving);
+  const button = getNode('profile-page-subscription-save-btn');
+  const reset = getNode('profile-page-subscription-reset-btn');
+  if (button) {
+    button.disabled = state.subscriptionSaving;
+    button.textContent = state.subscriptionSaving ? 'Guardando...' : (state.subscriptionDraft?.id ? 'Actualizar alerta' : 'Crear alerta');
+  }
+  if (reset) reset.disabled = state.subscriptionSaving;
 }
 
 function formatRequestError(error) {
@@ -103,6 +160,10 @@ function formatRequestError(error) {
 
 function profileOptions() {
   return state.profilePayload?.options || {};
+}
+
+function subscriptionOptions() {
+  return state.subscriptionOptions || {};
 }
 
 function buildSelectOptions(options, selectedValue, placeholder = 'Seleccionar...') {
@@ -300,7 +361,7 @@ function renderForm() {
 
     <section class="section-card">
       <div class="section-title">Cobertura operativa</div>
-      <div class="section-copy">Define el alcance territorial principal con el que trabajará esta cuenta.</div>
+      <div class="section-copy">Define el alcance territorial principal con el que trabajara esta cuenta.</div>
       <div class="form-grid">
         <div class="field">
           <label>Ambito</label>
@@ -389,6 +450,119 @@ function updateDraftField(field, value) {
   state.profileDraft = draft;
 }
 
+function subscriptionTargets() {
+  const options = subscriptionOptions();
+  const scopeType = state.subscriptionDraft?.scope_type || 'productive_unit';
+  if (scopeType === 'department') return options.departments || [];
+  if (scopeType === 'productive_unit') return options.productive_units || [];
+  return [];
+}
+
+function renderSubscriptionManager() {
+  const node = getNode('profile-page-subscriptions');
+  if (!node) return;
+  const options = subscriptionOptions();
+  const draft = state.subscriptionDraft || defaultSubscriptionDraft();
+  const availableChannels = options.channels || [];
+  const channelsSelected = new Set(draft.channels_json || []);
+  const targetOptions = subscriptionTargets();
+
+  const subscriptionList = (state.subscriptions || []).length
+    ? `
+      <div class="sub-list">
+        ${state.subscriptions.map((item) => `
+          <div class="sub-item">
+            <div class="sub-item-main">
+              <div class="sub-item-title">
+                <span>${escapeHtml(item.scope_label)}</span>
+                <span class="badge">${escapeHtml(item.scope_type)}</span>
+                <span class="badge">${escapeHtml(item.min_alert_state)}</span>
+                <span class="badge">${item.active ? 'Activa' : 'Pausada'}</span>
+              </div>
+              <div class="sub-item-copy">
+                Canales: ${escapeHtml((item.channels_json || []).join(', ') || 'sin canales')} ·
+                Ultimo envio: ${escapeHtml(formatDate(item.last_sent_at))} ·
+                Ultimo estado: ${escapeHtml(item.last_sent_state || '-')}
+              </div>
+            </div>
+            <div class="sub-item-actions">
+              <button class="btn small" type="button" data-sub-action="edit" data-subscription-id="${escapeHtml(item.id)}">Editar</button>
+              <button class="btn small" type="button" data-sub-action="test" data-subscription-id="${escapeHtml(item.id)}">Probar envio</button>
+              <button class="btn small" type="button" data-sub-action="delete" data-subscription-id="${escapeHtml(item.id)}">Eliminar</button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `
+    : '<div class="sub-empty">Todavia no hay alertas configuradas para esta cuenta.</div>';
+
+  node.innerHTML = `
+    <section class="section-card">
+      <div class="section-title">Suscripciones actuales</div>
+      <div class="section-copy">Cada suscripcion envia la alerta cuando el alcance entra o empeora segun tu severidad minima configurada.</div>
+      ${subscriptionList}
+    </section>
+
+    <section class="section-card">
+      <div class="section-title">${draft.id ? 'Editar alerta' : 'Nueva alerta'}</div>
+      <div class="section-copy">Se enviaran dos imagenes: captura con alerta y Humedad Superficial del Suelo del mismo alcance.</div>
+      <div class="form-grid">
+        <div class="field">
+          <label>Alcance</label>
+          <select class="select" id="profile-page-sub-scope-type">
+            ${buildSelectOptions(options.scope_types, draft.scope_type)}
+          </select>
+        </div>
+        <div class="field">
+          <label>Destino</label>
+          ${draft.scope_type === 'national'
+            ? '<div class="scope-note">Uruguay completo.</div>'
+            : `
+              <select class="select" id="profile-page-sub-scope-id">
+                <option value="">Seleccionar...</option>
+                ${targetOptions.map((item) => `<option value="${escapeHtml(item.id)}" ${item.id === draft.scope_id ? 'selected' : ''}>${escapeHtml(item.label)}${item.department ? ` · ${escapeHtml(item.department)}` : ''}</option>`).join('')}
+              </select>
+            `
+          }
+        </div>
+        <div class="field wide">
+          <label>Canales</label>
+          <div class="check-grid">
+            ${availableChannels.map((channel) => `
+              <label class="check">
+                <input type="checkbox" data-sub-channel="${escapeHtml(channel.value)}" ${channelsSelected.has(channel.value) ? 'checked' : ''} ${channel.enabled ? '' : 'disabled'} />
+                <span>${escapeHtml(channel.label)}${channel.enabled ? '' : ` · ${escapeHtml(channel.reason || 'No disponible')}`}</span>
+              </label>
+            `).join('')}
+          </div>
+        </div>
+        <div class="field">
+          <label>Severidad minima</label>
+          <select class="select" id="profile-page-sub-min-alert">
+            ${buildSelectOptions(options.min_alert_states, draft.min_alert_state)}
+          </select>
+        </div>
+        <div class="field">
+          <label>Estado</label>
+          <label class="check">
+            <input type="checkbox" id="profile-page-sub-active" ${draft.active ? 'checked' : ''} />
+            <span>Suscripcion activa</span>
+          </label>
+        </div>
+      </div>
+      <div class="page-footer">
+        <div class="page-meta">Destino email: ${escapeHtml(options.contact?.email || '-')} · WhatsApp: ${escapeHtml(options.contact?.whatsapp_e164 || '-')}</div>
+        <div class="sub-item-actions">
+          <button class="btn small" id="profile-page-subscription-reset-btn" type="button">Limpiar</button>
+          <button class="btn primary small" id="profile-page-subscription-save-btn" type="button">${draft.id ? 'Actualizar alerta' : 'Crear alerta'}</button>
+        </div>
+      </div>
+    </section>
+  `;
+  wireSubscriptionEvents();
+  setSubscriptionSavingState(false);
+}
+
 function wireFormEvents() {
   const form = getNode('profile-page-form');
   form.querySelectorAll('[data-field]').forEach((node) => {
@@ -433,6 +607,107 @@ function wireFormEvents() {
   });
 }
 
+function updateSubscriptionDraft(patch) {
+  state.subscriptionDraft = {
+    ...(state.subscriptionDraft || defaultSubscriptionDraft()),
+    ...patch,
+  };
+}
+
+function wireSubscriptionEvents() {
+  getNode('profile-page-sub-scope-type')?.addEventListener('change', (event) => {
+    updateSubscriptionDraft({
+      scope_type: event.target.value || 'productive_unit',
+      scope_id: '',
+    });
+    renderSubscriptionManager();
+  });
+
+  getNode('profile-page-sub-scope-id')?.addEventListener('change', (event) => {
+    updateSubscriptionDraft({ scope_id: event.target.value || '' });
+  });
+
+  getNode('profile-page-sub-min-alert')?.addEventListener('change', (event) => {
+    updateSubscriptionDraft({ min_alert_state: event.target.value || 'Alerta' });
+  });
+
+  getNode('profile-page-sub-active')?.addEventListener('change', (event) => {
+    updateSubscriptionDraft({ active: Boolean(event.target.checked) });
+  });
+
+  document.querySelectorAll('[data-sub-channel]').forEach((node) => {
+    node.addEventListener('change', () => {
+      const channels = Array.from(document.querySelectorAll('[data-sub-channel]:checked')).map((item) => item.dataset.subChannel);
+      updateSubscriptionDraft({ channels_json: channels });
+    });
+  });
+
+  document.querySelectorAll('[data-sub-action]').forEach((node) => {
+    node.addEventListener('click', async () => {
+      const subscriptionId = node.dataset.subscriptionId;
+      const action = node.dataset.subAction;
+      if (!subscriptionId || !action) return;
+      if (action === 'edit') {
+        const item = (state.subscriptions || []).find((entry) => entry.id === subscriptionId);
+        state.subscriptionDraft = normalizeSubscriptionDraft(item);
+        renderSubscriptionManager();
+        return;
+      }
+      if (action === 'delete') {
+        try {
+          state.subscriptionBusyId = subscriptionId;
+          setSubscriptionsStatus('Eliminando alerta...', 'info');
+          await deleteAlertSubscription(subscriptionId);
+          await refreshSubscriptionData();
+          state.subscriptionDraft = defaultSubscriptionDraft();
+          renderSubscriptionManager();
+          setSubscriptionsStatus('Alerta eliminada.', 'success');
+        } catch (error) {
+          setSubscriptionsStatus(`No se pudo eliminar la alerta: ${formatRequestError(error)}`, 'error');
+        } finally {
+          state.subscriptionBusyId = null;
+        }
+        return;
+      }
+      if (action === 'test') {
+        try {
+          state.subscriptionBusyId = subscriptionId;
+          setSubscriptionsStatus('Enviando prueba...', 'info');
+          await testAlertSubscription(subscriptionId);
+          setSubscriptionsStatus('Prueba enviada. Revisa email o WhatsApp segun la configuracion.', 'success');
+        } catch (error) {
+          setSubscriptionsStatus(`No se pudo enviar la prueba: ${formatRequestError(error)}`, 'error');
+        } finally {
+          state.subscriptionBusyId = null;
+        }
+      }
+    });
+  });
+
+  getNode('profile-page-subscription-save-btn')?.addEventListener('click', async () => {
+    try {
+      await persistSubscription();
+    } catch {}
+  });
+  getNode('profile-page-subscription-reset-btn')?.addEventListener('click', () => {
+    state.subscriptionDraft = defaultSubscriptionDraft();
+    renderSubscriptionManager();
+    setSubscriptionsStatus('Formulario de alerta limpio.', 'info');
+  });
+}
+
+async function refreshSubscriptionData() {
+  const [optionsPayload, listPayload] = await Promise.all([
+    fetchAlertSubscriptionOptions(),
+    fetchAlertSubscriptions(),
+  ]);
+  state.subscriptionOptions = optionsPayload;
+  state.subscriptions = listPayload.items || [];
+  if (!state.subscriptionDraft) {
+    state.subscriptionDraft = defaultSubscriptionDraft();
+  }
+}
+
 async function persistProfile() {
   setSavingState(true);
   setStatus('Guardando perfil...', 'info');
@@ -440,6 +715,7 @@ async function persistProfile() {
     const payload = await saveProfileMe(serializeDraftForSave(state.profileDraft || normalizeDraft(state.profilePayload?.profile)));
     state.profilePayload = payload;
     state.profileDraft = normalizeDraft(payload.profile);
+    await refreshSubscriptionData();
     setStore({
       profilePayload: payload,
       profileDraft: clone(state.profileDraft),
@@ -447,9 +723,26 @@ async function persistProfile() {
     });
     renderAuthenticatedPage();
     setStatus('Perfil guardado correctamente.', 'success');
+    setSubscriptionsStatus('Canales y opciones de alerta actualizados.', 'success');
   } catch (error) {
     setStatus(`No se pudo guardar el perfil: ${formatRequestError(error)}`, 'error');
     setSavingState(false);
+    throw error;
+  }
+}
+
+async function persistSubscription() {
+  setSubscriptionSavingState(true);
+  setSubscriptionsStatus('Guardando alerta configurable...', 'info');
+  try {
+    const payload = await saveAlertSubscription(state.subscriptionDraft || defaultSubscriptionDraft());
+    await refreshSubscriptionData();
+    state.subscriptionDraft = normalizeSubscriptionDraft(payload);
+    renderSubscriptionManager();
+    setSubscriptionsStatus('Alerta configurada correctamente.', 'success');
+  } catch (error) {
+    setSubscriptionsStatus(`No se pudo guardar la alerta: ${formatRequestError(error)}`, 'error');
+    setSubscriptionSavingState(false);
     throw error;
   }
 }
@@ -459,13 +752,19 @@ function renderAuthenticatedPage() {
   renderSummary();
   renderIdentity();
   renderForm();
+  renderSubscriptionManager();
   setSavingState(false);
   renderAuthGate();
 }
 
 async function loadAuthenticatedData() {
-  state.profilePayload = await fetchProfileMe();
+  const [profilePayload] = await Promise.all([
+    fetchProfileMe(),
+    refreshSubscriptionData(),
+  ]);
+  state.profilePayload = profilePayload;
   state.profileDraft = normalizeDraft(state.profilePayload.profile);
+  if (!state.subscriptionDraft) state.subscriptionDraft = defaultSubscriptionDraft();
   setStore({
     profilePayload: state.profilePayload,
     profileDraft: clone(state.profileDraft),
@@ -473,6 +772,7 @@ async function loadAuthenticatedData() {
   });
   renderAuthenticatedPage();
   setStatus('Perfil cargado.', 'success');
+  setSubscriptionsStatus('Suscripciones cargadas.', 'success');
 }
 
 async function ensureAuthenticated() {
@@ -492,6 +792,9 @@ async function ensureAuthenticated() {
   } catch {
     state.authSession = null;
     state.authUser = null;
+    state.subscriptionOptions = null;
+    state.subscriptions = [];
+    state.subscriptionDraft = defaultSubscriptionDraft();
     setStore({
       authSession: null,
       authUser: null,
@@ -503,6 +806,7 @@ async function ensureAuthenticated() {
     });
     renderAuthGate();
     setStatus('Inicia sesion con Google para acceder al perfil completo.', 'info');
+    setSubscriptionsStatus('Inicia sesion con Google para configurar alertas.', 'info');
   }
 }
 

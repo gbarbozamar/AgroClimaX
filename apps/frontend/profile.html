@@ -440,6 +440,80 @@
       color: var(--text-muted);
     }
 
+    .section-stack {
+      display: grid;
+      gap: 18px;
+    }
+
+    .sub-list {
+      display: grid;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .sub-item {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      padding: 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(46, 49, 80, 0.9);
+      background: rgba(15, 17, 23, 0.56);
+    }
+
+    .sub-item-main {
+      min-width: 0;
+      display: grid;
+      gap: 4px;
+    }
+
+    .sub-item-title {
+      font-size: 0.82rem;
+      font-weight: 700;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .sub-item-copy {
+      font-size: 0.74rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+
+    .sub-item-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .btn.small {
+      padding: 8px 10px;
+      font-size: 0.74rem;
+      border-radius: 9px;
+    }
+
+    .badge {
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.06);
+      font-size: 0.68rem;
+      color: var(--text-muted);
+    }
+
+    .sub-empty {
+      padding: 12px;
+      border-radius: 12px;
+      border: 1px dashed rgba(136, 146, 164, 0.25);
+      color: var(--text-muted);
+      font-size: 0.78rem;
+      background: rgba(15, 17, 23, 0.4);
+    }
+
     .auth-gate {
       position: fixed;
       inset: 0;
@@ -566,16 +640,30 @@
         </section>
       </aside>
 
-      <section class="card">
-        <div class="card-head">
-          <div class="card-kicker">Cuestionario operativo</div>
-          <div class="card-title">Configuracion de uso de la plataforma</div>
-          <div class="card-copy">Esta vista amplía el formulario lateral para completar el perfil con más comodidad en escritorio.</div>
-        </div>
-        <div class="card-body">
-          <div class="form-layout" id="profile-page-form"></div>
-        </div>
-      </section>
+      <div class="section-stack">
+        <section class="card">
+          <div class="card-head">
+            <div class="card-kicker">Cuestionario operativo</div>
+            <div class="card-title">Configuracion de uso de la plataforma</div>
+            <div class="card-copy">Esta vista amplía el formulario lateral para completar el perfil con más comodidad en escritorio.</div>
+          </div>
+          <div class="card-body">
+            <div class="form-layout" id="profile-page-form"></div>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <div class="card-kicker">Alertas configurables</div>
+            <div class="card-title">WhatsApp y email por predio, departamento o pais</div>
+            <div class="card-copy">Cada suscripcion usa tu email autenticado y, si corresponde, tu numero de WhatsApp cargado en el perfil.</div>
+          </div>
+          <div class="card-body">
+            <div class="status-box" id="profile-page-subscriptions-status">Cargando suscripciones...</div>
+            <div class="form-layout" id="profile-page-subscriptions"></div>
+          </div>
+        </section>
+      </div>
     </main>
   </div>
 
@@ -590,6 +678,6 @@
     </div>
   </div>
 
-  <script type="module" src="/static/src/profile-page.js?v=20260329-5"></script>
+  <script type="module" src="/static/src/profile-page.js?v=20260330-1"></script>
 </body>
 </html>

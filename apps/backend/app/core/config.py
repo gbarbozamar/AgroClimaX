@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     auth_csrf_header_name: str = "X-CSRF-Token"
     auth_login_success_redirect: str = "/"
     auth_bypass_for_tests: bool = False
+    public_app_base_url: str = ""
 
     # Redis / workers
     redis_url: str = "redis://localhost:6379/0"

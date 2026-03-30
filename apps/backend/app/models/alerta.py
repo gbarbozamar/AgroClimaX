@@ -106,6 +106,46 @@ class NotificationEvent(Base):
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
 
+class AlertSubscription(Base):
+    __tablename__ = "alert_subscriptions"
+
+    id = Column(String(36), primary_key=True, default=new_uuid)
+    user_id = Column(String(36), ForeignKey("app_users.id"), nullable=False, index=True)
+    scope_type = Column(String(32), nullable=False, index=True)
+    scope_id = Column(String(64), nullable=True, index=True)
+    scope_label = Column(String(255), nullable=False)
+    channels_json = Column(JSON, default=list)
+    min_alert_state = Column(String(32), nullable=False, default="Alerta")
+    active = Column(Boolean, default=True, nullable=False, index=True)
+    last_sent_state = Column(String(32), nullable=True)
+    last_sent_at = Column(DateTime(timezone=True), nullable=True)
+    metadata_extra = Column(JSON, default=dict)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_alert_subscriptions_user_scope", "user_id", "scope_type", "scope_id"),
+    )
+
+
+class NotificationMediaAsset(Base):
+    __tablename__ = "notification_media_assets"
+
+    id = Column(String(36), primary_key=True, default=new_uuid)
+    alert_event_id = Column(String(36), ForeignKey("alertas_eventos.id"), nullable=True, index=True)
+    subscription_id = Column(String(36), ForeignKey("alert_subscriptions.id"), nullable=True, index=True)
+    scope_type = Column(String(32), nullable=False, index=True)
+    scope_id = Column(String(64), nullable=True, index=True)
+    kind = Column(String(32), nullable=False, index=True)
+    mime_type = Column(String(64), nullable=False, default="image/png")
+    storage_key = Column(String(255), nullable=False)
+    access_token = Column(String(128), nullable=False, unique=True, index=True)
+    width = Column(Integer, nullable=False, default=0)
+    height = Column(Integer, nullable=False, default=0)
+    metadata_extra = Column(JSON, default=dict)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
 class SuscriptorAlerta(Base):
     __tablename__ = "suscriptores_alertas"
 

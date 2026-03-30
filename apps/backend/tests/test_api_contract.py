@@ -331,6 +331,56 @@ class ApiContractTests(unittest.TestCase):
         self.assertEqual(response.json()["total"], 1)
         self.assertEqual(response.json()["datos"][0]["channel"], "dashboard")
 
+    def test_v1_alert_subscriptions_contract(self):
+        payload = [
+            {
+                "id": "subcfg-1",
+                "scope_type": "department",
+                "scope_id": "department-rivera",
+                "scope_label": "Rivera",
+                "channels_json": ["email", "whatsapp"],
+                "min_alert_state": "Alerta",
+                "active": True,
+                "last_sent_state": "Vigilancia",
+                "last_sent_at": "2026-03-30T00:00:00+00:00",
+                "metadata_extra": {},
+            }
+        ]
+        with patch("app.api.v1.endpoints.alert_subscriptions.notification_service.list_alert_subscriptions", new=AsyncMock(return_value=payload)):
+            with TestClient(app) as client:
+                response = client.get("/api/v1/alert-subscriptions")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["total"], 1)
+        self.assertEqual(response.json()["items"][0]["scope_label"], "Rivera")
+
+    def test_v1_alert_subscriptions_options_contract(self):
+        payload = {
+            "scope_types": [{"value": "national", "label": "Pais"}],
+            "min_alert_states": [{"value": "Alerta", "label": "Alerta"}],
+            "channels": [{"value": "email", "label": "Email", "enabled": True, "reason": None}],
+            "national": {"value": "national", "label": "Uruguay"},
+            "departments": [{"id": "department-rivera", "label": "Rivera", "department": "Rivera"}],
+            "productive_units": [{"id": "productive-predio-demo", "label": "Predio Demo", "department": "Rivera", "unit_category": "predio"}],
+            "contact": {"email": "demo@example.com", "whatsapp_e164": "+59899111222"},
+        }
+        with patch("app.api.v1.endpoints.alert_subscriptions.notification_service.get_alert_subscription_options", new=AsyncMock(return_value=payload)):
+            with TestClient(app) as client:
+                response = client.get("/api/v1/alert-subscriptions/options")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["national"]["label"], "Uruguay")
+
+    def test_v1_alert_subscriptions_test_send_contract(self):
+        payload = {
+            "status": "sent",
+            "reason": "manual_test",
+            "results": [{"channel": "email", "status": "sent", "id": "notif-1"}],
+        }
+        with patch("app.api.v1.endpoints.alert_subscriptions.notification_service.send_alert_subscription_test", new=AsyncMock(return_value=payload)):
+            with TestClient(app) as client:
+                response = client.post("/api/v1/alert-subscriptions/subcfg-1/test-send")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["reason"], "manual_test")
+
     def test_v1_settings_schema_contract(self):
         with TestClient(app) as client:
             response = client.get("/api/v1/settings/schema")
