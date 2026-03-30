@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import date, datetime, timezone
 from pathlib import Path
 import random
@@ -33,6 +34,7 @@ from app.services.warehouse import (
     materialize_unit_payload,
 )
 
+logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 CACHE_DIR = BASE_DIR / ".catalog_cache"
@@ -143,10 +145,24 @@ def _section_unit_payloads(collection: dict[str, Any], geometry_source: str) -> 
 
 
 async def seed_police_section_units(session: AsyncSession, refresh_geometries: bool = False) -> int:
-    collection, geometry_source = await load_police_sections_geojson(refresh=refresh_geometries)
-    payloads = _section_unit_payloads(collection, geometry_source)
     existing_result = await session.execute(select(AOIUnit).where(AOIUnit.unit_type == "police_section"))
     existing_units = {unit.id: unit for unit in existing_result.scalars().all()}
+    try:
+        collection, geometry_source = await load_police_sections_geojson(refresh=refresh_geometries)
+    except Exception:
+        if existing_units:
+            logger.warning(
+                "No se pudo refrescar la capa de secciones policiales; se reutilizan %s registros existentes.",
+                len(existing_units),
+                exc_info=True,
+            )
+            return 0
+        logger.warning(
+            "No se pudo sembrar la capa de secciones policiales durante el arranque; la app continua sin esa capa.",
+            exc_info=True,
+        )
+        return 0
+    payloads = _section_unit_payloads(collection, geometry_source)
     created = 0
     updated = 0
 
