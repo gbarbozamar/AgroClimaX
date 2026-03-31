@@ -7,6 +7,7 @@ from email.message import EmailMessage
 from email.utils import make_msgid
 import logging
 from typing import Any
+from urllib.parse import urlencode
 
 import aiosmtplib
 import httpx
@@ -1025,13 +1026,17 @@ class NotificationService:
             ("Body", payload.get("body", "AgroClimaX")),
         ]
         post_data.extend(("MediaUrl", media_url) for media_url in media_urls)
+        encoded_body = urlencode(post_data).encode("utf-8")
 
         try:
             response = await asyncio.to_thread(
                 httpx.post,
                 url,
-                data=post_data,
-                headers={"Authorization": f"Basic {auth_token}"},
+                content=encoded_body,
+                headers={
+                    "Authorization": f"Basic {auth_token}",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
                 timeout=20,
             )
             event.provider_response = {"status_code": response.status_code, "body": response.text[:500]}

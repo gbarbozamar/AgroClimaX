@@ -163,7 +163,13 @@ class AlertSubscriptionTests(unittest.TestCase):
                         alert_event_id=None,
                         channel="whatsapp",
                         recipient="+59899111222",
-                        payload={"body": "Prueba", "media_assets": []},
+                        payload={
+                            "body": "Prueba",
+                            "media_assets": [
+                                {"url": "https://example.com/a.png"},
+                                {"url": "https://example.com/b.png"},
+                            ],
+                        },
                         reason="manual_test",
                     )
                 return result, mocked_post.call_args
@@ -171,3 +177,6 @@ class AlertSubscriptionTests(unittest.TestCase):
         result, call_args = asyncio.run(_run())
         self.assertEqual(result["status"], "sent")
         self.assertIsNotNone(call_args)
+        self.assertIn(b"MediaUrl=https%3A%2F%2Fexample.com%2Fa.png", call_args.kwargs["content"])
+        self.assertIn(b"MediaUrl=https%3A%2F%2Fexample.com%2Fb.png", call_args.kwargs["content"])
+        self.assertEqual(call_args.kwargs["headers"]["Content-Type"], "application/x-www-form-urlencoded")
