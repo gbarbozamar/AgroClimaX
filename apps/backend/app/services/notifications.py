@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import base64
 from email.message import EmailMessage
 from email.utils import make_msgid
+import logging
 from typing import Any
 
 import aiosmtplib
@@ -34,6 +35,7 @@ FORECAST_RISK_FLOOR = 55.0
 STATE_LEVELS = {"Normal": 0, "Vigilancia": 1, "Alerta": 2, "Emergencia": 3}
 SUPPORTED_SUBSCRIPTION_SCOPES = {"productive_unit", "department", "national"}
 SUPPORTED_CHANNELS = {"email", "whatsapp"}
+logger = logging.getLogger(__name__)
 
 
 def _now_utc() -> datetime:
@@ -249,6 +251,39 @@ def _subscription_recipients(
             channels.append(channel)
             recipients[channel] = profile.whatsapp_e164
     return channels, recipients
+
+
+def _summarize_dispatch_results(results: list[dict[str, Any]]) -> dict[str, Any]:
+    summary = {
+        "sent": 0,
+        "stored": 0,
+        "failed": 0,
+        "skipped": 0,
+        "other": 0,
+    }
+    for item in results:
+        status = str(item.get("status") or "").lower()
+        if status in summary:
+            summary[status] += 1
+        else:
+            summary["other"] += 1
+
+    if summary["sent"] or summary["stored"]:
+        overall_status = "sent"
+    elif summary["failed"]:
+        overall_status = "failed"
+    elif summary["skipped"]:
+        overall_status = "skipped"
+    else:
+        overall_status = "skipped"
+
+    return {
+        "status": overall_status,
+        "counts": summary,
+        "delivered_channels": [item.get("channel") for item in results if item.get("status") in {"sent", "stored"}],
+        "failed_channels": [item.get("channel") for item in results if item.get("status") == "failed"],
+        "skipped_channels": [item.get("channel") for item in results if item.get("status") == "skipped"],
+    }
 
 
 class NotificationService:
@@ -816,10 +851,15 @@ class NotificationService:
                 }
             dispatched_results.extend(results)
 
+        dispatch_summary = _summarize_dispatch_results(dispatched_results)
         return {
-            "status": "sent" if dispatched_results else "skipped",
+            "status": dispatch_summary["status"] if dispatched_results else "skipped",
             "reason": reason_key if dispatched_results else "no_pending_subscriptions",
             "results": dispatched_results,
+            "counts": dispatch_summary["counts"],
+            "delivered_channels": dispatch_summary["delivered_channels"],
+            "failed_channels": dispatch_summary["failed_channels"],
+            "skipped_channels": dispatch_summary["skipped_channels"],
         }
 
     async def _record_dashboard_event(
@@ -918,8 +958,14 @@ class NotificationService:
         except Exception as exc:  # pragma: no cover
             event.status = "failed"
             event.provider_response = {"error": str(exc)}
+            logger.warning("Fallo envio email a %s: %s", recipient, exc)
 
-        return {"channel": "email", "status": event.status, "id": event.id}
+        return {
+            "channel": "email",
+            "status": event.status,
+            "id": event.id,
+            "provider_response": event.provider_response,
+        }
 
     async def _send_twilio_message(
         self,
@@ -989,11 +1035,23 @@ class NotificationService:
                 event.delivered_at = _now_utc()
             else:
                 event.status = "failed"
+                logger.warning(
+                    "Twilio devolvio error para %s -> %s: %s",
+                    channel,
+                    recipient,
+                    event.provider_response,
+                )
         except Exception as exc:  # pragma: no cover
             event.status = "failed"
             event.provider_response = {"error": str(exc)}
+            logger.warning("Fallo envio Twilio %s a %s: %s", channel, recipient, exc)
 
-        return {"channel": channel, "status": event.status, "id": event.id}
+        return {
+            "channel": channel,
+            "status": event.status,
+            "id": event.id,
+            "provider_response": event.provider_response,
+        }
 
 
 notification_service = NotificationService()

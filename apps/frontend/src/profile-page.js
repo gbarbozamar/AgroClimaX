@@ -158,6 +158,27 @@ function formatRequestError(error) {
   return 'Error desconocido';
 }
 
+function formatTestSendResult(result) {
+  const counts = result?.counts || {};
+  const results = Array.isArray(result?.results) ? result.results : [];
+  const parts = [];
+  if (counts.sent) parts.push(`${counts.sent} enviado(s)`);
+  if (counts.stored) parts.push(`${counts.stored} registrado(s)`);
+  if (counts.failed) parts.push(`${counts.failed} fallido(s)`);
+  if (counts.skipped) parts.push(`${counts.skipped} omitido(s)`);
+
+  const details = results.map((item) => {
+    const provider = item?.provider_response || {};
+    const reason = provider.error || provider.message || provider.body || '';
+    return reason
+      ? `${item.channel}: ${item.status} (${reason})`
+      : `${item.channel}: ${item.status}`;
+  });
+
+  const summary = parts.length ? parts.join(' | ') : `estado: ${result?.status || 'desconocido'}`;
+  return details.length ? `${summary} | ${details.join(' | ')}` : summary;
+}
+
 function profileOptions() {
   return state.profilePayload?.options || {};
 }
@@ -673,8 +694,10 @@ function wireSubscriptionEvents() {
         try {
           state.subscriptionBusyId = subscriptionId;
           setSubscriptionsStatus('Enviando prueba...', 'info');
-          await testAlertSubscription(subscriptionId);
-          setSubscriptionsStatus('Prueba enviada. Revisa email o WhatsApp segun la configuracion.', 'success');
+          const result = await testAlertSubscription(subscriptionId);
+          const message = formatTestSendResult(result);
+          const tone = result?.status === 'sent' ? 'success' : (result?.status === 'failed' ? 'error' : 'info');
+          setSubscriptionsStatus(`Resultado de prueba: ${message}`, tone);
         } catch (error) {
           setSubscriptionsStatus(`No se pudo enviar la prueba: ${formatRequestError(error)}`, 'error');
         } finally {
