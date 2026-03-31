@@ -600,6 +600,7 @@ class NotificationService:
             alert_event=None,
             reason_key="manual_test",
             subscription_ids=[row.id],
+            force_dispatch=True,
         )
 
     async def dispatch_operational_alerts(
@@ -760,18 +761,20 @@ class NotificationService:
         alert_event: AlertaEvento | None,
         reason_key: str,
         subscription_ids: list[str] | None = None,
+        force_dispatch: bool = False,
     ) -> dict[str, Any]:
         query = (
             select(AlertSubscription, AppUser, AppUserProfile)
             .join(AppUser, AppUser.id == AlertSubscription.user_id)
             .outerjoin(AppUserProfile, AppUserProfile.user_id == AppUser.id)
             .where(
-                AlertSubscription.active.is_(True),
                 AlertSubscription.scope_type == scope_type,
                 AlertSubscription.scope_id == scope_id if scope_type != "national" else AlertSubscription.scope_id.is_(None),
                 AppUser.is_active.is_(True),
             )
         )
+        if not force_dispatch:
+            query = query.where(AlertSubscription.active.is_(True))
         if subscription_ids:
             query = query.where(AlertSubscription.id.in_(subscription_ids))
         rows = (await session.execute(query)).all()
@@ -816,7 +819,7 @@ class NotificationService:
         dispatched_results: list[dict[str, Any]] = []
         current_level = int(current_state.state_level or 0)
         for subscription, user, profile in rows:
-            if current_level < _state_level(subscription.min_alert_state):
+            if not force_dispatch and current_level < _state_level(subscription.min_alert_state):
                 continue
             dispatch_key = _subscription_dispatch_key(
                 subscription,

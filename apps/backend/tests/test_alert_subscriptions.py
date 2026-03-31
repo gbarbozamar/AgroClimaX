@@ -20,6 +20,7 @@ from app.models.alerta import AlertSubscription, NotificationMediaAsset
 from app.models.auth import AppUserProfile
 from app.models.humedad import AOIUnit
 from app.services.notification_media import create_notification_media_assets
+from app.services.notifications import notification_service
 from app.services.public_api import TRANSPARENT_PNG
 
 
@@ -122,3 +123,26 @@ class AlertSubscriptionTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["content-type"], "image/png")
         self.assertTrue(response.content.startswith(b"\x89PNG"))
+
+    def test_manual_test_forces_dispatch_even_if_threshold_is_higher(self):
+        with TestClient(app) as client:
+            create_response = client.post(
+                "/api/v1/alert-subscriptions",
+                json={
+                    "scope_type": "productive_unit",
+                    "scope_id": "productive-test-unit",
+                    "channels_json": ["email"],
+                    "min_alert_state": "Emergencia",
+                    "active": False,
+                },
+            )
+            self.assertEqual(create_response.status_code, 200)
+            subscription_id = create_response.json()["id"]
+
+            mocked = AsyncMock(return_value={"status": "sent", "reason": "manual_test", "results": []})
+            with patch.object(notification_service, "_dispatch_configurable_scope_subscriptions", mocked):
+                response = client.post(f"/api/v1/alert-subscriptions/{subscription_id}/test-send")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(mocked.await_args.kwargs["force_dispatch"])
+        self.assertEqual(mocked.await_args.kwargs["subscription_ids"], [subscription_id])
