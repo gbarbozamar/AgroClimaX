@@ -156,7 +156,15 @@ class AlertSubscriptionTests(unittest.TestCase):
                     patch.object(settings, "twilio_account_sid", "AC_test"),
                     patch.object(settings, "twilio_auth_token", "token_test"),
                     patch.object(settings, "twilio_whatsapp_from", "whatsapp:+14155238886"),
-                    patch("app.services.notifications.httpx.post", return_value=SimpleNamespace(status_code=201, text='{"sid":"SM123"}', is_success=True)) as mocked_post,
+                    patch(
+                        "app.services.notifications.httpx.post",
+                        return_value=SimpleNamespace(
+                            status_code=201,
+                            text='{"sid":"SM123"}',
+                            is_success=True,
+                            json=lambda: {"sid": "SM123"},
+                        ),
+                    ) as mocked_post,
                 ):
                     result = await notification_service._send_twilio_message(
                         session,
@@ -166,17 +174,31 @@ class AlertSubscriptionTests(unittest.TestCase):
                         payload={
                             "body": "Prueba",
                             "media_assets": [
-                                {"url": "https://example.com/a.png"},
-                                {"url": "https://example.com/b.png"},
+                                {"url": "https://example.com/a.png", "kind": "alert_overview"},
+                                {"url": "https://example.com/b.png", "kind": "surface_soil_moisture"},
                             ],
                         },
                         reason="manual_test",
                     )
-                return result, mocked_post.call_args
+                return result, mocked_post.call_args_list
 
-        result, call_args = asyncio.run(_run())
+        result, call_args_list = asyncio.run(_run())
         self.assertEqual(result["status"], "sent")
-        self.assertIsNotNone(call_args)
-        self.assertIn(b"MediaUrl=https%3A%2F%2Fexample.com%2Fa.png", call_args.kwargs["content"])
-        self.assertIn(b"MediaUrl=https%3A%2F%2Fexample.com%2Fb.png", call_args.kwargs["content"])
-        self.assertEqual(call_args.kwargs["headers"]["Content-Type"], "application/x-www-form-urlencoded")
+        self.assertEqual(result["provider_response"]["message_count"], 3)
+        self.assertEqual(len(call_args_list), 3)
+
+        first_call = call_args_list[0]
+        second_call = call_args_list[1]
+        third_call = call_args_list[2]
+
+        self.assertNotIn(b"MediaUrl=", first_call.kwargs["content"])
+        self.assertIn(b"Body=Prueba", first_call.kwargs["content"])
+
+        self.assertIn(b"Body=Mapa+de+alerta", second_call.kwargs["content"])
+        self.assertIn(b"MediaUrl=https%3A%2F%2Fexample.com%2Fa.png", second_call.kwargs["content"])
+
+        self.assertIn(b"Body=Humedad+Superficial+del+Suelo", third_call.kwargs["content"])
+        self.assertIn(b"MediaUrl=https%3A%2F%2Fexample.com%2Fb.png", third_call.kwargs["content"])
+
+        for call in call_args_list:
+            self.assertEqual(call.kwargs["headers"]["Content-Type"], "application/x-www-form-urlencoded")

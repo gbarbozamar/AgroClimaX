@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
 import base64
+from datetime import datetime, timezone
 from email.message import EmailMessage
 from email.utils import make_msgid
 import logging
@@ -162,6 +162,15 @@ def _trigger_label(reason_key: str) -> str:
         "manual_test": "prueba manual",
     }
     return ", ".join(labels.get(item, item) for item in reason_key.split(",") if item)
+
+
+def _whatsapp_media_caption(asset: dict[str, Any]) -> str:
+    kind = str(asset.get("kind") or "").strip()
+    if kind == "alert_overview":
+        return "Mapa de alerta"
+    if kind == "surface_soil_moisture":
+        return "Humedad Superficial del Suelo"
+    return "Adjunto AgroClimaX"
 
 
 def _scope_display(scope_type: str) -> str:
@@ -1015,46 +1024,118 @@ class NotificationService:
             f"{settings.twilio_account_sid}:{settings.twilio_auth_token}".encode("utf-8")
         ).decode("utf-8")
         url = f"https://api.twilio.com/2010-04-01/Accounts/{settings.twilio_account_sid}/Messages.json"
-
-        media_urls = []
-        if channel == "whatsapp":
-            media_urls = [asset.get("url") for asset in payload.get("media_assets") or [] if asset.get("url")]
-
-        post_data: list[tuple[str, str]] = [
-            ("To", to_number),
-            ("From", from_value),
-            ("Body", payload.get("body", "AgroClimaX")),
+        outbound_messages: list[dict[str, str | None]] = [
+            {"kind": "summary", "body": payload.get("body", "AgroClimaX"), "media_url": None}
         ]
-        post_data.extend(("MediaUrl", media_url) for media_url in media_urls)
-        encoded_body = urlencode(post_data).encode("utf-8")
+        if channel == "whatsapp":
+            for asset in payload.get("media_assets") or []:
+                media_url = asset.get("url")
+                if not media_url:
+                    continue
+                outbound_messages.append(
+                    {
+                        "kind": str(asset.get("kind") or "media"),
+                        "body": _whatsapp_media_caption(asset),
+                        "media_url": media_url,
+                    }
+                )
 
-        try:
-            response = await asyncio.to_thread(
-                httpx.post,
-                url,
-                content=encoded_body,
-                headers={
-                    "Authorization": f"Basic {auth_token}",
-                    "Content-Type": "application/x-www-form-urlencoded",
-                },
-                timeout=20,
-            )
-            event.provider_response = {"status_code": response.status_code, "body": response.text[:500]}
-            if response.is_success:
-                event.status = "sent"
-                event.delivered_at = _now_utc()
-            else:
-                event.status = "failed"
+        provider_messages: list[dict[str, Any]] = []
+        sent_count = 0
+        failed_count = 0
+
+        for index, outbound in enumerate(outbound_messages, start=1):
+            post_data: list[tuple[str, str]] = [
+                ("To", to_number),
+                ("From", from_value),
+                ("Body", str(outbound.get("body") or "AgroClimaX")),
+            ]
+            media_url = outbound.get("media_url")
+            if media_url:
+                post_data.append(("MediaUrl", str(media_url)))
+            encoded_body = urlencode(post_data).encode("utf-8")
+
+            try:
+                response = await asyncio.to_thread(
+                    httpx.post,
+                    url,
+                    content=encoded_body,
+                    headers={
+                        "Authorization": f"Basic {auth_token}",
+                        "Content-Type": "application/x-www-form-urlencoded",
+                    },
+                    timeout=20,
+                )
+                try:
+                    provider_payload = response.json()
+                except ValueError:
+                    provider_payload = {"body": response.text[:500]}
+
+                provider_messages.append(
+                    {
+                        "sequence": index,
+                        "kind": outbound.get("kind"),
+                        "status": "sent" if response.is_success else "failed",
+                        "status_code": response.status_code,
+                        "provider_payload": provider_payload,
+                    }
+                )
+                if response.is_success:
+                    sent_count += 1
+                else:
+                    failed_count += 1
+                    logger.warning(
+                        "Twilio devolvio error para %s -> %s [%s/%s]: %s",
+                        channel,
+                        recipient,
+                        index,
+                        len(outbound_messages),
+                        provider_payload,
+                    )
+            except Exception as exc:  # pragma: no cover
+                failed_count += 1
+                provider_messages.append(
+                    {
+                        "sequence": index,
+                        "kind": outbound.get("kind"),
+                        "status": "failed",
+                        "error": str(exc),
+                    }
+                )
                 logger.warning(
-                    "Twilio devolvio error para %s -> %s: %s",
+                    "Fallo envio Twilio %s a %s [%s/%s]: %s",
                     channel,
                     recipient,
-                    event.provider_response,
+                    index,
+                    len(outbound_messages),
+                    exc,
                 )
-        except Exception as exc:  # pragma: no cover
+
+        if failed_count:
             event.status = "failed"
-            event.provider_response = {"error": str(exc)}
-            logger.warning("Fallo envio Twilio %s a %s: %s", channel, recipient, exc)
+            error_details = [
+                item.get("error")
+                or str((item.get("provider_payload") or {}).get("message") or "")
+                or str((item.get("provider_payload") or {}).get("error_message") or "")
+                for item in provider_messages
+                if item.get("status") == "failed"
+            ]
+            detail = next((value for value in error_details if value), None)
+            message = f"{sent_count}/{len(outbound_messages)} mensajes enviados; {failed_count} fallido(s)"
+            if detail:
+                message = f"{message}. Ultimo error: {detail}"
+        else:
+            event.status = "sent"
+            event.delivered_at = _now_utc()
+            message = f"{sent_count}/{len(outbound_messages)} mensajes enviados"
+
+        event.provider_response = {
+            "message": message,
+            "message_count": len(outbound_messages),
+            "sent_count": sent_count,
+            "failed_count": failed_count,
+            "messages": provider_messages,
+        }
 
         return {
             "channel": channel,
