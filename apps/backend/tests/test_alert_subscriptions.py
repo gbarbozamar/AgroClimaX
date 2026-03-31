@@ -1,6 +1,7 @@
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 import asyncio
 from unittest.mock import AsyncMock, patch
@@ -16,6 +17,7 @@ os.environ["AUTH_BYPASS_FOR_TESTS"] = "true"
 
 from app.main import app
 from app.db.session import AsyncSessionLocal, Base, engine
+from app.core.config import settings
 from app.models.alerta import AlertSubscription, NotificationMediaAsset
 from app.models.auth import AppUserProfile
 from app.models.humedad import AOIUnit
@@ -146,3 +148,26 @@ class AlertSubscriptionTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(mocked.await_args.kwargs["force_dispatch"])
         self.assertEqual(mocked.await_args.kwargs["subscription_ids"], [subscription_id])
+
+    def test_send_twilio_message_uses_sync_httpx_post(self):
+        async def _run():
+            async with AsyncSessionLocal() as session:
+                with (
+                    patch.object(settings, "twilio_account_sid", "AC_test"),
+                    patch.object(settings, "twilio_auth_token", "token_test"),
+                    patch.object(settings, "twilio_whatsapp_from", "whatsapp:+14155238886"),
+                    patch("app.services.notifications.httpx.post", return_value=SimpleNamespace(status_code=201, text='{"sid":"SM123"}', is_success=True)) as mocked_post,
+                ):
+                    result = await notification_service._send_twilio_message(
+                        session,
+                        alert_event_id=None,
+                        channel="whatsapp",
+                        recipient="+59899111222",
+                        payload={"body": "Prueba", "media_assets": []},
+                        reason="manual_test",
+                    )
+                return result, mocked_post.call_args
+
+        result, call_args = asyncio.run(_run())
+        self.assertEqual(result["status"], "sent")
+        self.assertIsNotNone(call_args)

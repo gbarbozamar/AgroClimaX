@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 import base64
 from email.message import EmailMessage
@@ -1026,12 +1027,13 @@ class NotificationService:
         post_data.extend(("MediaUrl", media_url) for media_url in media_urls)
 
         try:
-            async with httpx.AsyncClient(timeout=20) as client:
-                response = await client.post(
-                    url,
-                    data=post_data,
-                    headers={"Authorization": f"Basic {auth_token}"},
-                )
+            response = await asyncio.to_thread(
+                httpx.post,
+                url,
+                data=post_data,
+                headers={"Authorization": f"Basic {auth_token}"},
+                timeout=20,
+            )
             event.provider_response = {"status_code": response.status_code, "body": response.text[:500]}
             if response.is_success:
                 event.status = "sent"
