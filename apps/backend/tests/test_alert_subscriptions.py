@@ -158,13 +158,51 @@ class AlertSubscriptionTests(unittest.TestCase):
                     patch.object(settings, "twilio_whatsapp_from", "whatsapp:+14155238886"),
                     patch(
                         "app.services.notifications.httpx.post",
-                        return_value=SimpleNamespace(
-                            status_code=201,
-                            text='{"sid":"SM123"}',
-                            is_success=True,
-                            json=lambda: {"sid": "SM123"},
-                        ),
+                        side_effect=[
+                            SimpleNamespace(
+                                status_code=201,
+                                text='{"sid":"SM123","status":"queued"}',
+                                is_success=True,
+                                json=lambda: {"sid": "SM123", "status": "queued"},
+                            ),
+                            SimpleNamespace(
+                                status_code=201,
+                                text='{"sid":"MM124","status":"queued"}',
+                                is_success=True,
+                                json=lambda: {"sid": "MM124", "status": "queued"},
+                            ),
+                            SimpleNamespace(
+                                status_code=201,
+                                text='{"sid":"MM125","status":"queued"}',
+                                is_success=True,
+                                json=lambda: {"sid": "MM125", "status": "queued"},
+                            ),
+                        ],
                     ) as mocked_post,
+                    patch(
+                        "app.services.notifications.httpx.get",
+                        side_effect=[
+                            SimpleNamespace(
+                                status_code=200,
+                                text='{"sid":"SM123","status":"delivered"}',
+                                is_success=True,
+                                json=lambda: {"sid": "SM123", "status": "delivered"},
+                            ),
+                            SimpleNamespace(
+                                status_code=200,
+                                text='{"sid":"MM124","status":"delivered"}',
+                                is_success=True,
+                                json=lambda: {"sid": "MM124", "status": "delivered"},
+                            ),
+                            SimpleNamespace(
+                                status_code=200,
+                                text='{"sid":"MM125","status":"delivered"}',
+                                is_success=True,
+                                json=lambda: {"sid": "MM125", "status": "delivered"},
+                            ),
+                        ],
+                    ) as mocked_get,
+                    patch("app.services.notifications.asyncio.sleep", new=AsyncMock()),
                 ):
                     result = await notification_service._send_twilio_message(
                         session,
@@ -180,12 +218,14 @@ class AlertSubscriptionTests(unittest.TestCase):
                         },
                         reason="manual_test",
                     )
-                return result, mocked_post.call_args_list
+                return result, mocked_post.call_args_list, mocked_get.call_args_list
 
-        result, call_args_list = asyncio.run(_run())
+        result, call_args_list, get_call_args_list = asyncio.run(_run())
         self.assertEqual(result["status"], "sent")
         self.assertEqual(result["provider_response"]["message_count"], 3)
+        self.assertEqual(result["provider_response"]["sent_count"], 3)
         self.assertEqual(len(call_args_list), 3)
+        self.assertEqual(len(get_call_args_list), 3)
 
         first_call = call_args_list[0]
         second_call = call_args_list[1]
@@ -202,3 +242,7 @@ class AlertSubscriptionTests(unittest.TestCase):
 
         for call in call_args_list:
             self.assertEqual(call.kwargs["headers"]["Content-Type"], "application/x-www-form-urlencoded")
+
+        self.assertTrue(get_call_args_list[0].kwargs["url"].endswith("/SM123.json"))
+        self.assertTrue(get_call_args_list[1].kwargs["url"].endswith("/MM124.json"))
+        self.assertTrue(get_call_args_list[2].kwargs["url"].endswith("/MM125.json"))

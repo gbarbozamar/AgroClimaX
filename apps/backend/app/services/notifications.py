@@ -182,6 +182,14 @@ def _scope_display(scope_type: str) -> str:
     return labels.get(scope_type, scope_type)
 
 
+def _twilio_success_status(value: str | None) -> bool:
+    return str(value or "").lower() in {"sent", "delivered", "read"}
+
+
+def _twilio_failed_status(value: str | None) -> bool:
+    return str(value or "").lower() in {"failed", "undelivered", "canceled"}
+
+
 def _compose_scope_payload(
     *,
     scope_type: str,
@@ -298,6 +306,64 @@ def _summarize_dispatch_results(results: list[dict[str, Any]]) -> dict[str, Any]
 
 
 class NotificationService:
+    async def _twilio_request_json(
+        self,
+        *,
+        method: str,
+        url: str,
+        auth_token: str,
+        content: bytes | None = None,
+    ) -> tuple[int, dict[str, Any], bool]:
+        headers = {"Authorization": f"Basic {auth_token}"}
+        request_kwargs: dict[str, Any] = {
+            "url": url,
+            "headers": headers,
+            "timeout": 20,
+        }
+        if content is not None:
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+            request_kwargs["content"] = content
+
+        response = await asyncio.to_thread(getattr(httpx, method), **request_kwargs)
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = {"body": response.text[:500]}
+        return response.status_code, payload, bool(response.is_success)
+
+    async def _twilio_resolve_delivery_status(
+        self,
+        *,
+        base_url: str,
+        auth_token: str,
+        sid: str | None,
+        initial_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        payload = dict(initial_payload or {})
+        if not sid:
+            return payload
+
+        status = str(payload.get("status") or "").lower()
+        if _twilio_success_status(status) or _twilio_failed_status(status):
+            return payload
+
+        detail_url = f"{base_url}/{sid}.json"
+        for _ in range(3):
+            await asyncio.sleep(1)
+            status_code, detail_payload, ok = await self._twilio_request_json(
+                method="get",
+                url=detail_url,
+                auth_token=auth_token,
+            )
+            payload = dict(detail_payload or {})
+            payload["status_code"] = status_code
+            if not ok:
+                return payload
+            status = str(payload.get("status") or "").lower()
+            if _twilio_success_status(status) or _twilio_failed_status(status):
+                return payload
+        return payload
+
     async def dispatch(
         self,
         session: AsyncSession,
@@ -1023,7 +1089,8 @@ class NotificationService:
         auth_token = base64.b64encode(
             f"{settings.twilio_account_sid}:{settings.twilio_auth_token}".encode("utf-8")
         ).decode("utf-8")
-        url = f"https://api.twilio.com/2010-04-01/Accounts/{settings.twilio_account_sid}/Messages.json"
+        base_url = f"https://api.twilio.com/2010-04-01/Accounts/{settings.twilio_account_sid}/Messages"
+        url = f"{base_url}.json"
         outbound_messages: list[dict[str, str | None]] = [
             {"kind": "summary", "body": payload.get("body", "AgroClimaX"), "media_url": None}
         ]
@@ -1056,31 +1123,34 @@ class NotificationService:
             encoded_body = urlencode(post_data).encode("utf-8")
 
             try:
-                response = await asyncio.to_thread(
-                    httpx.post,
-                    url,
+                status_code, provider_payload, ok = await self._twilio_request_json(
+                    method="post",
+                    url=url,
+                    auth_token=auth_token,
                     content=encoded_body,
-                    headers={
-                        "Authorization": f"Basic {auth_token}",
-                        "Content-Type": "application/x-www-form-urlencoded",
-                    },
-                    timeout=20,
                 )
-                try:
-                    provider_payload = response.json()
-                except ValueError:
-                    provider_payload = {"body": response.text[:500]}
+                final_payload = dict(provider_payload or {})
+                final_payload["status_code"] = status_code
+                if ok:
+                    final_payload = await self._twilio_resolve_delivery_status(
+                        base_url=base_url,
+                        auth_token=auth_token,
+                        sid=str(final_payload.get("sid") or ""),
+                        initial_payload=final_payload,
+                    )
+                final_status = str(final_payload.get("status") or "").lower()
+                is_success = ok and _twilio_success_status(final_status)
 
                 provider_messages.append(
                     {
                         "sequence": index,
                         "kind": outbound.get("kind"),
-                        "status": "sent" if response.is_success else "failed",
-                        "status_code": response.status_code,
-                        "provider_payload": provider_payload,
+                        "status": "sent" if is_success else "failed",
+                        "status_code": final_payload.get("status_code", status_code),
+                        "provider_payload": final_payload,
                     }
                 )
-                if response.is_success:
+                if is_success:
                     sent_count += 1
                 else:
                     failed_count += 1
@@ -1090,7 +1160,7 @@ class NotificationService:
                         recipient,
                         index,
                         len(outbound_messages),
-                        provider_payload,
+                        final_payload,
                     )
             except Exception as exc:  # pragma: no cover
                 failed_count += 1
