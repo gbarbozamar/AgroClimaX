@@ -1,12 +1,79 @@
-import { API_BASE, API_V1, downloadJsonFile, fetchCustomState, fetchDepartmentLayers, fetchHexagonsGeojson, fetchHistory, fetchProductiveTemplate, fetchProductiveUnits, fetchProductiveUnitsGeojson, fetchScopeState, fetchSectionsGeojson, fetchUnits, fetchWeatherForecast, uploadProductiveUnitsFile } from './api.js?v=20260329-7';
+import { API_BASE, API_V1, downloadJsonFile, fetchCustomState, fetchDepartmentLayers, fetchHexagonsGeojson, fetchHistory, fetchMapOverlayCatalog, fetchPreloadStatus, fetchProductiveTemplate, fetchProductiveUnits, fetchProductiveUnitsGeojson, fetchScopeState, fetchSectionsGeojson, fetchTimelineContext, fetchUnits, fetchWeatherForecast, startStartupPreload, uploadProductiveUnitsFile } from './api.js?v=20260404-8';
 import { initAuth } from './auth.js?v=20260329-7';
-import { highlightDepartment, highlightHex, highlightProductive, highlightSection, initMap, setDepartmentsOnMap, setHexesOnMap, setProductivesOnMap, setSectionsOnMap, updateFocus } from './map.js?v=20260329-2';
-import { initProfilePanel, refreshProfilePanel } from './profile.js?v=20260329-6';
+import { clearDepartmentLayer, clearHexLayer, clearProductiveLayer, clearSectionsLayer, highlightDepartment, highlightHex, highlightProductive, highlightSection, initMap, isLayerActive, refreshFarmPrivateOverlays, setAvailableOverlays, setHexesOnMap, setDepartmentsOnMap, setMapLayerChangeHandler, setProductivesOnMap, setSectionsOnMap, updateFocus } from './map.js?v=20260404-8';
+import { initFieldsPanel } from './fields.js?v=20260404-8';
+import { initProfilePanel, refreshProfilePanel } from './profile.js?v=20260403-2';
 import { normalizeState, populateDepartmentSelect, renderChart, renderDashboard, renderDrivers, renderError, renderForecast, renderHistory, renderLoading, renderWeatherCards } from './render.js?v=20260327-15';
-import { initSettingsPanel } from './settings.js?v=20260329-5';
-import { setStore, store } from './state.js?v=20260329-2';
+import { initSettingsPanel } from './settings.js?v=20260331-1';
+import { setStore, store } from './state.js?v=20260404-8';
 
 setStore({ apiBase: API_BASE, apiV1: API_V1 });
+const TIMELINE_CONTEXT_CACHE = new Map();
+let timelineContextRequestSeq = 0;
+let dashboardRequestSeq = 0;
+const FRONTEND_PRELOAD_STAGES = {
+  auth: { label: 'Sesion', detail: 'Validando acceso y tokens de la sesion.' },
+  map: { label: 'Mapa base', detail: 'Inicializando viewport y controles.' },
+  catalog: { label: 'Catalogos', detail: 'Cargando overlays, capas y opciones base.' },
+  selection: { label: 'Contexto inicial', detail: 'Cargando estado, capas y seleccion inicial.' },
+};
+const BACKEND_PRELOAD_STAGE_META = {
+  timeline_manifest: { label: 'Timeline historica', detail: 'Preparando el manifiesto temporal de la vista actual.' },
+  timeline_context: { label: 'Metricas historicas', detail: 'Leyendo contexto historico materializado para la fecha actual y vecinas.' },
+  analytic_neighbors: { label: 'Rasteres temporales', detail: 'Calentando tiles actuales y fechas vecinas para reducir buffering.' },
+  official_overlays: { label: 'Overlays oficiales', detail: 'Cacheando overlays de viewport para reutilizar imagenes exportadas.' },
+};
+const HEADER_COLLAPSE_STORAGE_KEY = 'agroclimax.headerCollapsed';
+const frontendPreloadState = {
+  auth: { status: 'pending', detail: FRONTEND_PRELOAD_STAGES.auth.detail },
+  map: { status: 'pending', detail: FRONTEND_PRELOAD_STAGES.map.detail },
+  catalog: { status: 'pending', detail: FRONTEND_PRELOAD_STAGES.catalog.detail },
+  selection: { status: 'pending', detail: FRONTEND_PRELOAD_STAGES.selection.detail },
+};
+
+function readHeaderCollapsedPreference() {
+  try {
+    return window.localStorage.getItem(HEADER_COLLAPSE_STORAGE_KEY) === '1';
+  } catch (_) {
+    return false;
+  }
+}
+
+function writeHeaderCollapsedPreference(collapsed) {
+  try {
+    window.localStorage.setItem(HEADER_COLLAPSE_STORAGE_KEY, collapsed ? '1' : '0');
+  } catch (_) {
+    // ignore storage failures
+  }
+}
+
+function renderHeaderCollapseToggle() {
+  const collapsed = document.body.classList.contains('header-collapsed');
+  const buttons = document.querySelectorAll('[data-header-collapse-toggle]');
+  buttons.forEach((button) => {
+    button.textContent = collapsed ? 'Mostrar header' : 'Plegar header';
+    button.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    button.title = collapsed ? 'Mostrar header' : 'Plegar header';
+  });
+}
+
+function setHeaderCollapsed(collapsed) {
+  document.body.classList.toggle('header-collapsed', Boolean(collapsed));
+  writeHeaderCollapsedPreference(Boolean(collapsed));
+  renderHeaderCollapseToggle();
+}
+
+function initHeaderCollapseToggle() {
+  setHeaderCollapsed(readHeaderCollapsedPreference());
+  const buttons = document.querySelectorAll('[data-header-collapse-toggle]');
+  buttons.forEach((button) => {
+    if (button.dataset.bound) return;
+    button.dataset.bound = 'true';
+    button.addEventListener('click', () => {
+      setHeaderCollapsed(!document.body.classList.contains('header-collapsed'));
+    });
+  });
+}
 
 function historyContextFromV1(history) {
   return (history?.datos || []).map((item) => ({
@@ -16,6 +83,404 @@ function historyContextFromV1(history) {
     risk_score: item.risk_score,
     affected_pct: item.affected_pct,
   }));
+}
+
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function addDays(isoDate, days) {
+  const parsed = new Date(`${isoDate}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return isoDate;
+  parsed.setUTCDate(parsed.getUTCDate() + days);
+  return parsed.toISOString().slice(0, 10);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function preloadNodes() {
+  return {
+    overlay: document.getElementById('app-preload-overlay'),
+    title: document.getElementById('app-preload-title'),
+    copy: document.getElementById('app-preload-copy'),
+    stageLabel: document.getElementById('app-preload-stage-label'),
+    progressLabel: document.getElementById('app-preload-progress-label'),
+    progressFill: document.getElementById('app-preload-progressfill'),
+    stageList: document.getElementById('app-preload-stage-list'),
+    footnote: document.getElementById('app-preload-footnote'),
+    mini: document.getElementById('app-preload-mini'),
+    miniTitle: document.getElementById('app-preload-mini-title'),
+    miniDetail: document.getElementById('app-preload-mini-detail'),
+    miniProgress: document.getElementById('app-preload-mini-progress'),
+  };
+}
+
+function setFrontendPreloadStage(stageKey, status, detail = null) {
+  if (!frontendPreloadState[stageKey]) return;
+  frontendPreloadState[stageKey] = {
+    ...frontendPreloadState[stageKey],
+    status,
+    detail: detail || FRONTEND_PRELOAD_STAGES[stageKey].detail,
+  };
+  renderPreloadUi();
+}
+
+function combinedPreloadStages() {
+  const frontendStages = Object.entries(FRONTEND_PRELOAD_STAGES).map(([key, meta]) => ({
+    key,
+    label: meta.label,
+    detail: frontendPreloadState[key]?.detail || meta.detail,
+    status: frontendPreloadState[key]?.status || 'pending',
+    done: frontendPreloadState[key]?.status === 'done' ? 1 : 0,
+    total: 1,
+  }));
+  const backendDetails = store.preloadStatus?.details || {};
+  const backendStages = Object.entries(backendDetails.stages || {}).map(([key, value]) => ({
+    key,
+    label: BACKEND_PRELOAD_STAGE_META[key]?.label || key,
+    detail: BACKEND_PRELOAD_STAGE_META[key]?.detail || '',
+    status: value?.status || 'pending',
+    done: Number(value?.done || 0),
+    total: Math.max(1, Number(value?.total || 0)),
+  }));
+  return [...frontendStages, ...backendStages];
+}
+
+function preloadProgressRatio() {
+  const stages = combinedPreloadStages();
+  if (!stages.length) return 0;
+  const total = stages.reduce((acc, stage) => acc + Math.max(0, Number(stage.total || 0)), 0);
+  if (total <= 0) return 1;
+  const done = stages.reduce((acc, stage) => {
+    if (stage.status === 'done') return acc + Math.max(0, Number(stage.total || 0));
+    return acc + Math.min(Number(stage.done || 0), Math.max(0, Number(stage.total || 0)));
+  }, 0);
+  return Math.max(0, Math.min(1, done / total));
+}
+
+function renderPreloadUi() {
+  const nodes = preloadNodes();
+  const stages = combinedPreloadStages();
+  const progress = preloadProgressRatio();
+  const currentStage = stages.find((stage) => stage.status === 'running') || stages.find((stage) => stage.status === 'pending') || stages[stages.length - 1];
+  const progressPct = Math.round(progress * 100);
+  if (nodes.overlay) nodes.overlay.classList.toggle('hidden', !store.preloadVisible);
+  if (nodes.title) nodes.title.textContent = store.preloadCriticalReady ? 'App lista, completando cache residual' : 'Preparando capas y cache inicial';
+  if (nodes.copy) nodes.copy.textContent = store.preloadCriticalReady
+    ? 'La parte critica ya esta lista. El resto sigue calentando cache en segundo plano.'
+    : 'Cargando sesion, catalogos y frames temporales para reducir buffering inicial.';
+  if (nodes.stageLabel) nodes.stageLabel.textContent = currentStage ? currentStage.label : 'Iniciando...';
+  if (nodes.progressLabel) nodes.progressLabel.textContent = `${progressPct}%`;
+  if (nodes.progressFill) nodes.progressFill.style.width = `${progressPct}%`;
+  if (nodes.stageList) {
+    nodes.stageList.innerHTML = stages.map((stage) => {
+      const className = stage.status === 'done' ? ' is-done' : (stage.status === 'running' ? ' is-running' : '');
+      const summary = stage.total > 1
+        ? `${stage.done}/${stage.total}`
+        : stage.total === 1
+          ? (stage.status === 'done' ? 'Listo' : stage.status === 'running' ? 'En curso' : 'Pendiente')
+          : 'N/A';
+      return `
+        <div class="app-preload-stage${className}">
+          <div>
+            <div class="app-preload-stage-name">${stage.label}</div>
+            <div class="app-preload-stage-detail">${stage.detail || ''}</div>
+          </div>
+          <div class="app-preload-stage-status">${summary}</div>
+        </div>
+      `;
+    }).join('');
+  }
+  if (nodes.footnote) {
+    nodes.footnote.textContent = store.preloadCriticalReady
+      ? 'Se liberaron las partes criticas. El calentamiento residual sigue para mejorar reproduccion y cambios de capa.'
+      : 'La app se habilita apenas lo critico queda listo. El resto sigue calentando en segundo plano.';
+  }
+  if (nodes.mini) nodes.mini.classList.toggle('hidden', !store.preloadMiniVisible);
+  if (nodes.miniTitle) nodes.miniTitle.textContent = store.preloadCriticalReady ? 'Cache residual en progreso' : 'Precarga inicial';
+  if (nodes.miniDetail) {
+    const stageKey = store.preloadStatus?.stage;
+    nodes.miniDetail.textContent = BACKEND_PRELOAD_STAGE_META[stageKey]?.label || currentStage?.label || 'Preparando cache';
+  }
+  if (nodes.miniProgress) nodes.miniProgress.textContent = `${progressPct}%`;
+  document.body.classList.toggle('preload-blocked', Boolean(store.preloadVisible));
+  setStore({ preloadProgress: progress });
+}
+
+function selectionPreloadPayload(descriptor = currentSelectionDescriptor()) {
+  if (!descriptor || descriptor.scope === 'custom') {
+    return {
+      scope_type: 'viewport',
+      scope_ref: 'custom',
+      timeline_scope: 'nacional',
+      timeline_unit_id: null,
+      timeline_department: null,
+    };
+  }
+  if (descriptor.scope === 'unidad') {
+    const selectionKind = descriptor.selectionKind || descriptor.unitMeta?.selection_kind || 'unidad';
+    const scopeRef = descriptor.unitMeta?.source_paddock_id
+      ? `paddock:${descriptor.unitMeta.source_paddock_id}`
+      : descriptor.unitMeta?.source_field_id
+        ? `field:${descriptor.unitMeta.source_field_id}`
+        : descriptor.unitId;
+    return {
+      scope_type: selectionKind,
+      scope_ref: scopeRef,
+      timeline_scope: 'unidad',
+      timeline_unit_id: descriptor.unitId || null,
+      timeline_department: descriptor.unitMeta?.department || null,
+    };
+  }
+  if (descriptor.scope === 'departamento') {
+    return {
+      scope_type: 'departamento',
+      scope_ref: descriptor.department || 'departamento',
+      timeline_scope: 'departamento',
+      timeline_unit_id: null,
+      timeline_department: descriptor.department || null,
+    };
+  }
+  return {
+    scope_type: 'nacional',
+    scope_ref: 'Uruguay',
+    timeline_scope: 'nacional',
+    timeline_unit_id: null,
+    timeline_department: null,
+  };
+}
+
+function currentViewportPreloadPayload() {
+  const mapNode = document.getElementById('map');
+  const bounds = store.map?.getBounds?.();
+  const bbox = bounds
+    ? [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()].map((value) => Number(value).toFixed(4)).join(',')
+    : null;
+  return {
+    bbox,
+    zoom: store.map ? Math.round(store.map.getZoom()) : 7,
+    width: Math.max(256, Math.round(mapNode?.clientWidth || 1024)),
+    height: Math.max(256, Math.round(mapNode?.clientHeight || 640)),
+  };
+}
+
+async function pollPreloadRun(runKey, { timeoutMs = 0, stopOnCritical = false } = {}) {
+  const startedAt = Date.now();
+  let latest = null;
+  while (true) {
+    latest = await fetchPreloadStatus(runKey);
+    setStore({
+      preloadStatus: latest,
+      preloadRunKey: runKey,
+      preloadCriticalReady: Boolean(latest.critical_ready),
+    });
+    renderPreloadUi();
+    if (latest.status === 'success' || latest.status === 'failed') return latest;
+    if (stopOnCritical && latest.critical_ready) return latest;
+    if (timeoutMs > 0 && (Date.now() - startedAt) >= timeoutMs) return latest;
+    await sleep(500);
+  }
+}
+
+function continuePreloadMonitoring(runKey) {
+  (async () => {
+    try {
+      const latest = await pollPreloadRun(runKey, { timeoutMs: 45000, stopOnCritical: false });
+      if (latest?.status === 'success' || latest?.status === 'failed') {
+        setStore({ preloadMiniVisible: false });
+        renderPreloadUi();
+      }
+    } catch (error) {
+      console.warn('No se pudo completar el monitoreo de precarga:', error);
+    }
+  })();
+}
+
+function releasePreloadOverlay() {
+  const stillRunning = Boolean(store.preloadRunKey && store.preloadStatus && !['success', 'failed'].includes(store.preloadStatus.status));
+  setStore({
+    preloadVisible: false,
+    preloadMiniVisible: stillRunning,
+  });
+  renderPreloadUi();
+}
+
+function isHistoricalTimelineDate(targetDate = store.timelineDate) {
+  return Boolean(store.timelineEnabled && targetDate && targetDate !== todayIsoDate());
+}
+
+function setTimelineForecastVisibility(collapsed) {
+  const weatherPanel = document.getElementById('weather-strip-panel');
+  const forecastPanel = document.getElementById('forecast-panel-section');
+  if (weatherPanel) weatherPanel.style.display = collapsed ? 'none' : '';
+  if (forecastPanel) forecastPanel.style.display = collapsed ? 'none' : '';
+  setStore({ timelineForecastCollapsed: collapsed });
+}
+
+function selectedFieldUnitMeta() {
+  const field = store.selectedFieldDetail
+    || (store.farmFields || []).find((item) => item.id === store.selectedFieldId)
+    || null;
+  if (!field) return null;
+  return {
+    unit_id: field.aoi_unit_id || null,
+    unit_name: field.name || 'Campo',
+    name: field.name || 'Campo',
+    centroid_lat: field.centroid_lat ?? null,
+    centroid_lon: field.centroid_lon ?? null,
+    department: field.department || null,
+    selection_kind: 'field',
+    source_field_id: field.id,
+  };
+}
+
+function selectedPaddockUnitMeta() {
+  const field = store.selectedFieldDetail
+    || (store.farmFields || []).find((item) => item.id === store.selectedFieldId)
+    || null;
+  const paddock = (field?.paddocks || []).find((item) => item.id === store.selectedPaddockId) || null;
+  if (!paddock) return null;
+  return {
+    unit_id: paddock.aoi_unit_id || null,
+    unit_name: paddock.name || 'Potrero',
+    name: paddock.name || 'Potrero',
+    centroid_lat: field?.centroid_lat ?? null,
+    centroid_lon: field?.centroid_lon ?? null,
+    department: field?.department || null,
+    selection_kind: 'paddock',
+    source_field_id: field?.id || null,
+    source_paddock_id: paddock.id,
+  };
+}
+
+function currentFarmSelectionDescriptor() {
+  const paddockMeta = selectedPaddockUnitMeta();
+  if (paddockMeta) {
+    return {
+      scope: 'unidad',
+      unitId: paddockMeta.unit_id,
+      unitMeta: paddockMeta,
+      supported: Boolean(paddockMeta.unit_id),
+      selectionKind: 'paddock',
+    };
+  }
+
+  const fieldMeta = selectedFieldUnitMeta();
+  if (fieldMeta) {
+    return {
+      scope: 'unidad',
+      unitId: fieldMeta.unit_id,
+      unitMeta: fieldMeta,
+      supported: Boolean(fieldMeta.unit_id),
+      selectionKind: 'field',
+    };
+  }
+
+  return null;
+}
+
+function currentSelectionDescriptor() {
+  if (store.customGeojson) return { scope: 'custom', supported: false };
+  const farmSelection = currentFarmSelectionDescriptor();
+  if (farmSelection) return farmSelection;
+  if (store.selectedProductiveId) {
+    return {
+      scope: 'unidad',
+      unitId: store.selectedProductiveId,
+      unitMeta: selectedProductiveProps(store.selectedProductiveId),
+      supported: true,
+    };
+  }
+  if (store.selectedSectionId) {
+    return {
+      scope: 'unidad',
+      unitId: store.selectedSectionId,
+      unitMeta: selectedSectionProps(store.selectedSectionId),
+      supported: true,
+    };
+  }
+  if (store.selectedHexId) {
+    return {
+      scope: 'unidad',
+      unitId: store.selectedHexId,
+      unitMeta: selectedHexProps(store.selectedHexId),
+      supported: true,
+    };
+  }
+  if (store.selectedScope === 'departamento' && store.selectedDepartment) {
+    return {
+      scope: 'departamento',
+      department: store.selectedDepartment,
+      unitMeta: store.units.find((item) => item.department === store.selectedDepartment) || null,
+      supported: true,
+    };
+  }
+  if (store.selectedScope === 'unidad' && store.selectedUnitId) {
+    const unitMeta = selectedProductiveProps(store.selectedUnitId)
+      || selectedSectionProps(store.selectedUnitId)
+      || selectedHexProps(store.selectedUnitId)
+      || store.units.find((item) => item.id === store.selectedUnitId)
+      || null;
+    return {
+      scope: 'unidad',
+      unitId: store.selectedUnitId,
+      unitMeta,
+      supported: true,
+    };
+  }
+  return { scope: 'nacional', department: null, unitId: null, unitMeta: null, supported: true };
+}
+
+function timelineContextCacheKey({ scope, department = null, unitId = null, targetDate, historyDays = 30 }) {
+  return `${scope}|${department || '-'}|${unitId || '-'}|${targetDate}|${historyDays}`;
+}
+
+async function fetchTimelineContextCached({ scope, department = null, unitId = null, targetDate, historyDays = 30 }) {
+  const cacheKey = timelineContextCacheKey({ scope, department, unitId, targetDate, historyDays });
+  if (TIMELINE_CONTEXT_CACHE.has(cacheKey)) return TIMELINE_CONTEXT_CACHE.get(cacheKey);
+  const payload = await fetchTimelineContext({ scope, department, unitId, targetDate, historyDays });
+  TIMELINE_CONTEXT_CACHE.set(cacheKey, payload);
+  return payload;
+}
+
+function buildTimelineModel(contextPayload, descriptor) {
+  const statePayload = { ...(contextPayload?.state_payload || {}) };
+  const historyPayload = contextPayload?.history_payload || { datos: [] };
+  const scopeLabel = contextPayload?.selection_label
+    || statePayload.department
+    || descriptor?.unitMeta?.unit_name
+    || descriptor?.unitMeta?.name
+    || 'Uruguay';
+  const model = normalizeState(statePayload, {
+    history: historyContextFromV1(historyPayload),
+    unitLat: descriptor?.unitMeta?.centroid_lat ?? null,
+    unitLon: descriptor?.unitMeta?.centroid_lon ?? null,
+    scopeLabel,
+  });
+  if (contextPayload?.forecast_mode !== 'current_live') {
+    model.forecast = [];
+    model.technical = { ...(model.technical || {}), forecast: 'No aplica en timeline historica' };
+  }
+  return model;
+}
+
+function applyDashboardModel(model, { renderForecastPanel = true, renderWeather = true } = {}) {
+  renderDashboard(model);
+  renderDrivers(model);
+  renderHistory(model);
+  setStore({
+    chart: renderChart(model, store.chart),
+    currentModel: model,
+  });
+  if (renderForecastPanel) renderForecast(model);
+  if (renderWeather) {
+    syncWeatherFilterOptions();
+    return refreshWeatherCards();
+  }
+  syncWeatherFilterOptions();
+  return Promise.resolve();
 }
 
 function currentDepartmentFilter() {
@@ -39,6 +504,30 @@ function selectedHexProps(unitId) {
 function currentSelectionWeatherOption() {
   if (store.customGeojson) {
     return { value: 'current', label: 'Actual: parcela custom', mode: 'current' };
+  }
+  if (store.selectedPaddockId) {
+    const meta = selectedPaddockUnitMeta();
+    if (meta?.unit_id) {
+      return {
+        value: 'current',
+        label: `Actual: ${meta.unit_name || 'potrero'}`,
+        mode: 'current',
+        scope: 'unidad',
+        unitId: meta.unit_id,
+      };
+    }
+  }
+  if (store.selectedFieldId) {
+    const meta = selectedFieldUnitMeta();
+    if (meta?.unit_id) {
+      return {
+        value: 'current',
+        label: `Actual: ${meta.unit_name || 'campo'}`,
+        mode: 'current',
+        scope: 'unidad',
+        unitId: meta.unit_id,
+      };
+    }
   }
   if (store.selectedProductiveId) {
     const props = selectedProductiveProps(store.selectedProductiveId);
@@ -82,7 +571,7 @@ function buildWeatherFilterOptions() {
     });
   });
 
-  if (store.currentLayer === 'judicial' && store.sectionsLookup) {
+  if (isLayerActive('judicial') && store.sectionsLookup) {
     Object.values(store.sectionsLookup).forEach((layer) => {
       const props = layer?.feature?.properties || {};
       if (!props.unit_id) return;
@@ -159,6 +648,67 @@ async function refreshWeatherCards() {
   }
 }
 
+async function prefetchTimelineContextNeighbors(descriptor, targetDate) {
+  if (!descriptor?.supported) return;
+  const neighborDates = [addDays(targetDate, -1), addDays(targetDate, 1)];
+  await Promise.all(
+    neighborDates.map(async (dateValue) => {
+      try {
+        await fetchTimelineContextCached({
+          scope: descriptor.scope,
+          department: descriptor.department || null,
+          unitId: descriptor.unitId || null,
+          targetDate: dateValue,
+          historyDays: 30,
+        });
+      } catch (error) {
+        console.warn('No se pudo precargar contexto historico:', error);
+      }
+    }),
+  );
+}
+
+async function refreshDashboardFromTimelineDate(targetDate = store.timelineDate, { silent = false, requestSeq: incomingRequestSeq = null } = {}) {
+  const descriptor = currentSelectionDescriptor();
+  if (!descriptor?.supported || !targetDate || !isHistoricalTimelineDate(targetDate)) {
+    setTimelineForecastVisibility(false);
+    return false;
+  }
+
+  const effectiveRequestSeq = Number.isFinite(incomingRequestSeq) ? incomingRequestSeq : ++dashboardRequestSeq;
+  const timelineRequestSeq = ++timelineContextRequestSeq;
+  setStore({ timelineContextLoading: true, timelineContextRequestSeq: timelineRequestSeq });
+  if (!silent) renderLoading(`Cargando timeline ${targetDate}...`);
+
+  try {
+    const contextPayload = await fetchTimelineContextCached({
+      scope: descriptor.scope,
+      department: descriptor.department || null,
+      unitId: descriptor.unitId || null,
+      targetDate,
+      historyDays: 30,
+    });
+    if (effectiveRequestSeq !== dashboardRequestSeq || timelineRequestSeq !== timelineContextRequestSeq) return true;
+    if (!contextPayload?.state_payload) {
+      setStore({ timelineContextLoading: false });
+      if (!silent) renderError('No hay contexto historico materializado para la fecha seleccionada.');
+      return false;
+    }
+    const model = buildTimelineModel(contextPayload, descriptor);
+    setStore({ timelineContext: contextPayload, timelineContextLoading: false });
+    setTimelineForecastVisibility(true);
+    await applyDashboardModel(model, { renderForecastPanel: false, renderWeather: false });
+    updateFocus(model);
+    await prefetchTimelineContextNeighbors(descriptor, targetDate);
+    return true;
+  } catch (error) {
+    if (effectiveRequestSeq !== dashboardRequestSeq || timelineRequestSeq !== timelineContextRequestSeq) return true;
+    setStore({ timelineContextLoading: false });
+    if (!silent) renderError(`No se pudo cargar el contexto historico: ${error.message}`);
+    return false;
+  }
+}
+
 function setProductiveImportStatus(message, tone = 'muted') {
   const node = document.getElementById('productive-import-status');
   if (!node) return;
@@ -208,6 +758,7 @@ async function loadSectionsLayer(department = null) {
     }
     const collection = await fetchSectionsGeojson(department);
     setSectionsOnMap(collection, handleSectionSelect, store.selectedSectionId);
+    refreshFarmPrivateOverlays();
     syncWeatherFilterOptions();
   } catch (error) {
     console.warn('No se pudo cargar la capa de secciones:', error);
@@ -226,6 +777,7 @@ async function loadDepartmentLayer(selectedDepartment = null) {
     const collection = await fetchDepartmentLayers();
     setDepartmentsOnMap(collection, handleDepartmentSelect, selectedDepartment);
     if (selectedDepartment) highlightDepartment(selectedDepartment, false);
+    refreshFarmPrivateOverlays();
     syncWeatherFilterOptions();
   } catch (error) {
     console.warn('No se pudo cargar la capa de departamentos:', error);
@@ -243,6 +795,7 @@ async function loadHexLayer(department = null) {
     }
     const collection = await fetchHexagonsGeojson(department);
     setHexesOnMap(collection, handleHexSelect, store.selectedHexId);
+    refreshFarmPrivateOverlays();
     syncWeatherFilterOptions();
   } catch (error) {
     console.warn('No se pudo cargar la capa H3:', error);
@@ -260,6 +813,7 @@ async function loadProductiveLayer(department = null) {
     }
     const collection = await fetchProductiveUnitsGeojson(department);
     setProductivesOnMap(collection, handleProductiveSelect, store.selectedProductiveId);
+    refreshFarmPrivateOverlays();
     const count = collection?.metadata?.count || 0;
     const countNode = document.getElementById('productive-import-count');
     if (countNode) countNode.textContent = String(count);
@@ -336,19 +890,36 @@ function wireProductiveImportControls() {
 }
 
 async function loadSelection(scope, department = null, unitId = null) {
+  const requestSeq = ++dashboardRequestSeq;
   renderLoading(scope === 'nacional' ? 'Cargando panorama nacional...' : `Cargando ${department || 'unidad'}...`);
   try {
     let data;
     let history;
     let unit = null;
+    setStore({
+      selectedScope: scope,
+      selectedDepartment: department,
+      selectedUnitId: unitId,
+    });
     if (scope === 'custom' && store.customGeojson) {
       data = await fetchCustomState(store.customGeojson);
       history = { datos: [] };
     } else {
+      unit = store.units.find((item) => item.department === department || item.id === unitId) || selectedSectionProps(unitId) || selectedProductiveProps(unitId) || selectedHexProps(unitId) || null;
+      if (isHistoricalTimelineDate()) {
+        const rendered = await refreshDashboardFromTimelineDate(store.timelineDate, { silent: false, requestSeq });
+        if (rendered) {
+          if (unitId && isLayerActive('judicial')) highlightSection(unitId, false);
+          if (unitId && isLayerActive('productiva')) highlightProductive(unitId, false);
+          if (unitId && isLayerActive('hex')) highlightHex(unitId, false);
+          if (department && !isLayerActive('judicial')) highlightDepartment(department, false);
+          return;
+        }
+      }
       data = await fetchScopeState(scope, department, unitId);
       history = await fetchHistory(scope, department, unitId, 30);
-      unit = store.units.find((item) => item.department === department || item.id === unitId) || selectedSectionProps(unitId) || selectedProductiveProps(unitId) || selectedHexProps(unitId) || null;
     }
+    if (requestSeq !== dashboardRequestSeq) return;
 
     const model = normalizeState(data, {
       history: historyContextFromV1(history),
@@ -360,20 +931,19 @@ async function loadSelection(scope, department = null, unitId = null) {
     renderDrivers(model);
     renderForecast(model);
     renderHistory(model);
+    setTimelineForecastVisibility(false);
     setStore({
       chart: renderChart(model, store.chart),
       currentModel: model,
-      selectedScope: scope,
-      selectedDepartment: department,
-      selectedUnitId: unitId,
+      timelineContext: null,
     });
     syncWeatherFilterOptions();
     await refreshWeatherCards();
     updateFocus(model);
-    if (unitId && store.currentLayer === 'judicial') highlightSection(unitId, false);
-    if (unitId && store.currentLayer === 'productiva') highlightProductive(unitId, false);
-    if (unitId && store.currentLayer === 'hex') highlightHex(unitId, false);
-    if (department && store.currentLayer !== 'judicial') highlightDepartment(department, false);
+    if (unitId && isLayerActive('judicial')) highlightSection(unitId, false);
+    if (unitId && isLayerActive('productiva')) highlightProductive(unitId, false);
+    if (unitId && isLayerActive('hex')) highlightHex(unitId, false);
+    if (department && !isLayerActive('judicial')) highlightDepartment(department, false);
   } catch (error) {
     renderError(`No se pudo cargar el dashboard: ${error.message}`);
   }
@@ -387,11 +957,11 @@ function handleDepartmentSelect(department) {
   document.getElementById('btn-limpiar').style.display = 'none';
   refreshProductiveImportSummary(department);
   loadSelection('departamento', department, null);
-  if (store.currentLayer === 'judicial') {
+  if (isLayerActive('judicial')) {
     loadSectionsLayer(department);
     return;
   }
-  if (store.currentLayer === 'productiva') {
+  if (isLayerActive('productiva')) {
     loadProductiveLayer(department);
     return;
   }
@@ -416,6 +986,17 @@ function handleHexSelect(hex) {
 async function refreshCurrentSelection() {
   if (store.customGeojson) {
     await loadSelection('custom');
+    return;
+  }
+  const farmSelection = currentFarmSelectionDescriptor();
+  if (farmSelection?.supported && farmSelection.unitId) {
+    await loadSelection('unidad', null, farmSelection.unitId);
+    return;
+  }
+  if (farmSelection) {
+    setTimelineForecastVisibility(false);
+    syncWeatherFilterOptions();
+    await refreshWeatherCards();
     return;
   }
   if (store.selectedProductiveId) {
@@ -443,58 +1024,104 @@ async function refreshCurrentSelection() {
 
 async function refreshCurrentLayer() {
   const department = currentDepartmentFilter();
-  if (store.currentLayer === 'judicial') {
-    await loadSectionsLayer(department);
+  if (isLayerActive('judicial')) await loadSectionsLayer(department);
+  else clearSectionsLayer();
+
+  if (isLayerActive('productiva')) await loadProductiveLayer(department);
+  else clearProductiveLayer();
+
+  if (isLayerActive('hex')) await loadHexLayer(department);
+  else clearHexLayer();
+
+  if (isLayerActive('judicial') || isLayerActive('productiva') || isLayerActive('hex')) {
+    clearDepartmentLayer();
+  } else {
+    await loadDepartmentLayer(store.selectedDepartment || department || null);
+  }
+
+  refreshFarmPrivateOverlays();
+  syncWeatherFilterOptions();
+}
+
+async function handleTimelineDateChange(event) {
+  const targetDate = event?.detail?.date || store.timelineDate || todayIsoDate();
+  const enabled = Boolean(event?.detail?.enabled);
+  if (!enabled || !isHistoricalTimelineDate(targetDate)) {
+    setTimelineForecastVisibility(false);
+    await refreshCurrentSelection();
     return;
   }
-  if (store.currentLayer === 'productiva') {
-    await loadProductiveLayer(department);
-    return;
-  }
-  if (store.currentLayer === 'hex') {
-    await loadHexLayer(department);
-    return;
-  }
-  if (store.currentLayer === 'coneat') {
-    return;
-  }
-  await loadDepartmentLayer(store.selectedDepartment);
+  await refreshDashboardFromTimelineDate(targetDate, { silent: true });
 }
 
 async function bootstrap() {
+  initHeaderCollapseToggle();
+  setStore({
+    preloadVisible: true,
+    preloadMiniVisible: false,
+    preloadRunKey: null,
+    preloadStatus: null,
+    preloadCriticalReady: false,
+  });
+  renderPreloadUi();
+  setFrontendPreloadStage('auth', 'running');
   const authenticated = await initAuth();
-  if (!authenticated) return;
+  if (!authenticated) {
+    setStore({ preloadVisible: false, preloadMiniVisible: false });
+    renderPreloadUi();
+    return;
+  }
+  setFrontendPreloadStage('auth', 'done', 'Sesion validada.');
 
+  const timelineChangeBridge = (detail) => {
+    handleTimelineDateChange({ detail }).catch((error) => {
+      console.warn('No se pudo sincronizar la timeline con el dashboard:', error);
+    });
+  };
+  setStore({ onTimelineDateChange: timelineChangeBridge });
+  window.addEventListener('agroclimax:timeline-date-change', (event) => {
+    if (event?.detail?._handledByStoreCallback) return;
+    timelineChangeBridge(event?.detail || {});
+  });
+  window.addEventListener('agroclimax:viewport-preload-started', (event) => {
+    const payload = event?.detail || {};
+    if (!payload.run_key) return;
+    setStore({
+      preloadRunKey: payload.run_key,
+      preloadStatus: payload,
+      preloadMiniVisible: true,
+    });
+    renderPreloadUi();
+    continuePreloadMonitoring(payload.run_key);
+  });
+
+  setFrontendPreloadStage('map', 'running');
   await initMap(async (geojson) => {
     setStore({ customGeojson: geojson, selectedSectionId: null, selectedProductiveId: null, selectedHexId: null });
     await loadSelection('custom');
   }, handleDepartmentSelect, handleSectionSelect);
+  setFrontendPreloadStage('map', 'done', 'Viewport y controles inicializados.');
+  setMapLayerChangeHandler(async () => {
+    const preserveViewport = Boolean(store.selectedFieldId || store.selectedPaddockId);
+    const preservedCenter = preserveViewport && store.map ? store.map.getCenter() : null;
+    const preservedZoom = preserveViewport && store.map ? store.map.getZoom() : null;
+    await refreshCurrentLayer();
+    if (preserveViewport && preservedCenter && Number.isFinite(preservedZoom)) {
+      store.map.setView(preservedCenter, preservedZoom, { animate: false });
+      refreshFarmPrivateOverlays();
+    }
+  });
 
-  const originalSetLayer = window.setLayer;
-  window.setLayer = async (name, btn) => {
-    originalSetLayer(name, btn);
-    if (name === 'judicial') {
-      await loadSectionsLayer(currentDepartmentFilter());
-      syncWeatherFilterOptions();
-      return;
-    }
-    if (name === 'productiva') {
-      await loadProductiveLayer(currentDepartmentFilter());
-      syncWeatherFilterOptions();
-      return;
-    }
-    if (name === 'hex') {
-      await loadHexLayer(currentDepartmentFilter());
-      syncWeatherFilterOptions();
-      return;
-    }
-    if (name === 'coneat') {
-      syncWeatherFilterOptions();
-      return;
-    }
-    await loadDepartmentLayer(store.selectedDepartment);
-    syncWeatherFilterOptions();
-  };
+  setFrontendPreloadStage('catalog', 'running');
+  try {
+    const overlayCatalog = await fetchMapOverlayCatalog();
+    setAvailableOverlays(overlayCatalog.items || []);
+    setFrontendPreloadStage('catalog', 'done', `Catalogo listo con ${(overlayCatalog.items || []).length} overlays.`);
+  } catch (error) {
+    console.warn('No se pudo cargar el catalogo de overlays oficiales:', error);
+    setAvailableOverlays([]);
+    setFrontendPreloadStage('catalog', 'done', 'Catalogo de overlays no disponible; se sigue con fallback local.');
+  }
 
   const select = document.getElementById('department-select');
   const weatherSelect = document.getElementById('weather-filter-select');
@@ -504,33 +1131,12 @@ async function bootstrap() {
     if (value === 'nacional') {
       await refreshProductiveImportSummary(null);
       await loadSelection('nacional');
-      if (store.currentLayer === 'judicial') {
-        await loadSectionsLayer(null);
-      } else if (store.currentLayer === 'productiva') {
-        await loadProductiveLayer(null);
-      } else if (store.currentLayer === 'hex') {
-        await loadHexLayer(null);
-      } else if (store.currentLayer === 'coneat') {
-        return;
-      } else {
-        await loadDepartmentLayer(null);
-      }
+      await refreshCurrentLayer();
       return;
     }
     await refreshProductiveImportSummary(value);
     await loadSelection('departamento', value);
-    if (store.currentLayer === 'judicial') {
-      await loadSectionsLayer(value);
-    } else if (store.currentLayer === 'productiva') {
-      await loadProductiveLayer(value);
-    } else if (store.currentLayer === 'hex') {
-      await loadHexLayer(value);
-    } else if (store.currentLayer === 'coneat') {
-      return;
-    } else {
-      await loadDepartmentLayer(value);
-    }
-    syncWeatherFilterOptions();
+    await refreshCurrentLayer();
   });
 
   weatherSelect?.addEventListener('change', async (event) => {
@@ -538,11 +1144,46 @@ async function bootstrap() {
     await refreshWeatherCards();
   });
 
+  const preloadSelection = selectionPreloadPayload();
+  const preloadViewport = currentViewportPreloadPayload();
+  let startupPreloadRunKey = null;
+  try {
+    const preloadResponse = await startStartupPreload({
+      ...preloadViewport,
+      temporal_layers: (store.activeLayers || []).filter((layerId) => ['alerta', 'rgb', 'ndvi', 'ndmi', 'ndwi', 'savi', 'sar', 'lst'].includes(layerId)),
+      official_layers: (store.availableOverlays || []).filter((item) => item.recommended).map((item) => item.id),
+      ...preloadSelection,
+      target_date: todayIsoDate(),
+      history_days: 30,
+    });
+    startupPreloadRunKey = preloadResponse?.run_key || null;
+    setStore({ preloadRunKey: startupPreloadRunKey, preloadStatus: preloadResponse || null });
+    renderPreloadUi();
+  } catch (error) {
+    console.warn('No se pudo iniciar la precarga de startup:', error);
+  }
+
   const unitsPromise = loadUnitsSafe();
   const departmentsPromise = loadDepartmentLayer(null);
+  setFrontendPreloadStage('selection', 'running');
   await loadSelection('nacional');
   await unitsPromise;
   await departmentsPromise;
+  setFrontendPreloadStage('selection', 'done', 'Contexto inicial y capas base listas.');
+
+  if (startupPreloadRunKey) {
+    try {
+      const criticalStatus = await pollPreloadRun(startupPreloadRunKey, { timeoutMs: 12000, stopOnCritical: true });
+      if (criticalStatus?.status && !['success', 'failed'].includes(criticalStatus.status)) {
+        setStore({ preloadMiniVisible: true });
+        continuePreloadMonitoring(startupPreloadRunKey);
+      }
+    } catch (error) {
+      console.warn('No se pudo confirmar el estado critico de la precarga:', error);
+    }
+  }
+  releasePreloadOverlay();
+
   syncWeatherFilterOptions();
   await refreshWeatherCards();
   await refreshProductiveImportSummary(null);
@@ -551,6 +1192,7 @@ async function bootstrap() {
     onRefreshSelection: refreshCurrentSelection,
     onRefreshLayers: refreshCurrentLayer,
   });
+  await initFieldsPanel();
   initProfilePanel();
   await refreshProfilePanel();
   setProductiveImportStatus('Subi un .geojson o .zip shapefile para activar la capa Predios.', 'muted');

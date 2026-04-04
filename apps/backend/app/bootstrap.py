@@ -18,16 +18,26 @@ SCHEMA_INIT_ADVISORY_LOCK_ID = 420260329
 
 
 async def _ensure_runtime_schema_compatibility() -> None:
-    if not SPATIAL_BACKEND_ENABLED:
-        return
-
-    compatibility_statements = (
-        "ALTER TABLE IF EXISTS unit_index_snapshots ALTER COLUMN calibration_ref TYPE VARCHAR(255)",
-        "ALTER TABLE IF EXISTS alert_states ALTER COLUMN calibration_ref TYPE VARCHAR(255)",
-        "ALTER TABLE IF EXISTS alertas_eventos ALTER COLUMN calibration_ref TYPE VARCHAR(255)",
-    )
-
     async with engine.begin() as conn:
+        if SQLITE_BACKEND_ENABLED:
+            pragma_result = await conn.execute(text("PRAGMA table_info('farm_paddocks')"))
+            existing_columns = {row[1] for row in pragma_result.fetchall()}
+            if "aoi_unit_id" not in existing_columns:
+                await conn.execute(text("ALTER TABLE farm_paddocks ADD COLUMN aoi_unit_id VARCHAR(64)"))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_farm_paddocks_aoi_unit_id ON farm_paddocks (aoi_unit_id)"))
+            return
+
+        if not SPATIAL_BACKEND_ENABLED:
+            return
+
+        compatibility_statements = (
+            "ALTER TABLE IF EXISTS unit_index_snapshots ALTER COLUMN calibration_ref TYPE VARCHAR(255)",
+            "ALTER TABLE IF EXISTS alert_states ALTER COLUMN calibration_ref TYPE VARCHAR(255)",
+            "ALTER TABLE IF EXISTS alertas_eventos ALTER COLUMN calibration_ref TYPE VARCHAR(255)",
+            "ALTER TABLE IF EXISTS farm_paddocks ADD COLUMN IF NOT EXISTS aoi_unit_id VARCHAR(64)",
+            "CREATE INDEX IF NOT EXISTS ix_farm_paddocks_aoi_unit_id ON farm_paddocks (aoi_unit_id)",
+        )
+
         for statement in compatibility_statements:
             await conn.execute(text(statement))
 
@@ -57,6 +67,9 @@ async def initialize_application_state() -> None:
                 await conn.execute(text(f"SELECT pg_advisory_unlock({SCHEMA_INIT_ADVISORY_LOCK_ID})"))
 
     await _ensure_runtime_schema_compatibility()
+
+    if settings.app_env == "testing":
+        return
 
     async with AsyncSessionLocal() as session:
         await seed_catalog_units(session)

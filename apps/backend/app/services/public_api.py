@@ -4,8 +4,10 @@ import asyncio
 import hashlib
 import json
 import math
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+import time
+from typing import Any
 from urllib.parse import urlencode
 
 import httpx
@@ -15,8 +17,9 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.models.humedad import AOIUnit
-from app.models.materialized import ExternalMapCacheEntry
+from app.models.materialized import ExternalMapCacheEntry, SatelliteLayerSnapshot
 from app.services.object_storage import storage_get_bytes, storage_put_bytes
+from app.services.raster_cache import get_raster_cache_status_index, viewport_bucket
 
 try:
     from data_fetcher import get_token as legacy_get_token
@@ -33,6 +36,114 @@ GADM_RIVERA_CACHE = Path(__file__).resolve().parents[2] / ".geojson_rivera.json"
 GADM_URL = "https://geodata.ucdavis.edu/gadm/gadm4.1/json/gadm41_URY_1.json"
 CONEAT_PROXY_SEMAPHORE = asyncio.Semaphore(2)
 CONEAT_PROXY_RETRY_DELAYS = (0.45, 1.2, 2.4)
+CONEAT_CACHE_NAMESPACE = "renare_export_v1"
+CONEAT_EXPORT_URL = "https://web.snig.gub.uy/arcgisserver/rest/services/MapasBase/Renare_Coneat/MapServer/export"
+CONEAT_INFO_URL = "https://web.snig.gub.uy/arcgisserver/rest/services/MapasBase/Renare_Coneat/MapServer"
+OFFICIAL_OVERLAY_CACHE_DIR = Path(__file__).resolve().parents[2] / ".official_overlay_cache"
+OFFICIAL_OVERLAY_CACHE_DIR.mkdir(exist_ok=True)
+OFFICIAL_OVERLAY_PROXY_SEMAPHORE = asyncio.Semaphore(4)
+OFFICIAL_OVERLAY_PROXY_RETRY_DELAYS = (0.35, 1.0, 2.0)
+TIMELINE_MANIFEST_CACHE_TTL_SECONDS = 900
+TIMELINE_FRAME_WINDOW_DAYS = settings.timeline_historical_window_days
+TIMELINE_MANIFEST_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+TIMELINE_SOURCE_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+
+SNIG_IMAGE_EXPORT_URL = "https://web.snig.gub.uy/arcgisserver/rest/services/MapasBase/SNIG_Image/MapServer/export"
+SNIG_CATASTRO_EXPORT_URL = "https://web.snig.gub.uy/arcgisserver/rest/services/Uruguay/SNIG_Catastro/MapServer/export"
+DGSA_ZONAS_SENSIBLES_EXPORT_URL = "https://web.snig.gub.uy/arcgisserver/rest/services/DGSA/ZonasSensibles/MapServer/export"
+
+OFFICIAL_MAP_OVERLAYS: dict[str, dict[str, object]] = {
+    "coneat": {
+        "id": "coneat",
+        "label": "CONEAT",
+        "category": "Suelos",
+        "provider": "SNIG / MGAP",
+        "service_kind": "arcgis_export",
+        "service_url": CONEAT_EXPORT_URL,
+        "layers": "show:0,1",
+        "min_zoom": 11,
+        "opacity_default": 0.96,
+        "z_index_priority": 330,
+        "attribution": "SNIG / MGAP Uruguay",
+        "cache_namespace": "renare_export_v1",
+        "recommended": True,
+    },
+    "hidrografia": {
+        "id": "hidrografia",
+        "label": "Hidrografia",
+        "category": "Agua",
+        "provider": "SNIG",
+        "service_kind": "arcgis_export",
+        "service_url": SNIG_IMAGE_EXPORT_URL,
+        "layers": "show:14,15,16,17,18,19",
+        "min_zoom": 9,
+        "opacity_default": 0.84,
+        "z_index_priority": 340,
+        "attribution": "SNIG Uruguay",
+        "cache_namespace": "snig_hidrografia_v1",
+        "recommended": True,
+    },
+    "area_inundable": {
+        "id": "area_inundable",
+        "label": "Area inundable",
+        "category": "Agua",
+        "provider": "SNIG",
+        "service_kind": "arcgis_export",
+        "service_url": SNIG_IMAGE_EXPORT_URL,
+        "layers": "show:13",
+        "min_zoom": 10,
+        "opacity_default": 0.76,
+        "z_index_priority": 341,
+        "attribution": "SNIG Uruguay",
+        "cache_namespace": "snig_area_inundable_v1",
+        "recommended": True,
+    },
+    "catastro_rural": {
+        "id": "catastro_rural",
+        "label": "Catastro rural",
+        "category": "Parcelas",
+        "provider": "SNIG / Catastro",
+        "service_kind": "arcgis_export",
+        "service_url": SNIG_CATASTRO_EXPORT_URL,
+        "layers": "show:0",
+        "min_zoom": 12,
+        "opacity_default": 0.92,
+        "z_index_priority": 350,
+        "attribution": "SNIG / Catastro Uruguay",
+        "cache_namespace": "snig_catastro_rural_v1",
+        "recommended": True,
+    },
+    "rutas_camineria": {
+        "id": "rutas_camineria",
+        "label": "Rutas y camineria",
+        "category": "Infraestructura",
+        "provider": "SNIG",
+        "service_kind": "arcgis_export",
+        "service_url": SNIG_IMAGE_EXPORT_URL,
+        "layers": "show:8,9,10,11",
+        "min_zoom": 9,
+        "opacity_default": 0.8,
+        "z_index_priority": 320,
+        "attribution": "SNIG Uruguay",
+        "cache_namespace": "snig_rutas_camineria_v1",
+        "recommended": True,
+    },
+    "zonas_sensibles": {
+        "id": "zonas_sensibles",
+        "label": "Zonas sensibles",
+        "category": "Restricciones",
+        "provider": "DGSA",
+        "service_kind": "arcgis_export",
+        "service_url": DGSA_ZONAS_SENSIBLES_EXPORT_URL,
+        "layers": "show:0,3,7",
+        "min_zoom": 11,
+        "opacity_default": 0.74,
+        "z_index_priority": 345,
+        "attribution": "DGSA / MGAP Uruguay",
+        "cache_namespace": "dgsa_zonas_sensibles_v1",
+        "recommended": True,
+    },
+}
 
 TRANSPARENT_PNG = (
     b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
@@ -40,6 +151,94 @@ TRANSPARENT_PNG = (
     b"\x00\x00\x00\x0bIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00"
     b"\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
 )
+
+TILE_MIN_ZOOM = 7
+TILE_MAX_ZOOM = 17
+TEMPORAL_LAYER_ALIASES = {
+    "alerta": "alerta_fusion",
+    "rgb": "rgb",
+    "ndvi": "ndvi",
+    "ndmi": "ndmi",
+    "ndwi": "ndwi",
+    "savi": "savi",
+    "sar": "sar",
+    "lst": "lst",
+}
+TEMPORAL_LAYER_PUBLIC_IDS = {internal: public for public, internal in TEMPORAL_LAYER_ALIASES.items()}
+TEMPORAL_LAYER_CONFIGS: dict[str, dict[str, Any]] = {
+    "alerta_fusion": {
+        "public_id": "alerta",
+        "label": "Alerta",
+        "revisit_days": 1,
+        "window_before_days": 5,
+        "window_after_days": 0,
+        "time_mode": "carry_forward",
+        "anchor_date": date(2020, 1, 1),
+    },
+    "rgb": {
+        "public_id": "rgb",
+        "label": "RGB",
+        "revisit_days": 5,
+        "window_before_days": 2,
+        "window_after_days": 2,
+        "time_mode": "symmetric",
+        "anchor_date": date(2020, 1, 3),
+    },
+    "ndvi": {
+        "public_id": "ndvi",
+        "label": "NDVI",
+        "revisit_days": 5,
+        "window_before_days": 2,
+        "window_after_days": 2,
+        "time_mode": "symmetric",
+        "anchor_date": date(2020, 1, 3),
+    },
+    "ndmi": {
+        "public_id": "ndmi",
+        "label": "NDMI",
+        "revisit_days": 5,
+        "window_before_days": 2,
+        "window_after_days": 2,
+        "time_mode": "symmetric",
+        "anchor_date": date(2020, 1, 3),
+    },
+    "ndwi": {
+        "public_id": "ndwi",
+        "label": "NDWI",
+        "revisit_days": 5,
+        "window_before_days": 2,
+        "window_after_days": 2,
+        "time_mode": "symmetric",
+        "anchor_date": date(2020, 1, 3),
+    },
+    "savi": {
+        "public_id": "savi",
+        "label": "SAVI",
+        "revisit_days": 5,
+        "window_before_days": 2,
+        "window_after_days": 2,
+        "time_mode": "symmetric",
+        "anchor_date": date(2020, 1, 3),
+    },
+    "sar": {
+        "public_id": "sar",
+        "label": "SAR VV",
+        "revisit_days": 6,
+        "window_before_days": 3,
+        "window_after_days": 3,
+        "time_mode": "symmetric",
+        "anchor_date": date(2020, 1, 2),
+    },
+    "lst": {
+        "public_id": "lst",
+        "label": "Termal",
+        "revisit_days": 1,
+        "window_before_days": 1,
+        "window_after_days": 1,
+        "time_mode": "symmetric",
+        "anchor_date": date(2020, 1, 1),
+    },
+}
 
 CAPAS_INFO = {
     "rgb": {"src": "sentinel-2-l2a", "clouds": True},
@@ -99,16 +298,253 @@ def _coneat_bucket_object_key(cache_key: str) -> str:
     return f"external-map-cache/coneat/{cache_key}.bin"
 
 
-async def fetch_tile_png(layer: str, z: int, x: int, y: int) -> bytes:
-    if layer not in EVALSCRIPTS or z < 7 or z > 13:
+def resolve_temporal_layer_id(layer: str) -> str | None:
+    candidate = str(layer or "").strip().lower()
+    if candidate in TEMPORAL_LAYER_ALIASES:
+        return TEMPORAL_LAYER_ALIASES[candidate]
+    if candidate in TEMPORAL_LAYER_CONFIGS:
+        return candidate
+    return None
+
+
+def _effective_source_date(target_date: date | None) -> date:
+    if target_date is None:
+        return date.today()
+    return min(target_date, date.today())
+
+
+def _time_range_for_temporal_layer(layer: str, target_date: date) -> tuple[date, date]:
+    config = TEMPORAL_LAYER_CONFIGS.get(layer)
+    if not config:
+        return target_date - timedelta(days=45), target_date
+    before_days = int(config.get("window_before_days", 0))
+    after_days = int(config.get("window_after_days", 0))
+    if config.get("time_mode") == "carry_forward":
+        return target_date - timedelta(days=before_days), target_date
+    return target_date - timedelta(days=before_days), target_date + timedelta(days=after_days)
+
+
+def _timeline_source_cache_key(layer: str, display_date: date) -> str:
+    return f"{layer}::{display_date.isoformat()}"
+
+
+def _timeline_snapshot_padding(layer: str) -> tuple[int, int]:
+    config = TEMPORAL_LAYER_CONFIGS[layer]
+    revisit_days = int(config.get("revisit_days", 1))
+    before_days = max(int(config.get("window_before_days", 0)), revisit_days * 2, 7)
+    after_days = max(int(config.get("window_after_days", 0)), revisit_days * 2, 7)
+    return before_days, after_days
+
+
+async def _load_timeline_snapshot_index(
+    *,
+    layers: list[str],
+    date_from: date,
+    date_to: date,
+) -> dict[str, dict[date, dict[str, Any]]]:
+    if not layers:
+        return {}
+    before_padding = max((_timeline_snapshot_padding(layer)[0] for layer in layers), default=7)
+    after_padding = max((_timeline_snapshot_padding(layer)[1] for layer in layers), default=7)
+    start_at = datetime.combine(date_from - timedelta(days=before_padding), datetime.min.time(), tzinfo=timezone.utc)
+    end_at = datetime.combine(date_to + timedelta(days=after_padding + 1), datetime.min.time(), tzinfo=timezone.utc)
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(
+                    SatelliteLayerSnapshot.layer_key,
+                    SatelliteLayerSnapshot.observed_at,
+                    SatelliteLayerSnapshot.metadata_extra,
+                    SatelliteLayerSnapshot.availability_score,
+                )
+                .where(
+                    SatelliteLayerSnapshot.layer_key.in_(layers),
+                    SatelliteLayerSnapshot.observed_at >= start_at,
+                    SatelliteLayerSnapshot.observed_at < end_at,
+                )
+                .order_by(
+                    SatelliteLayerSnapshot.layer_key,
+                    SatelliteLayerSnapshot.observed_at.desc(),
+                    SatelliteLayerSnapshot.availability_score.desc(),
+                )
+            )
+            rows = result.all()
+    except Exception:
+        return {layer: {} for layer in layers}
+
+    index: dict[str, dict[date, dict[str, Any]]] = {layer: {} for layer in layers}
+    for layer_key, observed_at, metadata_extra, availability_score in rows:
+        if observed_at is None:
+            continue
+        observed_date = observed_at.date()
+        layer_bucket = index.setdefault(layer_key, {})
+        if observed_date in layer_bucket:
+            continue
+        layer_bucket[observed_date] = {
+            "observed_date": observed_date,
+            "metadata_extra": metadata_extra or {},
+            "availability_score": float(availability_score or 0.0),
+        }
+    return index
+
+
+def _frame_metadata_from_snapshot(
+    *,
+    internal_layer: str,
+    display_date: date,
+    snapshot_index: dict[str, dict[date, dict[str, Any]]],
+) -> dict[str, Any]:
+    config = TEMPORAL_LAYER_CONFIGS[internal_layer]
+    public_id = str(config["public_id"])
+    layer_rows = snapshot_index.get(internal_layer) or {}
+    exact = layer_rows.get(display_date)
+    if exact is not None:
+        metadata_extra = exact.get("metadata_extra") or {}
+        primary_source_date = metadata_extra.get("primary_source_date") or display_date.isoformat()
+        secondary_source_date = metadata_extra.get("secondary_source_date")
+        blend_weight = float(metadata_extra.get("blend_weight") or 0.0)
+        is_interpolated = bool(metadata_extra.get("is_interpolated")) or bool(secondary_source_date)
+        label = metadata_extra.get("label") or ("Interpolado" if is_interpolated else "Real")
+        availability = metadata_extra.get("availability") or ("available" if exact.get("availability_score", 0.0) > 0 else "missing")
+        return {
+            "layer_id": public_id,
+            "available": availability != "missing",
+            "availability": availability,
+            "is_interpolated": is_interpolated,
+            "primary_source_date": primary_source_date,
+            "secondary_source_date": secondary_source_date,
+            "blend_weight": blend_weight,
+            "label": label,
+        }
+
+    available_dates = sorted(layer_rows.keys())
+    previous_date = max((item for item in available_dates if item < display_date), default=None)
+    next_date = min((item for item in available_dates if item > display_date), default=None)
+    time_mode = str(config.get("time_mode") or "symmetric")
+
+    if time_mode == "carry_forward":
+        if previous_date is not None:
+            previous_meta = (layer_rows[previous_date].get("metadata_extra") or {})
+            return {
+                "layer_id": public_id,
+                "available": True,
+                "availability": "historical_carry_forward",
+                "is_interpolated": True,
+                "primary_source_date": previous_meta.get("primary_source_date") or previous_date.isoformat(),
+                "secondary_source_date": None,
+                "blend_weight": 0.0,
+                "label": "Interpolado",
+            }
+        if next_date is not None:
+            next_meta = (layer_rows[next_date].get("metadata_extra") or {})
+            return {
+                "layer_id": public_id,
+                "available": True,
+                "availability": "historical_forward_fill",
+                "is_interpolated": True,
+                "primary_source_date": next_meta.get("primary_source_date") or next_date.isoformat(),
+                "secondary_source_date": None,
+                "blend_weight": 0.0,
+                "label": "Interpolado",
+            }
+
+    if previous_date is not None and next_date is not None:
+        total_days = max((next_date - previous_date).days, 1)
+        previous_meta = (layer_rows[previous_date].get("metadata_extra") or {})
+        next_meta = (layer_rows[next_date].get("metadata_extra") or {})
+        return {
+            "layer_id": public_id,
+            "available": True,
+            "availability": "historical_blend",
+            "is_interpolated": True,
+            "primary_source_date": previous_meta.get("primary_source_date") or previous_date.isoformat(),
+            "secondary_source_date": next_meta.get("primary_source_date") or next_date.isoformat(),
+            "blend_weight": round((display_date - previous_date).days / total_days, 3),
+            "label": "Interpolado",
+        }
+    if previous_date is not None:
+        previous_meta = (layer_rows[previous_date].get("metadata_extra") or {})
+        return {
+            "layer_id": public_id,
+            "available": True,
+            "availability": "historical_previous_only",
+            "is_interpolated": True,
+            "primary_source_date": previous_meta.get("primary_source_date") or previous_date.isoformat(),
+            "secondary_source_date": None,
+            "blend_weight": 0.0,
+            "label": "Interpolado",
+        }
+    if next_date is not None:
+        next_meta = (layer_rows[next_date].get("metadata_extra") or {})
+        return {
+            "layer_id": public_id,
+            "available": True,
+            "availability": "historical_next_only",
+            "is_interpolated": True,
+            "primary_source_date": next_meta.get("primary_source_date") or next_date.isoformat(),
+            "secondary_source_date": None,
+            "blend_weight": 0.0,
+            "label": "Interpolado",
+        }
+
+    primary_date, secondary_date, blend_weight, is_interpolated = _anchor_frame_dates(internal_layer, display_date)
+    return {
+        "layer_id": public_id,
+        "available": True,
+        "availability": "heuristic_fallback",
+        "is_interpolated": is_interpolated,
+        "primary_source_date": primary_date.isoformat(),
+        "secondary_source_date": secondary_date.isoformat() if secondary_date else None,
+        "blend_weight": blend_weight,
+        "label": "Interpolado" if is_interpolated else "Real",
+    }
+
+
+async def _resolve_timeline_source_metadata(layer: str, display_date: date) -> dict[str, Any]:
+    cache_key = _timeline_source_cache_key(layer, display_date)
+    cached = TIMELINE_SOURCE_CACHE.get(cache_key)
+    if cached and (time.time() - cached[0]) < TIMELINE_MANIFEST_CACHE_TTL_SECONDS:
+        return cached[1]
+    snapshot_index = await _load_timeline_snapshot_index(layers=[layer], date_from=display_date, date_to=display_date)
+    metadata = _frame_metadata_from_snapshot(
+        internal_layer=layer,
+        display_date=display_date,
+        snapshot_index=snapshot_index,
+    )
+    TIMELINE_SOURCE_CACHE[cache_key] = (time.time(), metadata)
+    return metadata
+
+
+async def fetch_tile_png(
+    layer: str,
+    z: int,
+    x: int,
+    y: int,
+    *,
+    target_date: date | None = None,
+    frame_role: str | None = None,
+) -> bytes:
+    resolved_layer = resolve_temporal_layer_id(layer)
+    if resolved_layer not in EVALSCRIPTS or z < TILE_MIN_ZOOM or z > TILE_MAX_ZOOM:
         return TRANSPARENT_PNG
 
-    today = date.today()
-    cache_path = TILE_CACHE_DIR / f"{layer}_{today}_{z}_{x}_{y}.png"
+    effective_date = _effective_source_date(target_date)
+    source_metadata = await _resolve_timeline_source_metadata(resolved_layer, effective_date)
+    primary_source_date = source_metadata.get("primary_source_date") or effective_date.isoformat()
+    secondary_source_date = source_metadata.get("secondary_source_date")
+    resolved_source_date = primary_source_date
+    if frame_role == "secondary" and secondary_source_date:
+        resolved_source_date = secondary_source_date
+    try:
+        source_date = date.fromisoformat(str(resolved_source_date))
+    except Exception:
+        source_date = effective_date
+
+    cache_path = TILE_CACHE_DIR / f"{resolved_layer}_{source_date.isoformat()}_{z}_{x}_{y}.png"
     if cache_path.exists():
         return cache_path.read_bytes()
 
-    tile_bucket_key = _tile_bucket_key(layer, z, x, y, target_date=today)
+    tile_bucket_key = _tile_bucket_key(resolved_layer, z, x, y, target_date=source_date)
     bucket_cached = await storage_get_bytes(tile_bucket_key)
     if bucket_cached:
         cache_path.write_bytes(bucket_cached[0])
@@ -117,10 +553,10 @@ async def fetch_tile_png(layer: str, z: int, x: int, y: int) -> bytes:
     if legacy_get_token is None or not settings.copernicus_enabled:
         return TRANSPARENT_PNG
 
-    info = CAPAS_INFO[layer]
+    info = CAPAS_INFO[resolved_layer]
     bbox = tile_to_bbox(z, x, y)
-    start = str(today - timedelta(days=45))
-    data_filter = {"timeRange": {"from": f"{start}T00:00:00Z", "to": f"{today}T23:59:59Z"}}
+    start_date, end_date = _time_range_for_temporal_layer(resolved_layer, source_date)
+    data_filter = {"timeRange": {"from": f"{start_date.isoformat()}T00:00:00Z", "to": f"{end_date.isoformat()}T23:59:59Z"}}
     if info.get("clouds"):
         data_filter["maxCloudCoverage"] = 50
 
@@ -142,8 +578,16 @@ async def fetch_tile_png(layer: str, z: int, x: int, y: int) -> bytes:
             "height": 256,
             "responses": [{"identifier": "default", "format": {"type": "image/png"}}],
         },
-        "evalscript": EVALSCRIPTS[layer],
+        "evalscript": EVALSCRIPTS[resolved_layer],
     }
+    if frame_role:
+        payload["metadata"] = {
+            "frame_role": frame_role,
+            "display_date": effective_date.isoformat(),
+            "source_date": source_date.isoformat(),
+            "secondary_source_date": secondary_source_date,
+            "availability": source_metadata.get("availability"),
+        }
 
     try:
         token = await asyncio.to_thread(legacy_get_token)
@@ -167,6 +611,196 @@ async def fetch_tile_png(layer: str, z: int, x: int, y: int) -> bytes:
         return TRANSPARENT_PNG
 
     return TRANSPARENT_PNG
+
+
+def _normalize_timeline_layers(layers: list[str] | tuple[str, ...]) -> list[str]:
+    resolved: list[str] = []
+    seen: set[str] = set()
+    for layer in layers:
+        internal = resolve_temporal_layer_id(layer)
+        if internal and internal not in seen:
+            resolved.append(internal)
+            seen.add(internal)
+    return resolved
+
+
+def _normalize_timeline_bbox(bbox: str | None) -> str:
+    if not bbox:
+        return "auto"
+    values: list[str] = []
+    for item in str(bbox).split(",")[:4]:
+        try:
+            values.append(f"{float(item):.3f}")
+        except Exception:
+            values.append(item.strip())
+    return ",".join(values) if values else "auto"
+
+
+def _timeline_cache_key(
+    layers: list[str],
+    date_from: date,
+    date_to: date,
+    *,
+    bbox: str | None,
+    zoom: int | None,
+) -> str:
+    raw = json.dumps(
+        {
+            "layers": layers,
+            "date_from": date_from.isoformat(),
+            "date_to": date_to.isoformat(),
+            "bbox": _normalize_timeline_bbox(bbox),
+            "zoom": int(zoom or 0),
+            "window_days": TIMELINE_FRAME_WINDOW_DAYS,
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _timeline_zoom_levels(zoom: int | None) -> list[int]:
+    base_zoom = int(zoom or TILE_MIN_ZOOM)
+    adjacent_zoom = min(TILE_MAX_ZOOM, base_zoom + max(int(settings.preload_adjacent_zoom_delta), 0))
+    zooms = [base_zoom]
+    if adjacent_zoom not in zooms:
+        zooms.append(adjacent_zoom)
+    return zooms
+
+
+async def _timeline_frame_cache_status_index(
+    *,
+    layers: list[str],
+    date_from: date,
+    date_to: date,
+    bbox: str | None,
+    zoom: int | None,
+) -> dict[str, dict[str, str]]:
+    if not layers:
+        return {}
+    zoom_levels = _timeline_zoom_levels(zoom)
+    bbox_buckets = [viewport_bucket(bbox, zoom=item) for item in zoom_levels]
+    async with AsyncSessionLocal() as session:
+        return await get_raster_cache_status_index(
+            session,
+            layer_ids=[TEMPORAL_LAYER_CONFIGS[layer]["public_id"] for layer in layers],
+            cache_kind="analytic_tile",
+            date_from=date_from,
+            date_to=date_to,
+            bbox_bucket=bbox_buckets,
+            zoom_levels=zoom_levels,
+        )
+
+
+def _iter_dates(date_from: date, date_to: date):
+    current = date_from
+    while current <= date_to:
+        yield current
+        current += timedelta(days=1)
+
+
+def _anchor_frame_dates(layer: str, display_date: date) -> tuple[date, date | None, float, bool]:
+    config = TEMPORAL_LAYER_CONFIGS[layer]
+    revisit_days = int(config.get("revisit_days", 1))
+    if revisit_days <= 1:
+        return display_date, None, 0.0, False
+
+    anchor_date = config.get("anchor_date") or date(2020, 1, 1)
+    delta_days = (display_date - anchor_date).days
+    previous_index = delta_days // revisit_days
+    previous_anchor = anchor_date + timedelta(days=previous_index * revisit_days)
+    if previous_anchor > display_date:
+        previous_anchor -= timedelta(days=revisit_days)
+    next_anchor = previous_anchor + timedelta(days=revisit_days)
+    if display_date == previous_anchor:
+        return previous_anchor, None, 0.0, False
+    if next_anchor > date.today():
+        return previous_anchor, None, 0.0, True
+    blend_weight = round((display_date - previous_anchor).days / revisit_days, 3)
+    return previous_anchor, next_anchor, blend_weight, True
+
+
+def _timeline_day_label(display_date: date, layer_frames: dict[str, dict[str, Any]]) -> str:
+    if not layer_frames:
+        return display_date.isoformat()
+    if all(not frame.get("is_interpolated") for frame in layer_frames.values()):
+        return f"{display_date.isoformat()} · Real"
+    return f"{display_date.isoformat()} · Interpolado"
+
+
+async def build_timeline_frame_manifest(
+    *,
+    layers: list[str] | tuple[str, ...],
+    date_from: date | None = None,
+    date_to: date | None = None,
+    bbox: str | None = None,
+    zoom: int | None = None,
+) -> dict[str, Any]:
+    resolved_layers = _normalize_timeline_layers(list(layers))
+    today = date.today()
+    resolved_date_to = min(date_to or today, today)
+    resolved_date_from = date_from or (resolved_date_to - timedelta(days=TIMELINE_FRAME_WINDOW_DAYS - 1))
+    if resolved_date_from > resolved_date_to:
+        resolved_date_from = resolved_date_to
+
+    cache_key = _timeline_cache_key(
+        resolved_layers,
+        resolved_date_from,
+        resolved_date_to,
+        bbox=bbox,
+        zoom=zoom,
+    )
+    cached = TIMELINE_MANIFEST_CACHE.get(cache_key)
+    if cached and (time.time() - cached[0]) < TIMELINE_MANIFEST_CACHE_TTL_SECONDS:
+        return cached[1]
+
+    snapshot_index = await _load_timeline_snapshot_index(
+        layers=resolved_layers,
+        date_from=resolved_date_from,
+        date_to=resolved_date_to,
+    )
+    cache_status_index = await _timeline_frame_cache_status_index(
+        layers=resolved_layers,
+        date_from=resolved_date_from,
+        date_to=resolved_date_to,
+        bbox=bbox,
+        zoom=zoom,
+    )
+    days: list[dict[str, Any]] = []
+    for display_date in _iter_dates(resolved_date_from, resolved_date_to):
+        layer_frames: dict[str, dict[str, Any]] = {}
+        for internal_layer in resolved_layers:
+            frame_metadata = _frame_metadata_from_snapshot(
+                internal_layer=internal_layer,
+                display_date=display_date,
+                snapshot_index=snapshot_index,
+            )
+            cache_status = cache_status_index.get(frame_metadata["layer_id"], {}).get(display_date.isoformat(), "missing")
+            layer_frames[frame_metadata["layer_id"]] = {
+                **frame_metadata,
+                "cache_status": cache_status,
+                "warm_available": cache_status == "ready",
+            }
+        days.append(
+            {
+                "display_date": display_date.isoformat(),
+                "available": all(frame.get("available", False) for frame in layer_frames.values()) if layer_frames else False,
+                "label": _timeline_day_label(display_date, layer_frames),
+                "layers": layer_frames,
+            }
+        )
+
+    payload = {
+        "date_from": resolved_date_from.isoformat(),
+        "date_to": resolved_date_to.isoformat(),
+        "total_days": len(days),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "bbox": bbox,
+        "zoom": zoom,
+        "layers": [TEMPORAL_LAYER_CONFIGS[layer]["public_id"] for layer in resolved_layers],
+        "days": days,
+    }
+    TIMELINE_MANIFEST_CACHE[cache_key] = (time.time(), payload)
+    return payload
 
 
 async def fetch_rivera_geojson() -> dict:
@@ -245,7 +879,7 @@ def _normalize_coneat_params(params: dict) -> dict[str, str]:
 
 def _coneat_cache_key(params: dict) -> str:
     normalized = _normalize_coneat_params(params)
-    encoded = urlencode(sorted(normalized.items()), doseq=True)
+    encoded = urlencode([("_source", CONEAT_CACHE_NAMESPACE), *sorted(normalized.items())], doseq=True)
     return hashlib.sha1(encoded.encode("utf-8")).hexdigest()
 
 
@@ -329,20 +963,78 @@ async def _write_coneat_cache_db(
         await session.commit()
 
 
-async def _fetch_coneat_remote(url: str, params: dict) -> tuple[bytes, str]:
+def _coneat_arcgis_format(format_value: str) -> str:
+    normalized = str(format_value or "image/png").strip().lower()
+    if normalized in {"image/png32", "png32"}:
+        return "png32"
+    if normalized in {"image/png24", "png24"}:
+        return "png24"
+    if normalized in {"image/png", "png"}:
+        return "png"
+    if normalized in {"image/jpeg", "image/jpg", "jpg", "jpeg"}:
+        return "jpg"
+    return "png"
+
+
+def _coneat_srid_from_request(params: dict) -> str:
+    raw = str(params.get("CRS") or params.get("SRS") or "EPSG:4326").strip().upper()
+    if raw.startswith("EPSG:"):
+        return raw.split(":", 1)[1]
+    return "4326"
+
+
+def _coneat_export_params(params: dict) -> dict[str, str]:
+    width = str(params.get("WIDTH") or "512")
+    height = str(params.get("HEIGHT") or "512")
+    srid = _coneat_srid_from_request(params)
+    export_params = {
+        "f": "image",
+        "bbox": str(params.get("BBOX") or ""),
+        "bboxSR": srid,
+        "imageSR": srid,
+        "size": f"{width},{height}",
+        "format": _coneat_arcgis_format(str(params.get("FORMAT") or "image/png")),
+        "transparent": str(params.get("TRANSPARENT") or "true").lower(),
+        # Let SNIG decide which scale-dependent layer to draw. The old WMS layer ids are obsolete.
+        "layers": "show:0,1",
+    }
+    return export_params
+
+
+async def _fetch_coneat_remote(params: dict) -> tuple[bytes, str]:
+    request_name = _coneat_request_name(params)
     headers = {
         "User-Agent": "AgroClimaX/1.0 CONEAT proxy",
         "Accept": _coneat_default_content_type(params),
     }
     timeout = httpx.Timeout(connect=8.0, read=30.0, write=15.0, pool=15.0)
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-        response = await client.get(url, params=params, headers=headers)
+        if request_name == "GETMAP":
+            response = await client.get(CONEAT_EXPORT_URL, params=_coneat_export_params(params), headers=headers)
+        elif request_name == "GETCAPABILITIES":
+            response = await client.get(CONEAT_INFO_URL, params={"f": "pjson"}, headers=headers)
+        else:
+            response = await client.get(CONEAT_INFO_URL, params={"f": "pjson"}, headers=headers)
         response.raise_for_status()
     return response.content, response.headers.get("content-type", _coneat_default_content_type(params))
 
 
 async def proxy_coneat_request(params: dict) -> tuple[bytes, str]:
-    url = "http://dgrn.mgap.gub.uy/arcgis/services/TEMATICOS/IntConeat/MapServer/WMSServer"
+    request_name = _coneat_request_name(params)
+    if request_name == "GETMAP":
+        normalized = _normalize_coneat_params(params)
+        return await proxy_official_overlay_tile(
+            "coneat",
+            {
+                "bbox": normalized.get("BBOX", ""),
+                "bboxSR": _coneat_srid_from_request(normalized),
+                "imageSR": _coneat_srid_from_request(normalized),
+                "width": normalized.get("WIDTH", "512"),
+                "height": normalized.get("HEIGHT", "512"),
+                "format": normalized.get("FORMAT", "image/png"),
+                "transparent": normalized.get("TRANSPARENT", "true"),
+            },
+        )
     normalized_params = _normalize_coneat_params(params)
     default_content_type = _coneat_default_content_type(normalized_params)
     cache_key = _coneat_cache_key(normalized_params)
@@ -381,7 +1073,7 @@ async def proxy_coneat_request(params: dict) -> tuple[bytes, str]:
 
         for attempt, delay in enumerate(CONEAT_PROXY_RETRY_DELAYS, start=1):
             try:
-                content, content_type = await _fetch_coneat_remote(url, normalized_params)
+                content, content_type = await _fetch_coneat_remote(normalized_params)
                 _write_coneat_cache(cache_path, meta_path, content, content_type)
                 await _write_coneat_cache_db(cache_key, normalized_params, content, content_type)
                 await storage_put_bytes(
@@ -424,6 +1116,278 @@ async def proxy_coneat_request(params: dict) -> tuple[bytes, str]:
         return xml, "text/xml; charset=utf-8"
 
     return b"", default_content_type
+
+
+def list_official_map_overlays() -> list[dict[str, object]]:
+    overlays = []
+    for overlay in sorted(OFFICIAL_MAP_OVERLAYS.values(), key=lambda item: int(item.get("z_index_priority") or 0)):
+        overlays.append(
+            {
+                "id": overlay["id"],
+                "label": overlay["label"],
+                "category": overlay["category"],
+                "provider": overlay["provider"],
+                "service_kind": overlay["service_kind"],
+                "service_url": overlay["service_url"],
+                "layers": overlay["layers"],
+                "min_zoom": overlay["min_zoom"],
+                "opacity_default": overlay["opacity_default"],
+                "z_index_priority": overlay["z_index_priority"],
+                "attribution": overlay["attribution"],
+                "cache_namespace": overlay["cache_namespace"],
+                "recommended": bool(overlay.get("recommended")),
+            }
+        )
+    return overlays
+
+
+def _official_overlay_bucket_object_key(overlay_id: str, cache_key: str) -> str:
+    return f"external-map-cache/official-overlays/{overlay_id}/{cache_key}.bin"
+
+
+def _official_overlay_definition(overlay_id: str) -> dict[str, object]:
+    overlay = OFFICIAL_MAP_OVERLAYS.get(overlay_id)
+    if overlay is None:
+        raise KeyError(overlay_id)
+    return overlay
+
+
+def _normalize_official_overlay_params(params: dict[str, object]) -> dict[str, str]:
+    normalized: dict[str, str] = {}
+    for key, value in params.items():
+        key_str = str(key)
+        value_str = str(value).strip()
+        lower_key = key_str.lower()
+        if lower_key == "bbox":
+            try:
+                value_str = ",".join(f"{float(part):.6f}" for part in value_str.split(",")[:4])
+            except Exception:
+                pass
+        elif lower_key in {"width", "height"}:
+            try:
+                value_str = str(int(float(value_str)))
+            except Exception:
+                pass
+        normalized[lower_key] = value_str
+    normalized.setdefault("bboxsr", "4326")
+    normalized.setdefault("imagesr", normalized["bboxsr"])
+    normalized.setdefault("width", "256")
+    normalized.setdefault("height", "256")
+    normalized.setdefault("format", "image/png")
+    normalized.setdefault("transparent", "true")
+    return normalized
+
+
+def _official_overlay_cache_key(overlay_id: str, overlay: dict[str, object], params: dict[str, str]) -> str:
+    encoded = urlencode(
+        [
+            ("_overlay", overlay_id),
+            ("_namespace", str(overlay.get("cache_namespace") or "")),
+            *sorted(params.items()),
+        ],
+        doseq=True,
+    )
+    return hashlib.sha1(encoded.encode("utf-8")).hexdigest()
+
+
+def _official_overlay_cache_paths(overlay_id: str, cache_key: str) -> tuple[Path, Path]:
+    overlay_dir = OFFICIAL_OVERLAY_CACHE_DIR / overlay_id
+    overlay_dir.mkdir(exist_ok=True)
+    return overlay_dir / f"{cache_key}.bin", overlay_dir / f"{cache_key}.json"
+
+
+def _read_official_overlay_cache(cache_path: Path, meta_path: Path, default_content_type: str) -> tuple[bytes, str] | None:
+    if not cache_path.exists():
+        return None
+    content_type = default_content_type
+    if meta_path.exists():
+        try:
+            metadata = json.loads(meta_path.read_text(encoding="utf-8"))
+            content_type = metadata.get("content_type") or default_content_type
+        except Exception:
+            content_type = default_content_type
+    return cache_path.read_bytes(), content_type
+
+
+def _write_official_overlay_cache(cache_path: Path, meta_path: Path, content: bytes, content_type: str) -> None:
+    cache_path.write_bytes(content)
+    meta_path.write_text(json.dumps({"content_type": content_type}), encoding="utf-8")
+
+
+async def _read_official_overlay_cache_db(
+    overlay_id: str,
+    cache_key: str,
+    default_content_type: str,
+) -> tuple[bytes, str] | None:
+    provider = f"overlay:{overlay_id}"
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(ExternalMapCacheEntry).where(
+                ExternalMapCacheEntry.provider == provider,
+                ExternalMapCacheEntry.cache_key == cache_key,
+            ).limit(1)
+        )
+        row = result.scalar_one_or_none()
+        if row is None:
+            return None
+        if row.expires_at:
+            now = datetime.now(row.expires_at.tzinfo) if row.expires_at.tzinfo else datetime.utcnow()
+            if row.expires_at < now:
+                await session.delete(row)
+                await session.commit()
+                return None
+        return bytes(row.content), row.content_type or default_content_type
+
+
+async def _write_official_overlay_cache_db(
+    overlay_id: str,
+    cache_key: str,
+    params: dict[str, str],
+    content: bytes,
+    content_type: str,
+) -> None:
+    provider = f"overlay:{overlay_id}"
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(ExternalMapCacheEntry).where(
+                ExternalMapCacheEntry.provider == provider,
+                ExternalMapCacheEntry.cache_key == cache_key,
+            ).limit(1)
+        )
+        row = result.scalar_one_or_none()
+        if row is None:
+            row = ExternalMapCacheEntry(
+                cache_key=cache_key,
+                provider=provider,
+                request_name="EXPORT",
+                content_type=content_type,
+                content=content,
+                content_hash=hashlib.sha1(content).hexdigest(),
+                expires_at=datetime.utcnow() + timedelta(hours=settings.coneat_cache_ttl_hours),
+                metadata_extra={"params": params, "overlay_id": overlay_id},
+            )
+            session.add(row)
+        else:
+            row.request_name = "EXPORT"
+            row.content_type = content_type
+            row.content = content
+            row.content_hash = hashlib.sha1(content).hexdigest()
+            row.expires_at = datetime.utcnow() + timedelta(hours=settings.coneat_cache_ttl_hours)
+            row.metadata_extra = {"params": params, "overlay_id": overlay_id}
+        await session.commit()
+
+
+def _official_overlay_arcgis_export_params(overlay: dict[str, object], params: dict[str, str]) -> dict[str, str]:
+    export_params = {
+        "f": "image",
+        "bbox": params["bbox"],
+        "bboxSR": params["bboxsr"],
+        "imageSR": params["imagesr"],
+        "size": f"{params['width']},{params['height']}",
+        "format": _coneat_arcgis_format(params.get("format", "image/png")),
+        "transparent": params.get("transparent", "true").lower(),
+    }
+    overlay_layers = str(overlay.get("layers") or "").strip()
+    if overlay_layers:
+        export_params["layers"] = overlay_layers
+    return export_params
+
+
+async def _fetch_official_overlay_remote(overlay: dict[str, object], params: dict[str, str]) -> tuple[bytes, str]:
+    headers = {
+        "User-Agent": "AgroClimaX/1.0 official overlay proxy",
+        "Accept": "image/png",
+    }
+    timeout = httpx.Timeout(connect=8.0, read=30.0, write=15.0, pool=15.0)
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        response = await client.get(
+            str(overlay["service_url"]),
+            params=_official_overlay_arcgis_export_params(overlay, params),
+            headers=headers,
+        )
+        response.raise_for_status()
+        content_type = response.headers.get("content-type", "image/png")
+        if "image" not in content_type.lower():
+            raise httpx.HTTPStatusError(
+                "Official overlay export did not return an image",
+                request=response.request,
+                response=response,
+            )
+    return response.content, content_type
+
+
+async def proxy_official_overlay_tile(overlay_id: str, params: dict[str, object]) -> tuple[bytes, str]:
+    overlay = _official_overlay_definition(overlay_id)
+    normalized_params = _normalize_official_overlay_params(params)
+    default_content_type = "image/png"
+    cache_key = _official_overlay_cache_key(overlay_id, overlay, normalized_params)
+    cache_path, meta_path = _official_overlay_cache_paths(overlay_id, cache_key)
+
+    cached = _read_official_overlay_cache(cache_path, meta_path, default_content_type)
+    if cached:
+        return cached
+
+    cached = await _read_official_overlay_cache_db(overlay_id, cache_key, default_content_type)
+    if cached:
+        _write_official_overlay_cache(cache_path, meta_path, cached[0], cached[1])
+        return cached
+
+    bucket_cached = await storage_get_bytes(_official_overlay_bucket_object_key(overlay_id, cache_key))
+    if bucket_cached:
+        content, content_type, _metadata = bucket_cached
+        resolved_content_type = content_type or default_content_type
+        _write_official_overlay_cache(cache_path, meta_path, content, resolved_content_type)
+        await _write_official_overlay_cache_db(overlay_id, cache_key, normalized_params, content, resolved_content_type)
+        return content, resolved_content_type
+
+    last_error: Exception | None = None
+    async with OFFICIAL_OVERLAY_PROXY_SEMAPHORE:
+        cached = _read_official_overlay_cache(cache_path, meta_path, default_content_type)
+        if cached:
+            return cached
+        cached = await _read_official_overlay_cache_db(overlay_id, cache_key, default_content_type)
+        if cached:
+            _write_official_overlay_cache(cache_path, meta_path, cached[0], cached[1])
+            return cached
+        bucket_cached = await storage_get_bytes(_official_overlay_bucket_object_key(overlay_id, cache_key))
+        if bucket_cached:
+            content, content_type, _metadata = bucket_cached
+            resolved_content_type = content_type or default_content_type
+            _write_official_overlay_cache(cache_path, meta_path, content, resolved_content_type)
+            await _write_official_overlay_cache_db(overlay_id, cache_key, normalized_params, content, resolved_content_type)
+            return content, resolved_content_type
+        for attempt, delay in enumerate(OFFICIAL_OVERLAY_PROXY_RETRY_DELAYS, start=1):
+            try:
+                content, content_type = await _fetch_official_overlay_remote(overlay, normalized_params)
+                _write_official_overlay_cache(cache_path, meta_path, content, content_type)
+                await _write_official_overlay_cache_db(overlay_id, cache_key, normalized_params, content, content_type)
+                await storage_put_bytes(
+                    _official_overlay_bucket_object_key(overlay_id, cache_key),
+                    content,
+                    content_type=content_type,
+                )
+                return content, content_type
+            except (KeyError, httpx.TimeoutException, httpx.RequestError, httpx.HTTPStatusError) as exc:
+                last_error = exc
+                if attempt < len(OFFICIAL_OVERLAY_PROXY_RETRY_DELAYS):
+                    await asyncio.sleep(delay)
+
+    cached = _read_official_overlay_cache(cache_path, meta_path, default_content_type)
+    if cached:
+        return cached
+    cached = await _read_official_overlay_cache_db(overlay_id, cache_key, default_content_type)
+    if cached:
+        _write_official_overlay_cache(cache_path, meta_path, cached[0], cached[1])
+        return cached
+    bucket_cached = await storage_get_bytes(_official_overlay_bucket_object_key(overlay_id, cache_key))
+    if bucket_cached:
+        content, content_type, _metadata = bucket_cached
+        resolved_content_type = content_type or default_content_type
+        _write_official_overlay_cache(cache_path, meta_path, content, resolved_content_type)
+        await _write_official_overlay_cache_db(overlay_id, cache_key, normalized_params, content, resolved_content_type)
+        return content, resolved_content_type
+
+    return TRANSPARENT_PNG, "image/png"
 
 
 def _iter_geometry_coordinates(node):

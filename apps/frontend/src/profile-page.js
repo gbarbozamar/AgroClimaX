@@ -9,8 +9,8 @@ import {
   saveAlertSubscription,
   saveProfileMe,
   testAlertSubscription,
-} from './api.js?v=20260330-1';
-import { setStore } from './state.js?v=20260329-2';
+} from './api.js?v=20260404-8';
+import { setStore } from './state.js?v=20260404-8';
 
 const state = {
   authSession: null,
@@ -81,7 +81,7 @@ function normalizeDraft(profile = {}) {
 function defaultSubscriptionDraft() {
   return {
     id: null,
-    scope_type: 'productive_unit',
+    scope_type: 'field',
     scope_id: '',
     channels_json: ['email'],
     min_alert_state: 'Alerta',
@@ -93,7 +93,7 @@ function normalizeSubscriptionDraft(subscription = null) {
   if (!subscription) return defaultSubscriptionDraft();
   return {
     id: subscription.id || null,
-    scope_type: subscription.scope_type || 'productive_unit',
+    scope_type: subscription.scope_type || 'field',
     scope_id: subscription.scope_id || '',
     channels_json: Array.isArray(subscription.channels_json) ? [...subscription.channels_json] : [],
     min_alert_state: subscription.min_alert_state || 'Alerta',
@@ -473,7 +473,8 @@ function updateDraftField(field, value) {
 
 function subscriptionTargets() {
   const options = subscriptionOptions();
-  const scopeType = state.subscriptionDraft?.scope_type || 'productive_unit';
+  const scopeType = state.subscriptionDraft?.scope_type || 'field';
+  if (scopeType === 'field') return options.fields || [];
   if (scopeType === 'department') return options.departments || [];
   if (scopeType === 'productive_unit') return options.productive_units || [];
   return [];
@@ -638,7 +639,7 @@ function updateSubscriptionDraft(patch) {
 function wireSubscriptionEvents() {
   getNode('profile-page-sub-scope-type')?.addEventListener('change', (event) => {
     updateSubscriptionDraft({
-      scope_type: event.target.value || 'productive_unit',
+      scope_type: event.target.value || 'field',
       scope_id: '',
     });
     renderSubscriptionManager();

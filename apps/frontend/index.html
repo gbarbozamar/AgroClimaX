@@ -8,10 +8,15 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.18.3/dist/leaflet-geoman.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.18.3/dist/leaflet-geoman.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
     :root {
+      --header-height: 110px;
+      --header-current-height: var(--header-height);
+      --map-panel-height: clamp(520px, 62vh, 700px);
       --bg: #0f1117;
       --surface: #1a1d2e;
       --surface2: #242740;
@@ -41,13 +46,14 @@
       background: var(--surface);
       border-bottom: 1px solid var(--border);
       padding: 0 24px;
-      height: 110px;
+      height: var(--header-current-height);
       display: flex;
       align-items: center;
       justify-content: space-between;
       position: sticky;
       top: 0;
       z-index: 1000;
+      transition: height 0.22s ease, padding 0.22s ease;
     }
 
     .logo {
@@ -76,6 +82,44 @@
       display: flex;
       align-items: center;
       gap: 16px;
+    }
+
+    .header-collapse-toggle {
+      padding: 6px 12px;
+      border-radius: 8px;
+      border: 1px solid rgba(125, 183, 255, 0.32);
+      background: rgba(15, 23, 38, 0.55);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.76rem;
+      font-family: Inter, sans-serif;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .header-collapse-toggle:hover,
+    .header-collapse-toggle:focus-visible {
+      background: rgba(15, 23, 38, 0.8);
+      border-color: rgba(125, 183, 255, 0.52);
+      outline: none;
+    }
+
+    body.header-collapsed {
+      --header-current-height: 0px;
+    }
+
+    body.header-collapsed header {
+      padding: 0;
+      min-height: 0;
+      height: 0;
+      border-bottom-color: transparent;
+      overflow: hidden;
+      pointer-events: none;
+    }
+
+    body.header-collapsed .logo,
+    body.header-collapsed .header-right {
+      display: none !important;
     }
 
     .hidden {
@@ -236,6 +280,163 @@
       overflow: hidden;
     }
 
+    .preload-blocked {
+      overflow: hidden;
+    }
+
+    .app-preload-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 2400;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: rgba(5, 8, 14, 0.82);
+      backdrop-filter: blur(6px);
+    }
+
+    .app-preload-card {
+      width: min(620px, 100%);
+      padding: 28px 28px 24px;
+      border-radius: 22px;
+      border: 1px solid rgba(74, 144, 217, 0.28);
+      background: linear-gradient(160deg, rgba(26, 29, 46, 0.98) 0%, rgba(15, 17, 23, 0.98) 100%);
+      box-shadow: 0 36px 80px rgba(0, 0, 0, 0.42);
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .app-preload-kicker {
+      font-size: 0.72rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    .app-preload-title {
+      font-size: 1.45rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .app-preload-copy {
+      font-size: 0.88rem;
+      line-height: 1.5;
+      color: var(--text-muted);
+    }
+
+    .app-preload-progressbar {
+      width: 100%;
+      height: 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.06);
+      overflow: hidden;
+      border: 1px solid rgba(74, 144, 217, 0.18);
+    }
+
+    .app-preload-progressfill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, rgba(74, 144, 217, 0.95) 0%, rgba(46, 204, 113, 0.95) 100%);
+      transition: width 0.28s ease;
+    }
+
+    .app-preload-headrow {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+
+    .app-preload-stage-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .app-preload-stage {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px 16px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(74, 144, 217, 0.14);
+      background: rgba(19, 27, 40, 0.72);
+    }
+
+    .app-preload-stage-name {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .app-preload-stage-detail {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+    }
+
+    .app-preload-stage-status {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: #d9ebff;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .app-preload-stage.is-done {
+      border-color: rgba(46, 204, 113, 0.28);
+      background: rgba(46, 204, 113, 0.08);
+    }
+
+    .app-preload-stage.is-running {
+      border-color: rgba(74, 144, 217, 0.34);
+      background: rgba(74, 144, 217, 0.08);
+    }
+
+    .app-preload-footnote {
+      font-size: 0.74rem;
+      color: var(--text-muted);
+    }
+
+    .app-preload-mini {
+      position: sticky;
+      top: calc(var(--header-current-height) + 72px);
+      z-index: 950;
+      margin: 0 16px;
+      padding: 9px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(74, 144, 217, 0.25);
+      background: rgba(15, 17, 23, 0.92);
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .app-preload-mini-copy {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .app-preload-mini-title {
+      font-size: 0.74rem;
+      font-weight: 700;
+    }
+
+    .app-preload-mini-detail {
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
     /* â”€â”€ ALERTA BANNER â”€â”€ */
     #alerta-banner {
       padding: 10px 24px;
@@ -263,7 +464,7 @@
     .main-grid {
       display: grid;
       grid-template-columns: 1fr 340px;
-      grid-template-rows: auto 1fr;
+      grid-template-rows: auto auto var(--map-panel-height);
       gap: 0;
       flex: 1;
       min-height: 0;
@@ -557,11 +758,14 @@
       position: relative;
       background: var(--surface);
       border-right: 1px solid var(--border);
+      height: var(--map-panel-height);
+      min-height: var(--map-panel-height);
+      overflow: hidden;
     }
 
     #map {
       height: 100%;
-      min-height: 500px;
+      min-height: 0;
     }
 
     .map-legend {
@@ -622,80 +826,349 @@
       flex-shrink: 0;
     }
 
-    /* â”€â”€ LAYER SELECTOR â”€â”€ */
-    .map-controls {
+    /* LAYER MENU */
+    .map-layer-menu {
       position: absolute;
-      top: 10px;
-      left: 10px;
-      right: 150px;
-      z-index: 500;
-      display: flex;
-      gap: 5px;
-      flex-wrap: nowrap;
-      overflow-x: auto;
-      scrollbar-width: none;
-      padding-bottom: 2px;
-    }
-    .map-controls::-webkit-scrollbar { display: none; }
-
-    .map-btn {
-      background: rgba(15, 17, 23, 0.92);
-      border: 1px solid var(--border);
-      border-radius: 7px;
-      padding: 7px 10px 5px;
-      color: var(--text-muted);
-      font-family: 'Inter', sans-serif;
-      cursor: pointer;
-      transition: all 0.2s;
+      top: 12px;
+      right: 12px;
+      left: auto;
+      z-index: 700;
       display: flex;
       flex-direction: column;
+      gap: 8px;
+      width: min(360px, calc(100% - 24px));
+    }
+    .map-layer-menu-toggle {
+      align-self: flex-start;
+      display: inline-flex;
       align-items: center;
-      gap: 1px;
-      flex: 0 0 auto;
-      backdrop-filter: blur(6px);
-      min-width: 70px;
+      gap: 8px;
+      padding: 9px 14px;
+      border-radius: 10px;
+      border: 1px solid rgba(88, 103, 136, 0.7);
+      background: rgba(15, 17, 23, 0.92);
+      color: var(--text);
+      font-size: 0.78rem;
+      font-weight: 700;
+      cursor: pointer;
+      backdrop-filter: blur(8px);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
     }
-    .map-btn-icon  { font-size: 1.1rem; line-height: 1; }
-    .map-btn-name  { font-size: 0.72rem; font-weight: 700; color: var(--text); letter-spacing: 0.3px; }
-    .map-btn-desc  { font-size: 0.58rem; color: var(--text-muted); white-space: nowrap; }
-    .map-btn-formula { font-size: 0.55rem; color: rgba(136,146,164,0.7); font-family: monospace; white-space: nowrap; }
-
-    .map-btn:hover { background: var(--surface2); border-color: var(--accent); }
-    .map-btn.active {
-      border-color: var(--accent);
-      background: rgba(74,144,217,0.18);
-      box-shadow: 0 0 0 1px rgba(74,144,217,0.3);
+    .map-layer-menu-toggle:hover {
+      border-color: rgba(125, 183, 255, 0.65);
+      background: rgba(18, 23, 32, 0.96);
     }
-    .map-btn.active .map-btn-name { color: var(--accent); }
-    .map-btn.active .map-btn-icon { filter: drop-shadow(0 0 4px rgba(74,144,217,0.6)); }
-
-    /* Opacity slider */
-    .map-opacity-wrap {
-      position: absolute;
-      top: 10px;
-      right: 10px;
-      z-index: 500;
-      background: rgba(15,17,23,0.92);
-      border: 1px solid var(--border);
-      border-radius: 7px;
-      padding: 6px 10px;
+    .map-layer-menu-panel {
+      background: rgba(10, 14, 20, 0.94);
+      border: 1px solid rgba(58, 75, 104, 0.85);
+      border-radius: 14px;
+      padding: 12px;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 18px 38px rgba(0, 0, 0, 0.28);
+      max-height: min(74vh, 760px);
+      overflow: auto;
+    }
+    .map-layer-menu-panel[hidden] {
+      display: none;
+    }
+    .map-layer-menu-head {
       display: flex;
       align-items: center;
-      gap: 7px;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+    .map-layer-menu-title {
+      font-size: 0.84rem;
+      font-weight: 800;
+      color: var(--text);
+    }
+    .map-layer-menu-subtitle {
       font-size: 0.68rem;
       color: var(--text-muted);
-      backdrop-filter: blur(6px);
+      margin-top: 3px;
     }
-    .map-opacity-wrap input[type=range] {
-      width: 70px;
+    .map-layer-menu-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+    .map-layer-action {
+      padding: 6px 9px;
+      border-radius: 8px;
+      border: 1px solid rgba(70, 88, 118, 0.8);
+      background: rgba(20, 26, 36, 0.9);
+      color: var(--text);
+      font-size: 0.67rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .map-layer-action:hover {
+      border-color: rgba(125, 183, 255, 0.65);
+    }
+    .map-layer-groups {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .map-layer-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .map-layer-group-title {
+      margin: 0;
+      font-size: 0.7rem;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: rgba(191, 208, 233, 0.88);
+    }
+    .map-layer-item {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 9px 10px;
+      border: 1px solid rgba(44, 58, 78, 0.92);
+      border-radius: 10px;
+      background: rgba(16, 21, 30, 0.86);
+    }
+    .map-layer-item.is-active {
+      border-color: rgba(74, 144, 217, 0.6);
+      background: rgba(17, 28, 43, 0.92);
+      box-shadow: inset 0 0 0 1px rgba(74, 144, 217, 0.14);
+    }
+    .map-layer-item-main {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+    .map-layer-checkbox {
+      margin-top: 2px;
+      accent-color: #4a90d9;
+      cursor: pointer;
+    }
+    .map-layer-copy {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .map-layer-name {
+      font-size: 0.76rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .map-layer-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      font-size: 0.64rem;
+      color: var(--text-muted);
+    }
+    .map-layer-source,
+    .map-layer-zoom {
+      padding: 2px 6px;
+      border-radius: 999px;
+      background: rgba(86, 102, 132, 0.18);
+    }
+    .map-layer-error {
+      font-size: 0.64rem;
+      color: #ff9a9a;
+    }
+    .map-layer-opacity {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: 28px;
+      color: var(--text-muted);
+      font-size: 0.66rem;
+    }
+    .map-layer-opacity input[type=range] {
+      flex: 1;
       accent-color: var(--accent);
       cursor: pointer;
+    }
+    .map-timeline {
+      position: absolute;
+      left: 50%;
+      bottom: 14px;
+      transform: translateX(-50%);
+      z-index: 710;
+      width: min(900px, calc(100% - 28px));
+      padding: 10px 14px;
+      border: 1px solid rgba(58, 75, 104, 0.88);
+      border-radius: 14px;
+      background: rgba(10, 14, 20, 0.94);
+      backdrop-filter: blur(10px);
+      box-shadow: 0 18px 38px rgba(0, 0, 0, 0.3);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .map-timeline.is-disabled {
+      opacity: 0.72;
+    }
+    .map-timeline-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .map-timeline-head-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-left: auto;
+    }
+    .map-timeline-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.8rem;
+      font-weight: 800;
+      color: var(--text);
+    }
+    .map-timeline-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      color: var(--text-muted);
+      font-size: 0.67rem;
+    }
+    .map-timeline-pill {
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: rgba(86, 102, 132, 0.18);
+      border: 1px solid rgba(58, 75, 104, 0.45);
+      color: var(--text);
+    }
+    .map-timeline-controls {
+      display: grid;
+      grid-template-columns: auto minmax(120px, 170px) minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 12px;
+    }
+    .map-timeline-button,
+    .map-timeline-speed,
+    .map-timeline-header-toggle {
+      border: 1px solid rgba(74, 144, 217, 0.52);
+      background: rgba(19, 27, 40, 0.96);
+      color: var(--text);
+      border-radius: 10px;
+      font-family: Inter, sans-serif;
+      font-size: 0.74rem;
+      font-weight: 700;
+      padding: 8px 12px;
+    }
+    .map-timeline-button {
+      cursor: pointer;
+    }
+    .map-timeline-header-toggle {
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .map-timeline-button:disabled,
+    .map-timeline-speed:disabled,
+    .map-timeline-slider:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    .map-timeline-datecopy {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .map-timeline-date {
+      font-size: 0.84rem;
+      font-weight: 800;
+      color: var(--text);
+    }
+    .map-timeline-source {
+      font-size: 0.66rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .map-timeline-slider {
+      width: 100%;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+    .leaflet-officialOverlay-pane .leaflet-tile,
+    .leaflet-satellite-pane .leaflet-tile {
+      mix-blend-mode: normal !important;
+    }
+
+    .map-controls {
+      display: none !important;
+    }
+
+    .map-opacity-wrap {
+      display: none !important;
+    }
+
+    .timeline-dock {
+      position: sticky;
+      top: var(--header-current-height);
+      z-index: 960;
+      padding: 10px 16px 0;
+      background: linear-gradient(180deg, rgba(15, 17, 23, 0.98) 0%, rgba(15, 17, 23, 0.88) 74%, rgba(15, 17, 23, 0) 100%);
+      transition: top 0.22s ease, padding 0.22s ease;
+    }
+
+    body.header-collapsed .timeline-dock {
+      top: 0;
+      padding: 0;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+
+    body.header-collapsed .timeline-dock .map-timeline {
+      border-radius: 0;
+      border-left: none;
+      border-right: none;
+      border-top: none;
+      box-shadow: none;
+      background: var(--surface);
+    }
+
+    body.header-collapsed .timeline-dock .map-timeline-title {
+      font-size: 0.84rem;
+    }
+
+    body.header-collapsed .map-timeline-header-toggle {
+      background: rgba(15, 23, 38, 0.55);
+    }
+
+    body.header-collapsed .app-preload-mini {
+      top: 72px;
+    }
+
+    body.header-collapsed .timeline-dock {
+      padding-top: 4px;
+    }
+
+    .timeline-dock .map-timeline {
+      position: static;
+      left: auto;
+      bottom: auto;
+      transform: none;
+      width: 100%;
+      margin: 0 auto;
+      max-width: none;
     }
 
     /* Tile loading indicator */
     .map-tile-loading {
       position: absolute;
-      bottom: 90px;
+      bottom: 20px;
       left: 50%;
       transform: translateX(-50%);
       background: rgba(15,17,23,0.9);
@@ -709,6 +1182,17 @@
       white-space: nowrap;
       animation: pulse 1.5s infinite;
     }
+    @media (max-width: 920px) {
+      .map-timeline-controls {
+        grid-template-columns: 1fr;
+      }
+      .timeline-dock {
+        padding: 8px 12px 0;
+      }
+      .map-tile-loading {
+        bottom: 16px;
+      }
+    }
 
     /* â”€â”€ SIDEBAR PANEL â”€â”€ */
     .side-panel {
@@ -717,6 +1201,8 @@
       display: flex;
       flex-direction: column;
       gap: 0;
+      height: var(--map-panel-height);
+      min-height: 0;
     }
 
     .panel-section {
@@ -735,7 +1221,7 @@
 
     .sidebar-tabs {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(4, 1fr);
       gap: 1px;
       background: var(--border);
       border-bottom: 1px solid var(--border);
@@ -760,6 +1246,327 @@
     .sidebar-tab.active {
       background: rgba(74, 144, 217, 0.16);
       color: var(--accent);
+    }
+
+    .fields-toolbar {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: end;
+      margin-bottom: 12px;
+    }
+
+    .fields-grid {
+      display: grid;
+      gap: 10px;
+    }
+
+    .fields-grid.two {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .fields-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+
+    .fields-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .fields-list-item {
+      width: 100%;
+      text-align: left;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: rgba(255,255,255,0.03);
+      padding: 10px 12px;
+      cursor: pointer;
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .fields-list-item.compact {
+      padding: 8px 10px;
+    }
+
+    .fields-list-item.active {
+      border-color: var(--accent);
+      background: rgba(74,144,217,0.12);
+    }
+
+    .fields-list-title {
+      font-size: 0.8rem;
+      font-weight: 700;
+    }
+
+    .fields-list-copy {
+      font-size: 0.68rem;
+      color: var(--text-muted);
+    }
+
+    .fields-empty {
+      padding: 12px;
+      border: 1px dashed rgba(255,255,255,0.08);
+      border-radius: 10px;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      line-height: 1.5;
+    }
+
+    .fields-result-box {
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 10px;
+      background: rgba(255,255,255,0.03);
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .fields-result-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 0.72rem;
+    }
+
+    .fields-note {
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      line-height: 1.45;
+    }
+
+    .fields-analytics-card {
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 12px;
+      background: rgba(255,255,255,0.03);
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .fields-analytics-card.hidden {
+      display: none;
+    }
+
+    .fields-analytics-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+    }
+
+    .fields-analytics-title {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .fields-analytics-title strong {
+      font-size: 0.82rem;
+      color: var(--text);
+    }
+
+    .fields-analytics-copy {
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      line-height: 1.45;
+    }
+
+    .fields-inline-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-size: 0.64rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      border: 1px solid rgba(255,255,255,0.12);
+      color: #f4f7ff;
+      background: rgba(255,255,255,0.06);
+      white-space: nowrap;
+    }
+
+    .fields-metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .fields-metric {
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 10px;
+      background: rgba(10, 12, 18, 0.44);
+      padding: 8px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .fields-metric-label {
+      font-size: 0.62rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+    }
+
+    .fields-metric-value {
+      font-size: 0.76rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .fields-list-analytics {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px 10px;
+      margin-top: 8px;
+    }
+
+    .fields-list-analytics span {
+      font-size: 0.64rem;
+      color: var(--text-muted);
+    }
+
+    .fields-dialog-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 2400;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
+      background: rgba(7, 10, 18, 0.72);
+      backdrop-filter: blur(4px);
+    }
+
+    .fields-dialog {
+      width: min(420px, calc(100vw - 32px));
+      border: 1px solid rgba(74, 144, 217, 0.28);
+      border-radius: 16px;
+      background: linear-gradient(180deg, rgba(26, 29, 46, 0.98) 0%, rgba(15, 17, 23, 0.98) 100%);
+      color: var(--text);
+      box-shadow: 0 28px 80px rgba(0, 0, 0, 0.42);
+    }
+
+    .fields-dialog-card {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      padding: 20px;
+    }
+
+    .fields-dialog-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .fields-dialog-copy {
+      font-size: 0.78rem;
+      line-height: 1.45;
+      color: var(--text-muted);
+    }
+
+    .fields-dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .farm-label-marker {
+      background: transparent;
+      border: 0;
+    }
+
+    .farm-label-chip {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 4px;
+      padding: 8px 10px;
+      text-align: left;
+      white-space: normal;
+      min-width: 140px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      box-shadow: 0 8px 22px rgba(0, 0, 0, 0.22);
+      transform: translate(-50%, -50%) scale(var(--farm-label-scale, 1));
+      transform-origin: center center;
+      cursor: grab;
+      user-select: none;
+    }
+
+    .farm-label-chip:active {
+      cursor: grabbing;
+    }
+
+    .farm-label-chip strong {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: #f8fbff;
+      line-height: 1.15;
+    }
+
+    .farm-label-chip span {
+      font-size: 0.66rem;
+      color: #c4d1e2;
+    }
+
+    .farm-label-metrics {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 2px 8px;
+      width: 100%;
+    }
+
+    .farm-label-metric {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+    }
+
+    .farm-label-metric-label {
+      font-size: 0.52rem;
+      color: rgba(220, 230, 244, 0.65);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      line-height: 1.05;
+    }
+
+    .farm-label-metric-value {
+      font-size: 0.62rem;
+      color: #f7fbff;
+      line-height: 1.1;
+      font-weight: 600;
+    }
+
+    .farm-label-chip[data-density="compact"] .farm-label-metrics {
+      display: none;
+    }
+
+    .farm-label-chip[data-density="medium"] .farm-label-metric.detail-only {
+      display: none;
+    }
+
+    .farm-label-chip-field {
+      background: rgba(28, 59, 92, 0.84);
+      border-color: rgba(93, 183, 255, 0.35);
+    }
+
+    .farm-label-chip-paddock {
+      background: rgba(19, 55, 35, 0.86);
+      border-color: rgba(140, 240, 190, 0.32);
     }
 
     .sidebar-view {
@@ -971,6 +1778,30 @@
       align-items: center;
       gap: 8px;
       flex-shrink: 0;
+    }
+
+    .profile-completion-close {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      border: 1px solid rgba(125, 183, 255, 0.28);
+      background: rgba(15, 23, 38, 0.4);
+      color: #dbeafe;
+      cursor: pointer;
+      font-size: 1rem;
+      font-weight: 700;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .profile-completion-close:hover,
+    .profile-completion-close:focus-visible {
+      background: rgba(15, 23, 38, 0.7);
+      border-color: rgba(125, 183, 255, 0.48);
+      outline: none;
     }
 
     .profile-identity-head {
@@ -1597,6 +2428,7 @@
     <button class="auth-header-btn primary hidden" id="auth-login-btn" type="button">Entrar con Google</button>
     <button class="auth-header-btn hidden" id="auth-logout-btn" type="button">Cerrar sesion</button>
     <div class="last-update" id="last-update">Actualizado: -</div>
+    <button class="header-collapse-toggle" id="header-collapse-toggle" data-header-collapse-toggle type="button" aria-expanded="true">Plegar header</button>
   </div>
 </header>
 
@@ -1613,6 +2445,23 @@
   </div>
 </div>
 
+<div class="app-preload-overlay" id="app-preload-overlay" aria-live="polite">
+  <div class="app-preload-card">
+    <div class="app-preload-kicker">Precarga inteligente</div>
+    <div class="app-preload-title" id="app-preload-title">Preparando capas y cache inicial</div>
+    <div class="app-preload-copy" id="app-preload-copy">Cargando sesion, catalogos y frames temporales para reducir el buffering inicial.</div>
+    <div class="app-preload-headrow">
+      <span id="app-preload-stage-label">Iniciando...</span>
+      <span id="app-preload-progress-label">0%</span>
+    </div>
+    <div class="app-preload-progressbar">
+      <div class="app-preload-progressfill" id="app-preload-progressfill"></div>
+    </div>
+    <div class="app-preload-stage-list" id="app-preload-stage-list"></div>
+    <div class="app-preload-footnote" id="app-preload-footnote">La app se habilita apenas lo critico queda listo. El resto sigue calentando en segundo plano.</div>
+  </div>
+</div>
+
 <div class="profile-completion-banner hidden" id="profile-completion-banner" role="button" tabindex="0" aria-label="Abrir perfil completo">
   <div class="profile-completion-copy">
     <span class="profile-completion-pill" id="profile-completion-pct">0%</span>
@@ -1620,7 +2469,42 @@
   </div>
   <div class="profile-completion-actions">
     <button class="settings-btn primary" id="profile-completion-open-btn" type="button">Completar perfil</button>
+    <button class="profile-completion-close" id="profile-completion-close-btn" type="button" aria-label="Cerrar aviso de perfil" title="Cerrar aviso">×</button>
   </div>
+</div>
+
+<div class="timeline-dock">
+  <div class="map-timeline is-disabled" id="map-timeline">
+    <div class="map-timeline-head">
+      <div class="map-timeline-title">Timeline historica</div>
+      <div class="map-timeline-head-actions">
+        <div class="map-timeline-meta">
+          <span class="map-timeline-pill" id="map-timeline-mode">Inactiva</span>
+          <span class="map-timeline-pill" id="map-timeline-status">Sin capas temporales activas</span>
+        </div>
+        <button class="map-timeline-header-toggle" id="map-timeline-header-toggle" data-header-collapse-toggle type="button" aria-expanded="true">Plegar header</button>
+      </div>
+    </div>
+    <div class="map-timeline-controls">
+      <button class="map-timeline-button" id="map-timeline-play" type="button" disabled>Play</button>
+      <div class="map-timeline-datecopy">
+        <div class="map-timeline-date" id="map-timeline-date">-</div>
+        <div class="map-timeline-source" id="map-timeline-source">Activa una capa temporal para navegar</div>
+      </div>
+      <input class="map-timeline-slider" id="map-timeline-slider" type="range" min="0" max="364" value="364" step="1" disabled>
+      <select class="map-timeline-speed" id="map-timeline-speed" disabled>
+        <option value="1">1x</option>
+      </select>
+    </div>
+  </div>
+</div>
+
+<div class="app-preload-mini hidden" id="app-preload-mini">
+  <div class="app-preload-mini-copy">
+    <div class="app-preload-mini-title" id="app-preload-mini-title">Calentando cache raster</div>
+    <div class="app-preload-mini-detail" id="app-preload-mini-detail">Preparando capas temporales y overlays del viewport actual.</div>
+  </div>
+  <div class="app-preload-mini-detail" id="app-preload-mini-progress">0%</div>
 </div>
 
 <!-- ALERTA BANNER -->
@@ -1674,7 +2558,7 @@
       </div>
     </div>
 
-    <div class="weather-strip-panel">
+    <div class="weather-strip-panel" id="weather-strip-panel">
       <div class="weather-strip-head">
         <div>
           <div class="weather-strip-title">Meteorologia y forecast operativo</div>
@@ -1775,71 +2659,26 @@
   <div class="map-container">
     <div id="map"></div>
 
-    <!-- SELECTOR DE CAPAS AGRONÃ“MICAS -->
-    <div class="map-controls">
-      <button class="map-btn active" id="btn-alerta" onclick="setLayer('alerta',this)">
-        <span class="map-btn-icon">AL</span>
-        <span class="map-btn-name">Alerta</span>
-        <span class="map-btn-desc">S1 + S2</span>
+    <div class="map-layer-menu" id="map-layer-menu">
+      <button class="map-layer-menu-toggle" id="map-layer-menu-toggle" type="button" aria-expanded="false">
+        Capas
       </button>
-      <button class="map-btn" id="btn-rgb" onclick="setLayer('rgb',this)">
-        <span class="map-btn-icon">RG</span>
-        <span class="map-btn-name">RGB</span>
-        <span class="map-btn-formula">B04-B03-B02</span>
-      </button>
-      <button class="map-btn" id="btn-ndvi" onclick="setLayer('ndvi',this)">
-        <span class="map-btn-icon">VI</span>
-        <span class="map-btn-name">NDVI</span>
-        <span class="map-btn-formula">B08-B04/sum</span>
-      </button>
-      <button class="map-btn" id="btn-ndmi" onclick="setLayer('ndmi',this)">
-        <span class="map-btn-icon">MI</span>
-        <span class="map-btn-name">NDMI</span>
-        <span class="map-btn-formula">B08-B11/sum</span>
-      </button>
-      <button class="map-btn" id="btn-ndwi" onclick="setLayer('ndwi',this)">
-        <span class="map-btn-icon">WI</span>
-        <span class="map-btn-name">NDWI</span>
-        <span class="map-btn-formula">B03-B08/sum</span>
-      </button>
-      <button class="map-btn" id="btn-savi" onclick="setLayer('savi',this)">
-        <span class="map-btn-icon">SV</span>
-        <span class="map-btn-name">SAVI</span>
-        <span class="map-btn-formula">(B08-B04)/...*1.5</span>
-      </button>
-      <button class="map-btn" id="btn-sar" onclick="setLayer('sar',this)">
-        <span class="map-btn-icon">SA</span>
-        <span class="map-btn-name">SAR VV</span>
-        <span class="map-btn-formula">S1 - Diaz 2026</span>
-      </button>
-      <button class="map-btn" id="btn-lst" onclick="setLayer('lst',this)">
-        <span class="map-btn-icon">LT</span>
-        <span class="map-btn-name">Termal</span>
-        <span class="map-btn-formula">LST S3</span>
-      </button>
-      <button class="map-btn" id="btn-coneat" onclick="setLayer('coneat',this)">
-        <span class="map-btn-icon">CN</span>
-        <span class="map-btn-name">CONEAT</span>
-        <span class="map-btn-formula">MGAP - zoom 11+</span>
-      </button>
-      <button class="map-btn" id="btn-judicial" onclick="setLayer('judicial',this)">
-        <span class="map-btn-icon">SC</span>
-        <span class="map-btn-name">Secciones</span>
-        <span class="map-btn-formula">SNIG - Policiales</span>
-      </button>
-      <button class="map-btn" id="btn-productiva" onclick="setLayer('productiva',this)">
-        <span class="map-btn-icon">PR</span>
-        <span class="map-btn-name">Predios</span>
-        <span class="map-btn-formula">Importados - AOI</span>
-      </button>
-      <button class="map-btn" id="btn-hex" onclick="setLayer('hex',this)">
-        <span class="map-btn-icon">H3</span>
-        <span class="map-btn-name">H3</span>
-        <span class="map-btn-formula">Fallback - r6</span>
-      </button>
+      <div class="map-layer-menu-panel" id="map-layer-menu-panel" hidden>
+        <div class="map-layer-menu-head">
+          <div>
+            <div class="map-layer-menu-title">Capas del mapa</div>
+            <div class="map-layer-menu-subtitle">Raster analíticos, overlays oficiales y capas administrativas.</div>
+          </div>
+        </div>
+        <div class="map-layer-menu-actions">
+          <button class="map-layer-action" id="map-layer-clear" type="button">Limpiar capas</button>
+          <button class="map-layer-action" id="map-layer-recommended" type="button">Solo recomendadas</button>
+          <button class="map-layer-action" id="map-layer-reset-view" type="button">Restaurar vista inicial</button>
+        </div>
+        <div class="map-layer-groups" id="map-layer-menu-groups"></div>
+      </div>
     </div>
 
-    <!-- Control de opacidad -->
     <div class="map-opacity-wrap" id="opacity-wrap" style="display:none">
       <span>Opacidad</span>
       <input type="range" id="opacity-slider" min="20" max="100" value="85"
@@ -1866,6 +2705,7 @@
   <div class="side-panel">
     <div class="sidebar-tabs">
       <button class="sidebar-tab active" id="sidebar-monitor-tab" type="button">Monitor</button>
+      <button class="sidebar-tab" id="sidebar-fields-tab" type="button">Campos</button>
       <button class="sidebar-tab" id="sidebar-settings-tab" type="button">Settings</button>
       <button class="sidebar-tab" id="sidebar-profile-tab" type="button">Perfil</button>
     </div>
@@ -1886,7 +2726,7 @@
       </div>
     </div>
 
-    <div class="panel-section">
+    <div class="panel-section" id="forecast-panel-section">
       <div class="panel-title">Forecast 7 Dias</div>
       <div id="forecast-list" style="display:flex;flex-direction:column;gap:8px;color:var(--text);font-size:0.8rem"></div>
     </div>
@@ -2018,6 +2858,122 @@
       </div>
     </div><!-- /sidebar-profile-view -->
 
+    <div class="sidebar-view hidden" id="sidebar-fields-view">
+      <div class="panel-section">
+        <div class="panel-title">Campos privados</div>
+        <div class="settings-card">
+          <div class="settings-status" id="fields-status">Carga pendiente.</div>
+          <div class="fields-toolbar">
+            <label class="settings-field">
+              <span class="settings-field-label">Establecimiento</span>
+              <select class="settings-input" id="fields-establishment-select"></select>
+            </label>
+            <button class="settings-btn" id="fields-refresh-btn" type="button">Recargar</button>
+          </div>
+          <div class="fields-grid">
+            <label class="settings-field">
+              <span class="settings-field-label">Nombre establecimiento</span>
+              <input class="settings-input" id="fields-establishment-name" placeholder="Ej. Estancia Norte" />
+            </label>
+            <label class="settings-field">
+              <span class="settings-field-label">Descripcion</span>
+              <input class="settings-input" id="fields-establishment-description" placeholder="Opcional" />
+            </label>
+          </div>
+          <div class="fields-actions">
+            <button class="settings-btn primary" id="fields-establishment-save-btn" type="button">Guardar establecimiento</button>
+            <button class="settings-btn" id="fields-establishment-delete-btn" type="button">Eliminar establecimiento</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-title">Buscar padron</div>
+        <div class="settings-card">
+          <div class="fields-grid two">
+            <label class="settings-field">
+              <span class="settings-field-label">Departamento</span>
+              <select class="settings-input" id="fields-department-select"></select>
+            </label>
+            <label class="settings-field">
+              <span class="settings-field-label">Padron</span>
+              <input class="settings-input" id="fields-padron-input" placeholder="Ej. 12345" />
+            </label>
+          </div>
+          <div class="fields-actions">
+            <button class="settings-btn primary" id="fields-padron-search-btn" type="button">Buscar padron</button>
+          </div>
+          <div class="fields-result-box" id="fields-padron-result"></div>
+          <div class="fields-note">El padron oficial se usa como referencia visual. La geometria operativa final del campo la ajustas manualmente sobre el mapa.</div>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-title">Campo</div>
+        <div class="settings-card">
+          <div class="fields-grid">
+            <label class="settings-field">
+              <span class="settings-field-label">Nombre del campo</span>
+              <input class="settings-input" id="fields-field-name" placeholder="Ej. Campo Norte" />
+            </label>
+          </div>
+          <div class="fields-actions">
+            <button class="settings-btn" id="fields-field-draw-btn" type="button">Dibujar / editar</button>
+            <button class="settings-btn primary" id="fields-field-save-btn" type="button">Guardar campo</button>
+            <button class="settings-btn" id="fields-field-clear-btn" type="button">Reiniciar borrador</button>
+            <button class="settings-btn" id="fields-field-delete-btn" type="button">Eliminar campo</button>
+          </div>
+          <div class="fields-note">Si partes del mismo establecimiento no son contiguas, cargalas como campos separados.</div>
+          <div class="fields-analytics-card hidden" id="fields-field-analytics"></div>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-title">Campos cargados</div>
+        <div class="settings-card">
+          <div class="fields-list" id="fields-list"></div>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-title">Potreros</div>
+        <div class="settings-card">
+          <div class="fields-grid">
+            <label class="settings-field">
+              <span class="settings-field-label">Nombre del potrero</span>
+              <input class="settings-input" id="fields-paddock-name" placeholder="Ej. Potrero Norte" />
+            </label>
+          </div>
+          <div class="fields-actions">
+            <button class="settings-btn" id="fields-paddock-draw-btn" type="button">Dibujar / editar</button>
+            <button class="settings-btn primary" id="fields-paddock-save-btn" type="button">Guardar potrero</button>
+            <button class="settings-btn" id="fields-paddock-clear-btn" type="button">Reiniciar borrador</button>
+            <button class="settings-btn" id="fields-paddock-delete-btn" type="button">Eliminar potrero</button>
+          </div>
+          <div class="fields-list" id="fields-paddocks-list"></div>
+          <div class="fields-analytics-card hidden" id="fields-paddock-analytics"></div>
+        </div>
+      </div>
+
+      <div class="fields-dialog-overlay hidden" id="fields-paddock-confirm-dialog" aria-hidden="true">
+        <div class="fields-dialog" role="dialog" aria-modal="true" aria-labelledby="fields-paddock-confirm-title">
+          <div class="fields-dialog-card">
+            <div class="fields-dialog-title" id="fields-paddock-confirm-title">Confirmar potrero</div>
+            <div class="fields-dialog-copy">El poligono ya se cerro. Edita el nombre si hace falta y guardalo para seguir con el siguiente potrero.</div>
+            <label class="settings-field">
+              <span class="settings-field-label">Nombre del potrero</span>
+              <input class="settings-input" id="fields-paddock-confirm-name" placeholder="Ej. Potrero 1" />
+            </label>
+            <div class="settings-status" id="fields-paddock-confirm-status">Completa el nombre y guarda para continuar.</div>
+            <div class="fields-dialog-actions">
+              <button class="settings-btn" id="fields-paddock-confirm-cancel-btn" type="button">Cancelar</button>
+              <button class="settings-btn primary" id="fields-paddock-confirm-save-btn" type="button">Guardar y seguir</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div><!-- /sidebar-fields-view -->
+
   </div><!-- /side-panel -->
 
 </div><!-- /main-grid -->
@@ -2032,7 +2988,7 @@
   </div>
 </footer>
 
-<script type="module" src="/static/src/app.js?v=20260329-7"></script>
+  <script type="module" src="/static/src/app.js?v=20260404-8"></script>
 <script type="text/plain" data-legacy="disabled">
 // â”€â”€ API REAL â€” Copernicus CDSE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // API_BASE: en producciÃ³n usa URL relativa (FastAPI sirve el frontend).

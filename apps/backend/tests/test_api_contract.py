@@ -1,4 +1,5 @@
 import os
+from datetime import date
 from pathlib import Path
 import unittest
 from unittest.mock import AsyncMock, patch
@@ -15,6 +16,150 @@ from app.main import app
 
 
 class ApiContractTests(unittest.TestCase):
+    def test_v1_map_overlay_catalog_contract(self):
+        payload = {
+            "items": [
+                {
+                    "id": "coneat",
+                    "label": "CONEAT",
+                    "category": "Suelos",
+                    "provider": "SNIG / MGAP",
+                    "service_kind": "arcgis_export",
+                    "service_url": "https://example.invalid/coneat/export",
+                    "layers": "show:0,1",
+                    "min_zoom": 11,
+                    "opacity_default": 0.96,
+                    "z_index_priority": 330,
+                    "attribution": "SNIG / MGAP Uruguay",
+                    "cache_namespace": "renare_export_v1",
+                    "recommended": True,
+                }
+            ]
+        }
+        with patch("app.api.v1.endpoints.public.list_official_map_overlays", return_value=payload["items"]):
+            with TestClient(app) as client:
+                response = client.get("/api/v1/map-overlays/catalog")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["items"][0]["id"], "coneat")
+
+    def test_v1_map_overlay_tile_contract(self):
+        with patch(
+            "app.api.v1.endpoints.public.proxy_official_overlay_tile",
+            new=AsyncMock(return_value=(b"png-bytes", "image/png")),
+        ):
+            with TestClient(app) as client:
+                response = client.get(
+                    "/api/v1/map-overlays/hidrografia/tile"
+                    "?bbox=-58,-35,-53,-30&bboxSR=4326&imageSR=4326&width=256&height=256&format=image/png&transparent=true"
+                )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "image/png")
+        self.assertEqual(response.content, b"png-bytes")
+
+    def test_v1_timeline_frames_contract(self):
+        payload = {
+            "date_from": "2026-03-30",
+            "date_to": "2026-04-03",
+            "total_days": 5,
+            "generated_at": "2026-04-03T00:00:00",
+            "bbox": "-56,-32,-55,-31",
+            "zoom": 11,
+            "layers": ["ndmi", "rgb"],
+            "days": [
+                {
+                    "display_date": "2026-04-03",
+                    "available": True,
+                    "label": "2026-04-03 · Interpolado",
+                    "layers": {
+                        "ndmi": {
+                            "layer_id": "ndmi",
+                            "available": True,
+                            "is_interpolated": True,
+                            "primary_source_date": "2026-04-01",
+                            "secondary_source_date": "2026-04-06",
+                            "blend_weight": 0.4,
+                            "label": "Interpolado",
+                            "cache_status": "ready",
+                            "warm_available": True,
+                        }
+                    },
+                }
+            ],
+        }
+        with patch("app.api.v1.endpoints.public.build_timeline_frame_manifest", new=AsyncMock(return_value=payload)):
+            with TestClient(app) as client:
+                response = client.get(
+                    "/api/v1/timeline/frames?layers=ndmi&layers=rgb&date_from=2026-03-30&date_to=2026-04-03"
+                    "&bbox=-56,-32,-55,-31&zoom=11"
+                )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["total_days"], 5)
+        self.assertEqual(response.json()["days"][0]["layers"]["ndmi"]["primary_source_date"], "2026-04-01")
+        self.assertTrue(response.json()["days"][0]["layers"]["ndmi"]["warm_available"])
+
+    def test_v1_timeline_context_contract(self):
+        payload = {
+            "scope": "departamento",
+            "unit_id": "department-rivera",
+            "department": "Rivera",
+            "selection_label": "Rivera",
+            "display_date": "2026-03-31",
+            "resolved_date": "2026-03-30",
+            "is_interpolated": True,
+            "forecast_mode": "collapsed_historical",
+            "weather_mode": "collapsed_historical",
+            "cache_status": "fallback_previous",
+            "state_payload": {
+                "scope": "departamento",
+                "unit_id": "department-rivera",
+                "department": "Rivera",
+                "observed_at": "2026-03-30T03:00:00+00:00",
+                "state": "Alerta",
+                "state_level": 2,
+                "risk_score": 64.2,
+                "confidence_score": 71.4,
+                "affected_pct": 23.5,
+                "largest_cluster_pct": 18.2,
+                "days_in_state": 4,
+                "drivers": [{"name": "spi_30d", "score": 71.0}],
+                "forecast": [],
+                "soil_context": {},
+                "raw_metrics": {"spi_30d": -1.7},
+            },
+            "history_payload": {
+                "scope": "departamento",
+                "unit_id": "department-rivera",
+                "department": "Rivera",
+                "selection_label": "Rivera",
+                "total": 2,
+                "datos": [
+                    {"fecha": "2026-03-30", "state": "Alerta", "state_level": 2, "risk_score": 64.2, "confidence_score": 71.4, "affected_pct": 23.5, "largest_cluster_pct": 18.2, "drivers": []},
+                    {"fecha": "2026-03-29", "state": "Vigilancia", "state_level": 1, "risk_score": 54.1, "confidence_score": 69.8, "affected_pct": 19.2, "largest_cluster_pct": 15.1, "drivers": []},
+                ],
+            },
+        }
+        with patch("app.api.v1.endpoints.public.get_timeline_context", new=AsyncMock(return_value=payload)):
+            with TestClient(app) as client:
+                response = client.get(
+                    "/api/v1/timeline/context"
+                    "?scope=departamento&department=Rivera&target_date=2026-03-31&history_days=30"
+                )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["display_date"], "2026-03-31")
+        self.assertEqual(response.json()["history_payload"]["datos"][0]["fecha"], "2026-03-30")
+
+    def test_v1_temporal_tile_contract_accepts_source_date(self):
+        with patch(
+            "app.api.v1.endpoints.public.fetch_tile_png",
+            new=AsyncMock(return_value=b"timeline-png"),
+        ) as fetch_tile:
+            with TestClient(app) as client:
+                response = client.get("/api/v1/tiles/ndmi/7/45/63.png?source_date=2026-04-01&frame_role=primary")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "image/png")
+        self.assertEqual(response.content, b"timeline-png")
+        fetch_tile.assert_awaited_once_with("ndmi", 7, 45, 63, target_date=date(2026, 4, 1), frame_role="primary")
+
     def test_v1_capas_departamentos_contract(self):
         payload = {
             "type": "FeatureCollection",
@@ -177,17 +322,47 @@ class ApiContractTests(unittest.TestCase):
                 "timezone": "America/Montevideo",
                 "poll_seconds": 300,
                 "bootstrap_backfill_days": 7,
+                "timeline_historical_window_days": 365,
                 "next_daily_run": "2026-03-25T06:30:00+00:00",
                 "next_recalibration_run": "2026-03-30T06:30:00+00:00",
             },
             "runs": {"last_daily_success": None, "last_recalibration_success": None, "recent": []},
             "pending_backfill_dates": [],
+            "historical_warehouse": {
+                "window_days": 365,
+                "date_from": "2025-03-25",
+                "date_to": "2026-03-24",
+                "ready": False,
+                "overall_coverage_pct": 72.4,
+                "national": {
+                    "available_days": 240,
+                    "expected_days": 365,
+                    "coverage_pct": 65.8,
+                    "status": "partial",
+                    "latest_observed_date": "2026-03-24",
+                    "missing_sample": ["2025-03-25"],
+                },
+                "departments": {
+                    "expected_departments": 19,
+                    "fully_covered_departments": 11,
+                    "available_day_slots": 5400,
+                    "expected_day_slots": 6935,
+                    "coverage_pct": 77.9,
+                    "items": [],
+                },
+                "temporal_layers": {
+                    "expected_layers": 8,
+                    "fully_covered_layers": 5,
+                    "items": [],
+                },
+            },
         }
         with patch("app.api.v1.endpoints.pipeline.get_pipeline_status", new=AsyncMock(return_value=payload)):
             with TestClient(app) as client:
                 response = client.get("/api/v1/pipeline/estado")
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["scheduler"]["enabled"])
+        self.assertIn("historical_warehouse", response.json())
 
     def test_v1_productivas_import_contract(self):
         payload = {
@@ -258,6 +433,7 @@ class ApiContractTests(unittest.TestCase):
             "status": "success",
             "start_date": "2026-03-20",
             "end_date": "2026-03-24",
+            "window_days": 5,
             "processed_days": 5,
             "include_recalibration": True,
             "runs": [{"date": "2026-03-24", "daily": "success", "recalibration": "success"}],
@@ -267,6 +443,37 @@ class ApiContractTests(unittest.TestCase):
                 response = client.post("/api/v1/pipeline/backfill?fecha_desde=2026-03-20&fecha_hasta=2026-03-24")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["processed_days"], 5)
+
+    def test_v1_pipeline_backfill_timeline_contract(self):
+        payload = {
+            "status": "success",
+            "job": {"job_type": "timeline_backfill", "status": "success"},
+            "result": {
+                "status": "success",
+                "start_date": "2025-04-04",
+                "end_date": "2026-04-03",
+                "window_days": 365,
+                "processed_days": 365,
+                "include_recalibration": True,
+                "runs": [],
+            },
+            "warehouse": {
+                "window_days": 365,
+                "date_from": "2025-04-04",
+                "date_to": "2026-04-03",
+                "ready": True,
+                "overall_coverage_pct": 100.0,
+                "national": {"available_days": 365, "expected_days": 365, "coverage_pct": 100.0, "status": "complete", "latest_observed_date": "2026-04-03", "missing_sample": []},
+                "departments": {"expected_departments": 19, "fully_covered_departments": 19, "available_day_slots": 6935, "expected_day_slots": 6935, "coverage_pct": 100.0, "items": []},
+                "temporal_layers": {"expected_layers": 8, "fully_covered_layers": 8, "items": []},
+            },
+        }
+        with patch("app.api.v1.endpoints.pipeline.execute_timeline_backfill_job", new=AsyncMock(return_value=payload)):
+            with TestClient(app) as client:
+                response = client.post("/api/v1/pipeline/backfill-timeline?window_days=365&fecha_hasta=2026-04-03")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["job"]["job_type"], "timeline_backfill")
+        self.assertTrue(response.json()["warehouse"]["ready"])
 
     def test_v1_pipeline_prewarm_coneat_contract(self):
         payload = {
@@ -285,6 +492,56 @@ class ApiContractTests(unittest.TestCase):
                 response = client.post("/api/v1/pipeline/prewarm-coneat?department=Rivera")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["result"]["cache_backend"], "database+filesystem")
+
+    def test_v1_preload_startup_contract(self):
+        payload = {
+            "run_key": "preload-1",
+            "run_type": "startup",
+            "scope_type": "nacional",
+            "scope_ref": "Uruguay",
+            "status": "queued",
+            "progress_total": 12,
+            "progress_done": 0,
+            "stage": "queued",
+            "details": {"critical_ready": False},
+        }
+        with patch("app.api.v1.endpoints.public.start_startup_preload", new=AsyncMock(return_value=payload)):
+            with TestClient(app) as client:
+                response = client.post(
+                    "/api/v1/preload/startup",
+                    json={
+                        "bbox": "-56,-32,-55,-31",
+                        "zoom": 11,
+                        "width": 1200,
+                        "height": 700,
+                        "temporal_layers": ["ndmi"],
+                        "official_layers": ["coneat"],
+                        "scope_type": "nacional",
+                        "scope_ref": "Uruguay",
+                        "timeline_scope": "nacional",
+                        "target_date": "2026-04-03",
+                    },
+                )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["run_key"], "preload-1")
+
+    def test_v1_preload_status_contract(self):
+        payload = {
+            "run_key": "preload-1",
+            "run_type": "startup",
+            "status": "running",
+            "progress_total": 12,
+            "progress_done": 6,
+            "stage": "analytic_neighbors",
+            "details": {"critical_ready": True},
+            "critical_ready": True,
+            "task_state": "running",
+        }
+        with patch("app.api.v1.endpoints.public.get_preload_status", new=AsyncMock(return_value=payload)):
+            with TestClient(app) as client:
+                response = client.get("/api/v1/preload/status?run_key=preload-1")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["critical_ready"])
 
     def test_v1_notificaciones_suscriptores_contract(self):
         payload = [
@@ -355,12 +612,13 @@ class ApiContractTests(unittest.TestCase):
 
     def test_v1_alert_subscriptions_options_contract(self):
         payload = {
-            "scope_types": [{"value": "national", "label": "Pais"}],
+            "scope_types": [{"value": "field", "label": "Campo"}, {"value": "national", "label": "Pais"}],
             "min_alert_states": [{"value": "Alerta", "label": "Alerta"}],
             "channels": [{"value": "email", "label": "Email", "enabled": True, "reason": None}],
             "national": {"value": "national", "label": "Uruguay"},
             "departments": [{"id": "department-rivera", "label": "Rivera", "department": "Rivera"}],
             "productive_units": [{"id": "productive-predio-demo", "label": "Predio Demo", "department": "Rivera", "unit_category": "predio"}],
+            "fields": [{"id": "farm-field-1", "label": "Campo Norte", "department": "Rivera", "establishment_id": "farm-est-1", "establishment_name": "Estancia Demo", "aoi_unit_id": "productive-predio-demo"}],
             "contact": {"email": "demo@example.com", "whatsapp_e164": "+59899111222"},
         }
         with patch("app.api.v1.endpoints.alert_subscriptions.notification_service.get_alert_subscription_options", new=AsyncMock(return_value=payload)):
@@ -368,6 +626,7 @@ class ApiContractTests(unittest.TestCase):
                 response = client.get("/api/v1/alert-subscriptions/options")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["national"]["label"], "Uruguay")
+        self.assertEqual(response.json()["fields"][0]["label"], "Campo Norte")
 
     def test_v1_alert_subscriptions_test_send_contract(self):
         payload = {
@@ -488,6 +747,70 @@ class ApiContractTests(unittest.TestCase):
                 response = client.get("/api/v1/profile/me")
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["completion"]["is_complete"])
+
+    def test_v1_campos_options_contract(self):
+        payload = {
+            "departments": [{"id": "department-rivera", "label": "Rivera"}],
+            "establishments": [{"id": "farm-est-1", "name": "Estancia Demo", "description": "Test", "active": True}],
+        }
+        with patch("app.api.v1.endpoints.campos.get_farm_options", new=AsyncMock(return_value=payload)):
+            with TestClient(app) as client:
+                response = client.get("/api/v1/campos/options")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["departments"][0]["label"], "Rivera")
+
+    def test_v1_establecimientos_create_contract(self):
+        payload = {"id": "farm-est-1", "name": "Estancia Demo", "description": "Test", "active": True}
+        with patch("app.api.v1.endpoints.campos.save_establishment", new=AsyncMock(return_value=payload)):
+            with TestClient(app) as client:
+                response = client.post("/api/v1/establecimientos", json={"name": "Estancia Demo", "description": "Test"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["id"], "farm-est-1")
+
+    def test_v1_campos_create_contract(self):
+        payload = {
+            "id": "farm-field-1",
+            "establishment_id": "farm-est-1",
+            "establishment_name": "Estancia Demo",
+            "name": "Campo Norte",
+            "department": "Rivera",
+            "padron_value": "12345",
+            "field_geometry_geojson": {"type": "Polygon", "coordinates": []},
+            "aoi_unit_id": "productive-campo-norte",
+        }
+        with patch("app.api.v1.endpoints.campos.save_field", new=AsyncMock(return_value=payload)):
+            with TestClient(app) as client:
+                response = client.post(
+                    "/api/v1/campos",
+                    json={
+                        "establishment_id": "farm-est-1",
+                        "name": "Campo Norte",
+                        "department": "Rivera",
+                        "padron_value": "12345",
+                        "field_geometry_geojson": {"type": "Polygon", "coordinates": []},
+                    },
+                )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["name"], "Campo Norte")
+
+    def test_v1_potreros_create_contract(self):
+        payload = {
+            "id": "farm-paddock-1",
+            "field_id": "farm-field-1",
+            "name": "Potrero Norte",
+            "geometry_geojson": {"type": "Polygon", "coordinates": []},
+            "area_ha": 8.2,
+            "display_order": 1,
+            "active": True,
+        }
+        with patch("app.api.v1.endpoints.campos.save_paddock", new=AsyncMock(return_value=payload)):
+            with TestClient(app) as client:
+                response = client.post(
+                    "/api/v1/campos/farm-field-1/potreros",
+                    json={"name": "Potrero Norte", "geometry_geojson": {"type": "Polygon", "coordinates": []}},
+                )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["field_id"], "farm-field-1")
 
     def test_legacy_estado_actual_contract(self):
         payload = {

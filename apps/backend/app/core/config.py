@@ -61,9 +61,15 @@ class Settings(BaseSettings):
     pipeline_bootstrap_backfill_days: int = 7
     pipeline_stale_after_hours: int = 6
     pipeline_startup_warmup_enabled: bool = True
+    timeline_historical_window_days: int = 365
     coneat_cache_ttl_hours: int = 168
     coneat_prewarm_enabled: bool = True
     coneat_prewarm_zoom_levels: list[int] = Field(default_factory=lambda: [6, 7, 8])
+    preload_enabled: bool = True
+    preload_neighbor_days: int = 1
+    preload_adjacent_zoom_delta: int = 1
+    preload_max_tiles_per_zoom: int = 48
+    preload_run_ttl_hours: int = 24
 
     # Object storage / buckets
     storage_backend: str = "filesystem"

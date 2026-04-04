@@ -31,8 +31,11 @@ from app.services.catalog import DEPARTMENTS, seed_catalog_units
 from app.services.business_settings import DEFAULT_ALERT_RULESET, get_effective_alert_rules
 from app.services.warehouse import (
     get_cached_state_payload,
+    get_historical_state_history_rows,
+    get_historical_state_payload,
     materialize_unit_payload,
     seed_layer_catalog,
+    upsert_historical_state_cache,
     upsert_latest_state_cache,
 )
 
@@ -326,6 +329,32 @@ def _with_cache_status(payload: dict[str, Any] | None, *, current: bool) -> dict
         **payload,
         "cache_status": "current" if current else "stale",
         "served_from": "latest_state_cache",
+    }
+
+
+def _today_iso() -> str:
+    return date.today().isoformat()
+
+
+def _resolved_date_from_payload(payload: dict[str, Any] | None) -> date | None:
+    if not payload:
+        return None
+    observed_at = _parse_iso_datetime(payload.get("observed_at"))
+    return observed_at.date() if observed_at else None
+
+
+def _timeline_cache_status_payload(
+    payload: dict[str, Any] | None,
+    *,
+    cache_status: str,
+    served_from: str = "historical_state_cache",
+) -> dict[str, Any] | None:
+    if payload is None:
+        return None
+    return {
+        **payload,
+        "cache_status": cache_status,
+        "served_from": served_from,
     }
 
 
@@ -1809,6 +1838,7 @@ async def run_daily_pipeline(
 
     national_payload = _aggregate_states(formatted_payloads)
     previous_national_payload = await get_cached_state_payload(session, scope="nacional", department="Uruguay")
+    await upsert_historical_state_cache(session, national_payload, scope="nacional", department="Uruguay")
     if materialize_latest:
         await upsert_latest_state_cache(session, national_payload, scope="nacional", department="Uruguay")
         from app.services.notifications import notification_service
@@ -2286,6 +2316,482 @@ async def get_scope_snapshot(session: AsyncSession, *, scope: str = "departament
     await upsert_latest_state_cache(session, payload, scope=payload.get("scope", unit.scope), unit_id=unit.id, department=unit.department)
     await session.commit()
     return _with_cache_status(payload, current=_payload_is_current(payload))
+
+
+def _history_item_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    observed_at = _parse_iso_datetime(payload.get("observed_at"))
+    return {
+        "fecha": observed_at.date().isoformat() if observed_at else payload.get("observed_at"),
+        "state": payload.get("state"),
+        "state_level": payload.get("state_level"),
+        "risk_score": round(payload.get("risk_score") or 0.0, 1),
+        "confidence_score": round(payload.get("confidence_score") or 0.0, 1),
+        "affected_pct": round(payload.get("affected_pct") or 0.0, 1),
+        "largest_cluster_pct": round(payload.get("largest_cluster_pct") or 0.0, 1),
+        "drivers": payload.get("drivers") or [],
+    }
+
+
+def _collapse_timeline_forecast_payload(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    if payload is None:
+        return None
+    raw_metrics = dict(payload.get("raw_metrics") or {})
+    return {
+        **payload,
+        "forecast": [],
+        "raw_metrics": raw_metrics,
+    }
+
+
+def _snapshot_payload_from_row(
+    snapshot: UnitIndexSnapshot,
+    *,
+    unit_name: str,
+    unit_type: str | None = None,
+    geometry_source: str | None = None,
+    unit_id: str | None = None,
+) -> dict[str, Any]:
+    definition = STATE_DEFINITIONS.get(snapshot.state or "Normal", STATE_DEFINITIONS["Normal"])
+    raw_metrics = dict(snapshot.raw_metrics or {})
+    observed_at = snapshot.observed_at
+    if observed_at.tzinfo is None:
+        observed_at = observed_at.replace(tzinfo=timezone.utc)
+    else:
+        observed_at = observed_at.astimezone(timezone.utc)
+    soil_context = raw_metrics.get("soil_context") or {}
+    metadata_extra = raw_metrics.get("metadata_extra") or {}
+    return {
+        "scope": snapshot.scope,
+        "unit_id": unit_id or snapshot.unit_id,
+        "unit_name": unit_name,
+        "department": snapshot.department,
+        "unit_type": unit_type,
+        "observed_at": observed_at.isoformat(),
+        "state": snapshot.state,
+        "state_level": int(snapshot.state_level or 0),
+        "legacy_level": definition["legacy"],
+        "color": definition["color"],
+        "risk_score": round(float(snapshot.risk_score or 0.0), 1),
+        "confidence_score": round(float(snapshot.confidence_score or 0.0), 1),
+        "affected_pct": round(float(snapshot.affected_pct or 0.0), 1),
+        "largest_cluster_pct": round(float(snapshot.largest_cluster_pct or 0.0), 1),
+        "days_in_state": int(raw_metrics.get("days_in_state") or 1),
+        "actionable": bool(raw_metrics.get("actionable", False)),
+        "drivers": snapshot.drivers or [],
+        "forecast": snapshot.forecast or [],
+        "soil_context": soil_context,
+        "calibration_ref": snapshot.calibration_ref,
+        "data_mode": snapshot.data_mode or "historical_snapshot",
+        "geometry_source": geometry_source,
+        "unit_category": metadata_extra.get("unit_category"),
+        "source_name": metadata_extra.get("source_name"),
+        "external_id": metadata_extra.get("external_id"),
+        "h3_index": metadata_extra.get("h3_index"),
+        "h3_resolution": metadata_extra.get("h3_resolution"),
+        "fallback_role": metadata_extra.get("fallback_role"),
+        "explanation": definition["description"],
+        "raw_metrics": raw_metrics,
+        "rules_version": metadata_extra.get("rules_version"),
+    }
+
+
+async def _snapshot_payload_for_timeline_date(
+    session: AsyncSession,
+    *,
+    scope: str,
+    target_date: date,
+    unit_id: str | None = None,
+    department: str | None = None,
+) -> dict[str, Any] | None:
+    window_start, window_end = _date_bounds(target_date)
+    if scope == "nacional":
+        result = await session.execute(
+            select(UnitIndexSnapshot, AOIUnit)
+            .join(AOIUnit, AOIUnit.id == UnitIndexSnapshot.unit_id)
+            .where(
+                UnitIndexSnapshot.scope == "departamento",
+                UnitIndexSnapshot.observed_at >= window_start,
+                UnitIndexSnapshot.observed_at < window_end,
+            )
+            .order_by(AOIUnit.department)
+        )
+        payloads = [
+            _snapshot_payload_from_row(
+                snapshot,
+                unit_name=unit.name or unit.department or snapshot.department,
+                unit_type=unit.unit_type,
+                geometry_source=unit.source,
+                unit_id=unit.id,
+            )
+            for snapshot, unit in result.all()
+        ]
+        if not payloads:
+            return None
+        aggregated = _aggregate_states(payloads)
+        aggregated["observed_at"] = datetime.combine(target_date, time(hour=12), tzinfo=timezone.utc).isoformat()
+        aggregated["data_mode"] = "historical_snapshot"
+        return aggregated
+
+    query = (
+        select(UnitIndexSnapshot, AOIUnit)
+        .join(AOIUnit, AOIUnit.id == UnitIndexSnapshot.unit_id)
+        .where(
+            UnitIndexSnapshot.scope == scope,
+            UnitIndexSnapshot.observed_at >= window_start,
+            UnitIndexSnapshot.observed_at < window_end,
+        )
+        .limit(1)
+    )
+    if unit_id:
+        query = query.where(UnitIndexSnapshot.unit_id == unit_id)
+    elif department:
+        query = query.where(UnitIndexSnapshot.department == department)
+    row = (await session.execute(query)).first()
+    if row is None:
+        return None
+    snapshot, unit = row
+    return _snapshot_payload_from_row(
+        snapshot,
+        unit_name=unit.name or unit.department or snapshot.department,
+        unit_type=unit.unit_type,
+        geometry_source=unit.source,
+        unit_id=unit.id,
+    )
+
+
+async def _base_payload_for_timeline_fallback(
+    session: AsyncSession,
+    *,
+    scope: str,
+    unit_id: str | None = None,
+    department: str | None = None,
+) -> dict[str, Any]:
+    cached_payload = await get_cached_state_payload(session, scope=scope, unit_id=unit_id, department=department)
+    if cached_payload:
+        return dict(cached_payload)
+    snapshot_payload = await _snapshot_payload_for_timeline_date(
+        session,
+        scope=scope,
+        target_date=date.today(),
+        unit_id=unit_id,
+        department=department,
+    )
+    if snapshot_payload:
+        return snapshot_payload
+    if scope == "nacional":
+        return await get_scope_snapshot(session, scope="nacional")
+    return await get_scope_snapshot(session, scope=scope, unit_id=unit_id, department=department)
+
+
+def _synthetic_component_scores(
+    base_scores: dict[str, Any],
+    *,
+    risk_score: float,
+    humidity_pct: float,
+    spi_30d: float,
+    seed_value: int,
+) -> dict[str, float]:
+    rng = random.Random(seed_value)
+    vulnerability = float(base_scores.get("soil_vulnerability") or base_scores.get("vulnerabilidad_suelo") or 25.0)
+    magnitude = _clamp(max(0.0, (55.0 - humidity_pct) * 0.85 + rng.uniform(0.0, 8.0)), 0.0, 100.0)
+    anomaly = _clamp(abs(spi_30d) * 18.0 + rng.uniform(4.0, 18.0), 0.0, 100.0)
+    weather_confirmation = _clamp(max(0.0, -spi_30d) * 28.0 + rng.uniform(2.0, 10.0), 0.0, 100.0)
+    persistence = _clamp(6.0 + (seed_value % 11), 0.0, 100.0)
+    freshness = _clamp(70.0 - (seed_value % 15), 25.0, 95.0)
+    agreement = _clamp(74.0 + rng.uniform(-8.0, 8.0), 40.0, 98.0)
+    applicability = _clamp(78.0 + rng.uniform(-6.0, 10.0), 45.0, 98.0)
+    calibration_quality = _clamp(76.0 + rng.uniform(-5.0, 9.0), 50.0, 99.0)
+    field_validation = float(base_scores.get("field_validation") or 30.0)
+    return {
+        "magnitude": round(magnitude, 1),
+        "persistence": round(persistence, 1),
+        "anomaly": round(anomaly, 1),
+        "weather_confirmation": round(weather_confirmation, 1),
+        "soil_vulnerability": round(vulnerability, 1),
+        "freshness": round(freshness, 1),
+        "agreement": round(agreement, 1),
+        "applicability": round(applicability, 1),
+        "calibration_quality": round(calibration_quality, 1),
+        "field_validation": round(field_validation, 1),
+        "risk_reference": round(risk_score, 1),
+    }
+
+
+def _synthetic_drivers_from_components(component_scores: dict[str, float]) -> list[dict[str, Any]]:
+    mapping = [
+        ("anomalia_temporal", "desvio contra serie historica", component_scores.get("anomaly", 0.0)),
+        ("confirmacion_meteorologica", "SPI y contexto atmosferico", component_scores.get("weather_confirmation", 0.0)),
+        ("vulnerabilidad_suelo", "reserva hidrica estructural", component_scores.get("soil_vulnerability", 0.0)),
+        ("magnitud", "stress sintetico en capas temporales", component_scores.get("magnitude", 0.0)),
+        ("persistencia", "persistencia sintetica del evento", component_scores.get("persistence", 0.0)),
+    ]
+    return [
+        {"name": name, "score": round(float(score), 1), "detail": detail}
+        for name, detail, score in sorted(mapping, key=lambda item: item[2], reverse=True)
+    ]
+
+
+def _synthesize_historical_payload(
+    base_payload: dict[str, Any],
+    *,
+    scope: str,
+    target_date: date,
+    unit_id: str | None = None,
+    department: str | None = None,
+) -> dict[str, Any]:
+    raw_metrics = dict(base_payload.get("raw_metrics") or {})
+    component_scores = dict(raw_metrics.get("component_scores") or {})
+    timeline_seed = _seed(scope, unit_id or department or "nacional", target_date.isoformat(), "timeline-historical")
+    rng = random.Random(timeline_seed)
+    days_delta = max((date.today() - target_date).days, 0)
+    seasonal_wave = math.sin(days_delta / 18.0)
+    intramonth_wave = math.cos(days_delta / 7.0)
+
+    base_humidity = float(raw_metrics.get("s1_humidity_mean_pct") or base_payload.get("risk_score") or 65.0)
+    base_ndmi = float(raw_metrics.get("s2_ndmi_mean") or raw_metrics.get("estimated_ndmi") or 0.05)
+    base_spi = float(raw_metrics.get("spi_30d") or 0.0)
+    base_confidence = float(base_payload.get("confidence_score") or 70.0)
+
+    humidity_pct = round(_clamp(base_humidity + seasonal_wave * 9.0 + intramonth_wave * 4.0 + rng.uniform(-4.5, 4.5)), 1)
+    ndmi_mean = round(max(-0.35, min(0.45, base_ndmi + seasonal_wave * 0.08 + rng.uniform(-0.04, 0.04))), 3)
+    estimated_ndmi = round(max(-0.35, min(0.45, ndmi_mean + rng.uniform(-0.03, 0.03))), 3)
+    spi_30d = round(max(-3.0, min(3.0, base_spi + seasonal_wave * 0.9 + intramonth_wave * 0.45 + rng.uniform(-0.35, 0.35))), 3)
+    vv_db_mean = round(-18.5 + (humidity_pct * 0.11) + rng.uniform(-1.2, 1.2), 3)
+
+    dryness_component = _clamp((55.0 - humidity_pct) * 1.2, 0.0, 55.0)
+    vegetation_component = _clamp(max(0.0, -ndmi_mean) * 85.0 + rng.uniform(0.0, 8.0), 0.0, 35.0)
+    rainfall_component = _clamp(max(0.0, -spi_30d) * 15.0, 0.0, 30.0)
+    vulnerability_component = float(component_scores.get("soil_vulnerability") or component_scores.get("vulnerabilidad_suelo") or 24.0)
+    persistence_component = 4.0 + (days_delta % 9)
+    risk_score = round(
+        _clamp(
+            dryness_component * 0.45
+            + vegetation_component * 0.2
+            + rainfall_component * 0.18
+            + vulnerability_component * 0.12
+            + persistence_component * 0.9
+            + rng.uniform(-2.5, 2.5),
+            0.0,
+            100.0,
+        ),
+        1,
+    )
+    confidence_score = round(_clamp(base_confidence - min(days_delta * 0.08, 22.0) + rng.uniform(-3.0, 3.0), 42.0, 96.0), 1)
+    affected_pct = round(_clamp(max(0.0, (risk_score - 22.0) * 1.25) + rng.uniform(0.0, 6.0), 0.0, 100.0), 1)
+    largest_cluster_pct = round(min(affected_pct, max(0.0, affected_pct * (0.58 + rng.uniform(-0.12, 0.18)))), 1)
+    days_in_state = 1 + (timeline_seed % 8)
+    state_name = _state_from_risk(risk_score)
+    definition = STATE_DEFINITIONS.get(state_name, STATE_DEFINITIONS["Normal"])
+    synthetic_scores = _synthetic_component_scores(
+        component_scores,
+        risk_score=risk_score,
+        humidity_pct=humidity_pct,
+        spi_30d=spi_30d,
+        seed_value=timeline_seed,
+    )
+    selection_name = base_payload.get("unit_name") or department or "Uruguay"
+    return {
+        "scope": scope,
+        "unit_id": unit_id or base_payload.get("unit_id") or ("nacional" if scope == "nacional" else None),
+        "unit_name": selection_name,
+        "department": department or base_payload.get("department") or "Uruguay",
+        "unit_type": base_payload.get("unit_type"),
+        "observed_at": datetime.combine(target_date, time(hour=12), tzinfo=timezone.utc).isoformat(),
+        "state": state_name,
+        "state_level": int(definition["level"]),
+        "legacy_level": definition["legacy"],
+        "color": definition["color"],
+        "risk_score": risk_score,
+        "confidence_score": confidence_score,
+        "affected_pct": affected_pct,
+        "largest_cluster_pct": largest_cluster_pct,
+        "days_in_state": days_in_state,
+        "actionable": affected_pct >= 12.0 and largest_cluster_pct >= 6.0,
+        "drivers": _synthetic_drivers_from_components(synthetic_scores),
+        "forecast": [],
+        "soil_context": base_payload.get("soil_context") or {},
+        "calibration_ref": base_payload.get("calibration_ref"),
+        "data_mode": "historical_synthetic",
+        "geometry_source": base_payload.get("geometry_source"),
+        "unit_category": base_payload.get("unit_category"),
+        "source_name": base_payload.get("source_name"),
+        "external_id": base_payload.get("external_id"),
+        "h3_index": base_payload.get("h3_index"),
+        "h3_resolution": base_payload.get("h3_resolution"),
+        "fallback_role": "timeline_historical_backfill",
+        "explanation": definition["description"],
+        "raw_metrics": {
+            **raw_metrics,
+            "s1_vv_db_mean": vv_db_mean,
+            "s1_humidity_mean_pct": humidity_pct,
+            "s2_ndmi_mean": ndmi_mean,
+            "spi_30d": spi_30d,
+            "estimated_ndmi": estimated_ndmi,
+            "component_scores": synthetic_scores,
+            "timeline_generation_mode": "synthetic_backfill",
+        },
+        "rules_version": base_payload.get("rules_version") or "timeline-synthetic-v1",
+    }
+
+
+async def _ensure_historical_state_cache_window(
+    session: AsyncSession,
+    *,
+    scope: str,
+    target_date: date,
+    history_days: int,
+    unit_id: str | None = None,
+    department: str | None = None,
+) -> None:
+    window_start_date = target_date - timedelta(days=max(history_days, 1) - 1)
+    existing_rows = await get_historical_state_history_rows(
+        session,
+        scope=scope,
+        target_date=target_date,
+        limit=history_days,
+        unit_id=unit_id,
+        department=department,
+    )
+    existing_dates = {
+        row.observed_at.date()
+        for row in existing_rows
+        if row.observed_at is not None
+    }
+    dates_to_materialize = [
+        window_start_date + timedelta(days=offset)
+        for offset in range((target_date - window_start_date).days + 1)
+        if (window_start_date + timedelta(days=offset)) not in existing_dates
+    ]
+    if not dates_to_materialize:
+        return
+
+    base_payload = await _base_payload_for_timeline_fallback(
+        session,
+        scope=scope,
+        unit_id=unit_id,
+        department=department,
+    )
+    if not base_payload:
+        return
+
+    wrote_rows = False
+    for materialize_date in dates_to_materialize:
+        payload = await _snapshot_payload_for_timeline_date(
+            session,
+            scope=scope,
+            target_date=materialize_date,
+            unit_id=unit_id,
+            department=department,
+        )
+        if payload is None:
+            payload = _synthesize_historical_payload(
+                base_payload,
+                scope=scope,
+                target_date=materialize_date,
+                unit_id=unit_id,
+                department=department,
+            )
+        await upsert_historical_state_cache(
+            session,
+            payload,
+            scope=scope,
+            unit_id=unit_id,
+            department=department,
+        )
+        wrote_rows = True
+    if wrote_rows:
+        await session.commit()
+
+
+async def get_timeline_context(
+    session: AsyncSession,
+    *,
+    scope: str,
+    target_date: date,
+    unit_id: str | None = None,
+    department: str | None = None,
+    history_days: int = 30,
+) -> dict[str, Any]:
+    history_days = max(1, min(int(history_days or 30), 365))
+    today = date.today()
+    timeline_today = target_date >= today
+    effective_scope = scope
+    effective_unit_id = unit_id
+    effective_department = department
+    selection_label = "Uruguay"
+
+    if scope == "nacional":
+        effective_scope = "nacional"
+        effective_unit_id = None
+        effective_department = "Uruguay"
+        selection_label = "Uruguay"
+    else:
+        unit = await _get_unit(session, unit_id=unit_id, department=department or settings.aoi_department)
+        if unit is None:
+            raise ValueError("Unidad no encontrada")
+        effective_scope = unit.scope
+        effective_unit_id = unit.id
+        effective_department = unit.department
+        selection_label = unit.name
+
+    state_payload, cache_status = await get_historical_state_payload(
+        session,
+        scope=effective_scope,
+        target_date=target_date,
+        unit_id=effective_unit_id,
+        department=effective_department,
+        allow_previous=True,
+    )
+    if state_payload is None and timeline_today:
+        current_payload = await get_cached_state_payload(
+            session,
+            scope=effective_scope,
+            unit_id=effective_unit_id,
+            department=effective_department,
+        )
+        state_payload = dict(current_payload or {})
+        cache_status = "latest_cache_fallback"
+
+    resolved_date = _resolved_date_from_payload(state_payload)
+    history_rows = await get_historical_state_history_rows(
+        session,
+        scope=effective_scope,
+        target_date=resolved_date or target_date,
+        limit=history_days,
+        unit_id=effective_unit_id,
+        department=effective_department,
+    )
+    history_payload = {
+        "scope": effective_scope,
+        "unit_id": effective_unit_id,
+        "department": effective_department,
+        "selection_label": selection_label,
+        "total": len(history_rows),
+        "datos": [_history_item_from_payload(row.payload or {}) for row in history_rows],
+    }
+
+    timeline_state_payload = _timeline_cache_status_payload(
+        state_payload,
+        cache_status=cache_status,
+        served_from="historical_state_cache" if cache_status != "latest_cache_fallback" else "latest_state_cache",
+    )
+    if not timeline_today:
+        timeline_state_payload = _collapse_timeline_forecast_payload(timeline_state_payload)
+
+    return {
+        "scope": effective_scope,
+        "unit_id": effective_unit_id,
+        "department": effective_department,
+        "selection_label": selection_label,
+        "display_date": target_date.isoformat(),
+        "resolved_date": resolved_date.isoformat() if resolved_date else None,
+        "is_interpolated": bool(resolved_date and resolved_date != target_date),
+        "state_payload": timeline_state_payload,
+        "history_payload": history_payload,
+        "forecast_mode": "current_live" if timeline_today else "collapsed_historical",
+        "weather_mode": "current_live" if timeline_today else "collapsed_historical",
+        "cache_status": cache_status,
+    }
 
 
 async def get_scope_weather_forecast(

@@ -1,5 +1,6 @@
 from app.models.auth import AppUser, AppUserProfile, AuthSession
 from app.models.alerta import AlertState, AlertaEvento, NotificationEvent, SuscriptorAlerta
+from app.models.farm import FarmEstablishment, FarmField, FarmPaddock, PadronLookupCache
 from app.models.humedad import (
     AOIUnit,
     CalibrationSnapshot,
@@ -11,7 +12,10 @@ from app.models.humedad import (
 )
 from app.models.materialized import (
     ExternalMapCacheEntry,
+    HistoricalStateCache,
     LatestStateCache,
+    PreloadRun,
+    RasterCacheEntry,
     SatelliteLayerCatalog,
     SatelliteLayerSnapshot,
     SpatialLayerFeature,
@@ -28,6 +32,10 @@ __all__ = [
     "AlertaEvento",
     "NotificationEvent",
     "SuscriptorAlerta",
+    "FarmEstablishment",
+    "FarmField",
+    "FarmPaddock",
+    "PadronLookupCache",
     "AOIUnit",
     "CalibrationSnapshot",
     "ForecastSignal",
@@ -36,7 +44,10 @@ __all__ = [
     "IngestionQualityLog",
     "SatelliteObservation",
     "ExternalMapCacheEntry",
+    "HistoricalStateCache",
     "LatestStateCache",
+    "PreloadRun",
+    "RasterCacheEntry",
     "SatelliteLayerCatalog",
     "SatelliteLayerSnapshot",
     "SpatialLayerFeature",

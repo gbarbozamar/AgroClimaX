@@ -1,4 +1,4 @@
-import { store } from './state.js?v=20260329-2';
+import { store } from './state.js?v=20260404-8';
 
 const params = new URLSearchParams(window.location.search);
 const isHttpOrigin = window.location.protocol === 'http:' || window.location.protocol === 'https:';
@@ -160,6 +160,60 @@ export async function fetchRiveraGeojson() {
   return fetchJson(`${API_BASE}/geojson/rivera`);
 }
 
+export async function fetchMapOverlayCatalog() {
+  return fetchJson(`${API_V1}/map-overlays/catalog`);
+}
+
+export async function fetchTimelineFrames({ layers = [], dateFrom = null, dateTo = null, bbox = null, zoom = null } = {}) {
+  const url = new URL(`${API_V1}/timeline/frames`, window.location.origin);
+  layers.forEach((layerId) => url.searchParams.append('layers', layerId));
+  if (dateFrom) url.searchParams.set('date_from', dateFrom);
+  if (dateTo) url.searchParams.set('date_to', dateTo);
+  if (bbox) url.searchParams.set('bbox', bbox);
+  if (Number.isFinite(Number(zoom))) url.searchParams.set('zoom', String(zoom));
+  return fetchJson(url.toString().replace(window.location.origin, ''));
+}
+
+export async function fetchTimelineContext({ scope, department = null, unitId = null, targetDate, historyDays = 30 } = {}) {
+  const url = new URL(`${API_V1}/timeline/context`, window.location.origin);
+  url.searchParams.set('scope', scope);
+  url.searchParams.set('target_date', targetDate);
+  url.searchParams.set('history_days', String(historyDays));
+  if (department) url.searchParams.set('department', department);
+  if (unitId) url.searchParams.set('unit_id', unitId);
+  return fetchJson(url.toString().replace(window.location.origin, ''));
+}
+
+export async function startStartupPreload(payload = {}) {
+  return fetchJson(`${API_V1}/preload/startup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function startViewportPreload(payload = {}) {
+  return fetchJson(`${API_V1}/preload/viewport`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function startTimelineWindowPreload(payload = {}) {
+  return fetchJson(`${API_V1}/preload/timeline-window`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchPreloadStatus(runKey) {
+  const url = new URL(`${API_V1}/preload/status`, window.location.origin);
+  url.searchParams.set('run_key', runKey);
+  return fetchJson(url.toString().replace(window.location.origin, ''));
+}
+
 export async function fetchSettingsSchema() {
   return fetchJson(`${API_V1}/settings/schema`);
 }
@@ -274,6 +328,99 @@ export async function testAlertSubscription(subscriptionId) {
   return fetchJson(`${API_V1}/alert-subscriptions/${encodeURIComponent(subscriptionId)}/test-send`, {
     method: 'POST',
   });
+}
+
+export async function searchPadron(department, padron) {
+  const url = new URL(`${API_V1}/padrones/search`, window.location.origin);
+  url.searchParams.set('department', department);
+  url.searchParams.set('padron', padron);
+  return fetchJson(url.toString().replace(window.location.origin, ''));
+}
+
+export async function fetchFarmOptions() {
+  return fetchJson(`${API_V1}/campos/options`);
+}
+
+export async function fetchEstablishments() {
+  return fetchJson(`${API_V1}/establecimientos`);
+}
+
+export async function saveEstablishment(payload, establishmentId = null) {
+  const method = establishmentId ? 'PUT' : 'POST';
+  const url = establishmentId
+    ? `${API_V1}/establecimientos/${encodeURIComponent(establishmentId)}`
+    : `${API_V1}/establecimientos`;
+  return fetchJson(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteEstablishment(establishmentId) {
+  return fetchJson(`${API_V1}/establecimientos/${encodeURIComponent(establishmentId)}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function fetchFields(establishmentId = null) {
+  const url = new URL(`${API_V1}/campos`, window.location.origin);
+  if (establishmentId) url.searchParams.set('establishment_id', establishmentId);
+  return fetchJson(url.toString().replace(window.location.origin, ''));
+}
+
+export async function fetchField(fieldId) {
+  return fetchJson(`${API_V1}/campos/${encodeURIComponent(fieldId)}`);
+}
+
+export async function saveField(payload, fieldId = null) {
+  const method = fieldId ? 'PUT' : 'POST';
+  const url = fieldId
+    ? `${API_V1}/campos/${encodeURIComponent(fieldId)}`
+    : `${API_V1}/campos`;
+  return fetchJson(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteField(fieldId) {
+  return fetchJson(`${API_V1}/campos/${encodeURIComponent(fieldId)}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function fetchFieldsGeojson(establishmentId = null) {
+  const url = new URL(`${API_V1}/campos/geojson`, window.location.origin);
+  if (establishmentId) url.searchParams.set('establishment_id', establishmentId);
+  return fetchJson(url.toString().replace(window.location.origin, ''));
+}
+
+export async function fetchPaddocks(fieldId) {
+  return fetchJson(`${API_V1}/campos/${encodeURIComponent(fieldId)}/potreros`);
+}
+
+export async function savePaddock(fieldId, payload, paddockId = null) {
+  const method = paddockId ? 'PUT' : 'POST';
+  const url = paddockId
+    ? `${API_V1}/campos/${encodeURIComponent(fieldId)}/potreros/${encodeURIComponent(paddockId)}`
+    : `${API_V1}/campos/${encodeURIComponent(fieldId)}/potreros`;
+  return fetchJson(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deletePaddock(fieldId, paddockId) {
+  return fetchJson(`${API_V1}/campos/${encodeURIComponent(fieldId)}/potreros/${encodeURIComponent(paddockId)}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function fetchPaddocksGeojson(fieldId) {
+  return fetchJson(`${API_V1}/campos/${encodeURIComponent(fieldId)}/potreros/geojson`);
 }
 
 export async function logoutCurrentUser() {

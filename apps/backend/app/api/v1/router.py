@@ -4,6 +4,7 @@ from app.api.v1.endpoints import (
     alert_subscriptions,
     alertas,
     auth,
+    campos,
     ground_truth,
     hexagonos,
     legacy,
@@ -26,6 +27,7 @@ api_router.include_router(auth.router)
 api_router.include_router(alert_subscriptions.public_router)
 protected_router.include_router(alertas.router)
 protected_router.include_router(alert_subscriptions.router)
+protected_router.include_router(campos.router)
 protected_router.include_router(unidades.router)
 protected_router.include_router(layers.router)
 protected_router.include_router(hexagonos.router)

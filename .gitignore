@@ -22,6 +22,7 @@ apps/backend/.tile_cache/
 apps/backend/.tiles_cache/
 apps/backend/.catalog_cache/
 apps/backend/.coneat_cache/
+apps/backend/.official_overlay_cache/
 apps/backend/.notification_assets/
 apps/backend/*.db
 apps/backend/*.db-shm

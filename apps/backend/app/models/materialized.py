@@ -102,6 +102,24 @@ class LatestStateCache(Base):
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class HistoricalStateCache(Base):
+    __tablename__ = "historical_state_cache"
+
+    id = Column(String(36), primary_key=True, default=new_uuid)
+    cache_key = Column(String(160), nullable=False, index=True)
+    scope = Column(String(32), nullable=False, index=True)
+    unit_id = Column(String(64), ForeignKey("aoi_units.id"), nullable=True, index=True)
+    department = Column(String(120), nullable=True, index=True)
+    observed_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    payload = Column(JSON, default=dict)
+    payload_hash = Column(String(64))
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_historical_state_cache_key_date", "cache_key", "observed_at", unique=True),
+    )
+
+
 class SpatialLayerFeature(Base):
     __tablename__ = "spatial_layer_features"
 
@@ -137,3 +155,50 @@ class ExternalMapCacheEntry(Base):
     metadata_extra = Column(JSON, default=dict)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class RasterCacheEntry(Base):
+    __tablename__ = "raster_cache_entries"
+
+    id = Column(String(36), primary_key=True, default=new_uuid)
+    cache_key = Column(String(200), nullable=False, unique=True, index=True)
+    layer_id = Column(String(64), nullable=False, index=True)
+    cache_kind = Column(String(48), nullable=False, index=True)
+    scope_type = Column(String(32), nullable=True, index=True)
+    scope_ref = Column(String(160), nullable=True, index=True)
+    display_date = Column(DateTime(timezone=True), nullable=True, index=True)
+    source_date = Column(DateTime(timezone=True), nullable=True, index=True)
+    zoom = Column(Integer, nullable=True, index=True)
+    bbox_bucket = Column(String(180), nullable=True, index=True)
+    storage_backend = Column(String(32), nullable=False, default="filesystem")
+    storage_key = Column(String(255), nullable=True)
+    status = Column(String(24), nullable=False, default="missing", index=True)
+    bytes_size = Column(Integer, nullable=True)
+    metadata_extra = Column(JSON, default=dict)
+    last_warmed_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    last_hit_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_raster_cache_lookup", "layer_id", "cache_kind", "display_date", "zoom", "bbox_bucket"),
+    )
+
+
+class PreloadRun(Base):
+    __tablename__ = "preload_runs"
+
+    id = Column(String(36), primary_key=True, default=new_uuid)
+    run_key = Column(String(64), nullable=False, unique=True, index=True)
+    run_type = Column(String(32), nullable=False, index=True)
+    scope_type = Column(String(32), nullable=True, index=True)
+    scope_ref = Column(String(160), nullable=True, index=True)
+    status = Column(String(24), nullable=False, default="pending", index=True)
+    progress_total = Column(Integer, nullable=False, default=0)
+    progress_done = Column(Integer, nullable=False, default=0)
+    stage = Column(String(64), nullable=True, index=True)
+    details = Column(JSON, default=dict)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, index=True)

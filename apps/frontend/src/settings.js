@@ -6,8 +6,8 @@ import {
   resetGlobalSettings,
   saveCoverageSettings,
   saveGlobalSettings,
-} from './api.js?v=20260329-5';
-import { setStore, store } from './state.js?v=20260329-2';
+} from './api.js?v=20260404-8';
+import { setStore, store } from './state.js?v=20260404-8';
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value ?? {}));
@@ -80,16 +80,20 @@ export function syncSidebarView() {
   const monitorView = getNode('sidebar-monitor-view');
   const settingsView = getNode('sidebar-settings-view');
   const profileView = getNode('sidebar-profile-view');
+  const fieldsView = getNode('sidebar-fields-view');
   const monitorTab = getNode('sidebar-monitor-tab');
   const settingsTab = getNode('sidebar-settings-tab');
   const profileTab = getNode('sidebar-profile-tab');
+  const fieldsTab = getNode('sidebar-fields-tab');
   const activeView = store.sidebarView || 'monitor';
   monitorView?.classList.toggle('hidden', activeView !== 'monitor');
   settingsView?.classList.toggle('hidden', activeView !== 'settings');
   profileView?.classList.toggle('hidden', activeView !== 'profile');
+  fieldsView?.classList.toggle('hidden', activeView !== 'fields');
   monitorTab?.classList.toggle('active', activeView === 'monitor');
   settingsTab?.classList.toggle('active', activeView === 'settings');
   profileTab?.classList.toggle('active', activeView === 'profile');
+  fieldsTab?.classList.toggle('active', activeView === 'fields');
 }
 
 export function setSidebarView(view) {

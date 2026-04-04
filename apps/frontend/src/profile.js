@@ -1,6 +1,6 @@
-import { fetchProfileMe, profilePageUrl, saveProfileMe } from './api.js?v=20260329-5';
-import { setStore, store } from './state.js?v=20260329-2';
-import { setSidebarView, syncSidebarView } from './settings.js?v=20260329-2';
+import { fetchProfileMe, profilePageUrl, saveProfileMe } from './api.js?v=20260404-8';
+import { setStore, store } from './state.js?v=20260404-8';
+import { setSidebarView, syncSidebarView } from './settings.js?v=20260331-1';
 
 function getNode(id) {
   return document.getElementById(id);
@@ -75,6 +75,44 @@ function formatDate(value) {
   }
 }
 
+function profileBannerStorageKey() {
+  const email = store.authUser?.email || store.profilePayload?.google_identity?.email || 'anon';
+  return `agroclimax:profile-banner-dismissed:${email}`;
+}
+
+function profileBannerDismissToken(completion = {}) {
+  const pct = Number(completion.completion_pct || 0).toFixed(0);
+  const missing = Array.isArray(completion.missing_fields) ? completion.missing_fields.join('|') : '';
+  return `${pct}:${missing}`;
+}
+
+function getDismissedProfileBannerToken() {
+  try {
+    return window.localStorage.getItem(profileBannerStorageKey()) || '';
+  } catch {
+    return '';
+  }
+}
+
+function setDismissedProfileBannerToken(token) {
+  try {
+    window.localStorage.setItem(profileBannerStorageKey(), token);
+  } catch {}
+}
+
+function clearDismissedProfileBannerToken() {
+  try {
+    window.localStorage.removeItem(profileBannerStorageKey());
+  } catch {}
+}
+
+function dismissProfileBanner() {
+  const completion = store.profilePayload?.completion || store.profileStatus;
+  if (!completion) return;
+  setDismissedProfileBannerToken(profileBannerDismissToken(completion));
+  getNode('profile-completion-banner')?.classList.add('hidden');
+}
+
 function renderCompletionSummary() {
   const node = getNode('profile-completion-summary');
   if (!node) return;
@@ -103,6 +141,12 @@ function renderCompletionBanner() {
   if (!banner || !copy || !pct) return;
   const completion = store.profilePayload?.completion || store.profileStatus;
   if (!store.authUser || !completion || completion.is_complete) {
+    if (completion?.is_complete) clearDismissedProfileBannerToken();
+    banner.classList.add('hidden');
+    return;
+  }
+  const dismissToken = profileBannerDismissToken(completion);
+  if (getDismissedProfileBannerToken() === dismissToken) {
     banner.classList.add('hidden');
     return;
   }
@@ -410,6 +454,7 @@ export function initProfilePanel() {
   const profileTab = getNode('sidebar-profile-tab');
   const profileBanner = getNode('profile-completion-banner');
   const profileBannerButton = getNode('profile-completion-open-btn');
+  const profileBannerCloseButton = getNode('profile-completion-close-btn');
   const profileOpenFullButton = getNode('profile-open-full-btn');
   const openProfilePage = () => {
     window.location.assign(profilePageUrl());
@@ -433,6 +478,11 @@ export function initProfilePanel() {
   profileBannerButton?.addEventListener('click', (event) => {
     event.preventDefault();
     openProfilePage();
+  });
+  profileBannerCloseButton?.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    dismissProfileBanner();
   });
   profileOpenFullButton?.addEventListener('click', () => {
     window.open(profilePageUrl(), '_blank', 'noopener,noreferrer');

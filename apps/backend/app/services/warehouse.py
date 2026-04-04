@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 import hashlib
 from typing import Any
 from uuid import uuid4
@@ -16,6 +16,7 @@ from app.db.session import SPATIAL_BACKEND_ENABLED
 from app.models.humedad import AOIUnit
 from app.models.materialized import (
     LatestStateCache,
+    HistoricalStateCache,
     SatelliteLayerCatalog,
     SatelliteLayerSnapshot,
     SpatialLayerFeature,
@@ -103,6 +104,10 @@ def latest_state_cache_key(scope: str, unit_id: str | None = None, department: s
     return f"state::{scope}::default"
 
 
+def historical_state_cache_key(scope: str, unit_id: str | None = None, department: str | None = None) -> str:
+    return latest_state_cache_key(scope, unit_id=unit_id, department=department)
+
+
 def _payload_hash(payload: dict[str, Any]) -> str:
     return hashlib.sha256(str(payload).encode("utf-8")).hexdigest()
 
@@ -114,6 +119,11 @@ def _safe_observed_at(value: str | None) -> datetime:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _date_bounds(target_date: date) -> tuple[datetime, datetime]:
+    start = datetime.combine(target_date, time.min, tzinfo=timezone.utc)
+    return start, start + timedelta(days=1)
 
 
 def _dialect_name(session: AsyncSession) -> str:
@@ -261,6 +271,77 @@ async def upsert_latest_state_cache(
     return row
 
 
+async def upsert_historical_state_cache(
+    session: AsyncSession,
+    payload: dict[str, Any],
+    *,
+    scope: str,
+    unit_id: str | None = None,
+    department: str | None = None,
+) -> HistoricalStateCache:
+    cache_key = historical_state_cache_key(scope, unit_id=unit_id, department=department)
+    observed_at = _safe_observed_at(payload.get("observed_at"))
+    payload_hash = _payload_hash(payload)
+    values = {
+        "id": str(uuid4()),
+        "cache_key": cache_key,
+        "scope": scope,
+        "unit_id": unit_id,
+        "department": department,
+        "observed_at": observed_at,
+        "payload": payload,
+        "payload_hash": payload_hash,
+        "updated_at": datetime.utcnow(),
+    }
+    insert_stmt = _build_insert(session, HistoricalStateCache)
+    if insert_stmt is not None:
+        await session.execute(
+            insert_stmt.values(**values).on_conflict_do_update(
+                index_elements=[HistoricalStateCache.cache_key, HistoricalStateCache.observed_at],
+                set_={
+                    "scope": scope,
+                    "unit_id": unit_id,
+                    "department": department,
+                    "payload": payload,
+                    "payload_hash": payload_hash,
+                    "updated_at": datetime.utcnow(),
+                },
+            )
+        )
+        await session.flush()
+        row = await _fetch_one_by(
+            session,
+            HistoricalStateCache,
+            HistoricalStateCache.cache_key == cache_key,
+            HistoricalStateCache.observed_at == observed_at,
+        )
+        if row is not None:
+            return row
+
+    row = await _fetch_one_by(
+        session,
+        HistoricalStateCache,
+        HistoricalStateCache.cache_key == cache_key,
+        HistoricalStateCache.observed_at == observed_at,
+    )
+    if row is None:
+        row = HistoricalStateCache(
+            cache_key=cache_key,
+            scope=scope,
+            unit_id=unit_id,
+            department=department,
+            observed_at=observed_at,
+        )
+        session.add(row)
+    row.scope = scope
+    row.unit_id = unit_id
+    row.department = department
+    row.payload = payload
+    row.payload_hash = payload_hash
+    await session.flush()
+    return row
+
+
 async def upsert_index_snapshot(session: AsyncSession, unit: AOIUnit, payload: dict[str, Any]) -> UnitIndexSnapshot:
     observed_at = _safe_observed_at(payload.get("observed_at"))
     raw = payload.get("raw_metrics") or {}
@@ -340,12 +421,20 @@ async def upsert_index_snapshot(session: AsyncSession, unit: AOIUnit, payload: d
 async def upsert_layer_snapshots(session: AsyncSession, unit: AOIUnit, payload: dict[str, Any]) -> None:
     observed_at = _safe_observed_at(payload.get("observed_at"))
     availability_score = float(payload.get("confidence_score") or 0.0)
+    source_mode = payload.get("data_mode", "simulated")
+    timeline_interpolated = source_mode in {"carry_forward_live", "simulated", "historical_synthetic"}
     for layer_key in LAYER_DEFINITIONS:
         summary_stats = _layer_stats_for_key(layer_key, payload)
         metadata_extra = {
             "state": payload.get("state"),
             "provider": LAYER_DEFINITIONS[layer_key]["provider"],
             "observed_at": payload.get("observed_at"),
+            "primary_source_date": observed_at.date().isoformat(),
+            "secondary_source_date": None,
+            "blend_weight": 0.0,
+            "is_interpolated": timeline_interpolated,
+            "label": "Interpolado" if timeline_interpolated else "Real",
+            "availability": "available" if availability_score > 0 else "missing",
         }
         values = {
             "id": str(uuid4()),
@@ -354,7 +443,7 @@ async def upsert_layer_snapshots(session: AsyncSession, unit: AOIUnit, payload: 
             "department": unit.department,
             "observed_at": observed_at,
             "layer_key": layer_key,
-            "source_mode": payload.get("data_mode", "simulated"),
+            "source_mode": source_mode,
             "tile_path": f"/api/tiles/{layer_key}/{{z}}/{{x}}/{{y}}.png",
             "availability_score": availability_score,
             "summary_stats": summary_stats,
@@ -472,6 +561,13 @@ async def materialize_unit_payload(
     update_latest_cache: bool = True,
     update_spatial_features: bool = True,
 ) -> None:
+    await upsert_historical_state_cache(
+        session,
+        payload,
+        scope=payload.get("scope", unit.scope),
+        unit_id=unit.id,
+        department=unit.department,
+    )
     if update_latest_cache:
         await upsert_latest_state_cache(session, payload, scope=payload.get("scope", unit.scope), unit_id=unit.id, department=unit.department)
     await upsert_index_snapshot(session, unit, payload)
@@ -491,6 +587,93 @@ async def get_cached_state_payload(
     result = await session.execute(select(LatestStateCache).where(LatestStateCache.cache_key == cache_key).limit(1))
     row = result.scalar_one_or_none()
     return row.payload if row else None
+
+
+async def get_historical_state_row(
+    session: AsyncSession,
+    *,
+    scope: str,
+    target_date: date,
+    unit_id: str | None = None,
+    department: str | None = None,
+    allow_previous: bool = True,
+) -> tuple[HistoricalStateCache | None, str]:
+    cache_key = historical_state_cache_key(scope, unit_id=unit_id, department=department)
+    window_start, window_end = _date_bounds(target_date)
+    exact_result = await session.execute(
+        select(HistoricalStateCache)
+        .where(
+            HistoricalStateCache.cache_key == cache_key,
+            HistoricalStateCache.observed_at >= window_start,
+            HistoricalStateCache.observed_at < window_end,
+        )
+        .order_by(desc(HistoricalStateCache.observed_at))
+        .limit(1)
+    )
+    exact_row = exact_result.scalar_one_or_none()
+    if exact_row is not None:
+        return exact_row, "exact"
+    if not allow_previous:
+        return None, "missing"
+
+    fallback_result = await session.execute(
+        select(HistoricalStateCache)
+        .where(
+            HistoricalStateCache.cache_key == cache_key,
+            HistoricalStateCache.observed_at < window_end,
+        )
+        .order_by(desc(HistoricalStateCache.observed_at))
+        .limit(1)
+    )
+    fallback_row = fallback_result.scalar_one_or_none()
+    if fallback_row is not None:
+        return fallback_row, "fallback_previous"
+    return None, "missing"
+
+
+async def get_historical_state_payload(
+    session: AsyncSession,
+    *,
+    scope: str,
+    target_date: date,
+    unit_id: str | None = None,
+    department: str | None = None,
+    allow_previous: bool = True,
+) -> tuple[dict[str, Any] | None, str]:
+    row, cache_status = await get_historical_state_row(
+        session,
+        scope=scope,
+        target_date=target_date,
+        unit_id=unit_id,
+        department=department,
+        allow_previous=allow_previous,
+    )
+    return (row.payload if row else None), cache_status
+
+
+async def get_historical_state_history_rows(
+    session: AsyncSession,
+    *,
+    scope: str,
+    target_date: date,
+    limit: int = 30,
+    unit_id: str | None = None,
+    department: str | None = None,
+) -> list[HistoricalStateCache]:
+    cache_key = historical_state_cache_key(scope, unit_id=unit_id, department=department)
+    start_date = target_date - timedelta(days=max(limit, 1) - 1)
+    window_start, _ = _date_bounds(start_date)
+    _, window_end = _date_bounds(target_date)
+    result = await session.execute(
+        select(HistoricalStateCache)
+        .where(
+            HistoricalStateCache.cache_key == cache_key,
+            HistoricalStateCache.observed_at >= window_start,
+            HistoricalStateCache.observed_at < window_end,
+        )
+        .order_by(desc(HistoricalStateCache.observed_at))
+    )
+    return list(result.scalars().all())
 
 
 async def get_cached_layer_features(

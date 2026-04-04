@@ -8,6 +8,7 @@ from app.services.pipeline_ops import (
     execute_coneat_prewarm_job,
     execute_daily_pipeline_job,
     execute_recalibration_job,
+    execute_timeline_backfill_job,
     get_pipeline_status,
     list_pipeline_runs,
     refresh_materialized_layers,
@@ -79,6 +80,26 @@ async def backfill_historico(
         start_date=fecha_desde,
         end_date=fecha_hasta,
         include_recalibration=incluir_recalibracion,
+        force=force,
+    )
+
+
+@router.post("/backfill-timeline")
+async def backfill_timeline_historico(
+    fecha_hasta: date | None = Query(None),
+    fecha_desde: date | None = Query(None),
+    window_days: int | None = Query(None, ge=1, le=365),
+    incluir_recalibracion: bool = Query(True),
+    force: bool = Query(False),
+    db: AsyncSession = Depends(get_db),
+):
+    return await execute_timeline_backfill_job(
+        db,
+        start_date=fecha_desde,
+        end_date=fecha_hasta,
+        window_days=window_days,
+        include_recalibration=incluir_recalibracion,
+        trigger_source="manual",
         force=force,
     )
 

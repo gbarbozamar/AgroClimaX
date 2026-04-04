@@ -15,6 +15,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.models.farm import FarmField
 from app.models.alerta import (
     AlertState,
     AlertSubscription,
@@ -24,18 +25,26 @@ from app.models.alerta import (
 )
 from app.models.auth import AppUser, AppUserProfile
 from app.models.humedad import AOIUnit
+from app.services.catalog import seed_catalog_units
+from app.services.farms import (
+    get_field_by_aoi_unit_id,
+    get_field_for_subscription,
+    list_field_overlay_features,
+    list_fields,
+)
 from app.services.notification_media import (
     build_national_geometry,
     create_notification_media_assets,
     load_media_asset_bytes,
 )
+from app.services.warehouse import get_cached_state_payload
 
 
 CONFIDENCE_DELTA_THRESHOLD = 15.0
 FORECAST_DELTA_THRESHOLD = 10.0
 FORECAST_RISK_FLOOR = 55.0
 STATE_LEVELS = {"Normal": 0, "Vigilancia": 1, "Alerta": 2, "Emergencia": 3}
-SUPPORTED_SUBSCRIPTION_SCOPES = {"productive_unit", "department", "national"}
+SUPPORTED_SUBSCRIPTION_SCOPES = {"productive_unit", "field", "department", "national"}
 SUPPORTED_CHANNELS = {"email", "whatsapp"}
 logger = logging.getLogger(__name__)
 
@@ -176,6 +185,7 @@ def _whatsapp_media_caption(asset: dict[str, Any]) -> str:
 def _scope_display(scope_type: str) -> str:
     labels = {
         "productive_unit": "Predio",
+        "field": "Campo",
         "department": "Departamento",
         "national": "Pais",
     }
@@ -306,6 +316,116 @@ def _summarize_dispatch_results(results: list[dict[str, Any]]) -> dict[str, Any]
 
 
 class NotificationService:
+    def _manual_test_state_from_payload(
+        self,
+        *,
+        unit_id: str,
+        scope: str,
+        department: str,
+        payload: dict[str, Any] | None,
+    ) -> AlertState | None:
+        if not payload:
+            return None
+        observed_at_raw = payload.get("observed_at")
+        observed_at = datetime.fromisoformat(observed_at_raw) if observed_at_raw else _now_utc()
+        return AlertState(
+            unit_id=unit_id,
+            scope=payload.get("scope") or scope,
+            department=payload.get("department") or department,
+            observed_at=observed_at,
+            current_state=payload.get("state") or "Vigilancia",
+            state_level=int(payload.get("state_level") or _state_level(payload.get("state")) or 1),
+            risk_score=float(payload.get("risk_score") or 55.0),
+            confidence_score=float(payload.get("confidence_score") or 72.0),
+            affected_pct=float(payload.get("affected_pct") or 0.0),
+            days_in_state=int(payload.get("days_in_state") or 1),
+            data_mode=payload.get("data_mode") or "cached_manual_test",
+            drivers=payload.get("drivers") or [{"name": "prueba_manual", "score": 1.0}],
+            forecast=payload.get("forecast") or [],
+        )
+
+    def _fallback_manual_test_state(
+        self,
+        *,
+        unit_id: str,
+        scope: str,
+        department: str,
+    ) -> AlertState:
+        return AlertState(
+            unit_id=unit_id,
+            scope=scope,
+            department=department,
+            observed_at=_now_utc(),
+            current_state="Vigilancia",
+            state_level=1,
+            risk_score=55.0,
+            confidence_score=72.0,
+            affected_pct=0.0,
+            days_in_state=1,
+            data_mode="synthetic_manual_test",
+            drivers=[{"name": "prueba_manual", "score": 1.0}],
+            forecast=[],
+        )
+
+    async def _resolve_manual_test_state(
+        self,
+        session: AsyncSession,
+        *,
+        unit: AOIUnit,
+    ) -> AlertState:
+        state_result = await session.execute(select(AlertState).where(AlertState.unit_id == unit.id))
+        current_state = state_result.scalar_one_or_none()
+        if current_state is not None:
+            return current_state
+
+        cached_payload = await get_cached_state_payload(
+            session,
+            scope=unit.scope,
+            unit_id=unit.id,
+            department=unit.department,
+        )
+        cached_state = self._manual_test_state_from_payload(
+            unit_id=unit.id,
+            scope=unit.scope,
+            department=unit.department,
+            payload=cached_payload,
+        )
+        if cached_state is not None:
+            return cached_state
+
+        return self._fallback_manual_test_state(
+            unit_id=unit.id,
+            scope=unit.scope,
+            department=unit.department,
+        )
+
+    async def _resolve_manual_test_national_payload(
+        self,
+        session: AsyncSession,
+    ) -> dict[str, Any]:
+        cached_payload = await get_cached_state_payload(session, scope="nacional", department="Uruguay")
+        if cached_payload:
+            return {
+                **cached_payload,
+                "scope": cached_payload.get("scope") or "nacional",
+                "department": cached_payload.get("department") or "Uruguay",
+                "data_mode": cached_payload.get("data_mode") or "cached_manual_test",
+            }
+        return {
+            "scope": "nacional",
+            "department": "Uruguay",
+            "state": "Vigilancia",
+            "state_level": 1,
+            "risk_score": 55.0,
+            "confidence_score": 72.0,
+            "affected_pct": 0.0,
+            "days_in_state": 1,
+            "data_mode": "synthetic_manual_test",
+            "drivers": [{"name": "prueba_manual", "score": 1.0}],
+            "forecast": [],
+            "observed_at": _now_utc().isoformat(),
+        }
+
     async def _twilio_request_json(
         self,
         *,
@@ -496,14 +616,24 @@ class NotificationService:
     async def get_alert_subscription_options(self, session: AsyncSession, *, user: AppUser) -> dict[str, Any]:
         profile_result = await session.execute(select(AppUserProfile).where(AppUserProfile.user_id == user.id))
         profile = profile_result.scalar_one_or_none()
-        departments_result = await session.execute(
-            select(AOIUnit).where(AOIUnit.unit_type == "department", AOIUnit.active.is_(True)).order_by(AOIUnit.department)
-        )
+
+        async def _query_departments() -> list[AOIUnit]:
+            departments_result = await session.execute(
+                select(AOIUnit).where(AOIUnit.unit_type == "department", AOIUnit.active.is_(True)).order_by(AOIUnit.department)
+            )
+            return list(departments_result.scalars().all())
+
+        departments = await _query_departments()
+        if not departments:
+            await seed_catalog_units(session)
+            departments = await _query_departments()
         productive_result = await session.execute(
             select(AOIUnit).where(AOIUnit.unit_type == "productive_unit", AOIUnit.active.is_(True)).order_by(AOIUnit.department, AOIUnit.name)
         )
+        field_rows = await list_fields(session, user=user)
         return {
             "scope_types": [
+                {"value": "field", "label": "Campo"},
                 {"value": "productive_unit", "label": "Predio"},
                 {"value": "department", "label": "Departamento"},
                 {"value": "national", "label": "Pais"},
@@ -520,7 +650,7 @@ class NotificationService:
             "national": {"value": "national", "label": "Uruguay"},
             "departments": [
                 {"id": unit.id, "label": unit.department, "department": unit.department}
-                for unit in departments_result.scalars().all()
+                for unit in departments
             ],
             "productive_units": [
                 {
@@ -528,8 +658,20 @@ class NotificationService:
                     "label": unit.name,
                     "department": unit.department,
                     "unit_category": (unit.metadata_extra or {}).get("unit_category", "predio"),
+                    "legacy": True,
                 }
                 for unit in productive_result.scalars().all()
+            ],
+            "fields": [
+                {
+                    "id": item["id"],
+                    "label": item["name"],
+                    "department": item["department"],
+                    "establishment_id": item["establishment_id"],
+                    "establishment_name": item["establishment_name"],
+                    "aoi_unit_id": item["aoi_unit_id"],
+                }
+                for item in field_rows
             ],
             "contact": {
                 "email": user.email,
@@ -566,6 +708,14 @@ class NotificationService:
         if scope_type == "national":
             scope_id = None
             scope_label = "Uruguay"
+        elif scope_type == "field":
+            scope_id = str(payload.get("scope_id") or "").strip()
+            if not scope_id:
+                raise ValueError("Debes seleccionar un alcance")
+            field_row = await get_field_for_subscription(session, user_id=user.id, field_id=scope_id)
+            if field_row is None:
+                raise ValueError("Campo no encontrado")
+            scope_label = field_row.name
         else:
             scope_id = str(payload.get("scope_id") or "").strip()
             if not scope_id:
@@ -630,42 +780,44 @@ class NotificationService:
         if row is None or row.user_id != user.id:
             raise ValueError("Suscripcion no encontrada")
         if row.scope_type == "national":
-            from app.services.analysis import get_scope_snapshot
-
-            snapshot = await get_scope_snapshot(session, scope="nacional")
             return await self.dispatch_national_alert_subscriptions(
                 session,
-                current_payload=snapshot,
+                current_payload=await self._resolve_manual_test_national_payload(session),
                 previous_payload=None,
                 subscription_ids=[row.id],
                 reason_override="manual_test",
+            )
+
+        if row.scope_type == "field":
+            field_row = await get_field_for_subscription(session, user_id=user.id, field_id=str(row.scope_id or ""))
+            if field_row is None:
+                raise ValueError("Campo de la suscripcion no encontrado")
+            if not field_row.aoi_unit_id:
+                raise ValueError("El campo no tiene unidad analitica asociada")
+            unit = await session.get(AOIUnit, field_row.aoi_unit_id)
+            if unit is None:
+                raise ValueError("Unidad analitica del campo no encontrada")
+            current_state = await self._resolve_manual_test_state(session, unit=unit)
+            return await self._dispatch_configurable_scope_subscriptions(
+                session,
+                scope_type="field",
+                scope_id=field_row.id,
+                scope_label=field_row.name,
+                department=field_row.department,
+                geometry_geojson=field_row.field_geometry_geojson,
+                overlay_features=await list_field_overlay_features(session, field_id=field_row.id),
+                current_state=current_state,
+                alert_event=None,
+                reason_key="manual_test",
+                subscription_ids=[row.id],
+                force_dispatch=True,
             )
 
         unit_result = await session.execute(select(AOIUnit).where(AOIUnit.id == row.scope_id))
         unit = unit_result.scalar_one_or_none()
         if unit is None:
             raise ValueError("Unidad de la suscripcion no encontrada")
-        state_result = await session.execute(select(AlertState).where(AlertState.unit_id == unit.id))
-        current_state = state_result.scalar_one_or_none()
-        if current_state is None:
-            from app.services.analysis import get_scope_snapshot
-
-            snapshot = await get_scope_snapshot(session, scope="unidad", unit_id=unit.id)
-            current_state = AlertState(
-                unit_id=unit.id,
-                scope=snapshot.get("scope") or unit.scope,
-                department=snapshot.get("department") or unit.department,
-                observed_at=datetime.fromisoformat(snapshot["observed_at"]) if snapshot.get("observed_at") else _now_utc(),
-                current_state=snapshot.get("state") or "Normal",
-                state_level=int(snapshot.get("state_level") or 0),
-                risk_score=float(snapshot.get("risk_score") or 0.0),
-                confidence_score=float(snapshot.get("confidence_score") or 0.0),
-                affected_pct=float(snapshot.get("affected_pct") or 0.0),
-                days_in_state=int(snapshot.get("days_in_state") or 0),
-                data_mode=snapshot.get("data_mode") or "simulated",
-                drivers=snapshot.get("drivers") or [],
-                forecast=snapshot.get("forecast") or [],
-            )
+        current_state = await self._resolve_manual_test_state(session, unit=unit)
         return await self._dispatch_configurable_scope_subscriptions(
             session,
             scope_type="department" if unit.unit_type == "department" else "productive_unit",
@@ -750,6 +902,7 @@ class NotificationService:
                     )
 
         configurable_result = {"status": "skipped", "reason": "no_operational_trigger", "results": []}
+        field_configurable_result = {"status": "skipped", "reason": "no_field_scope", "results": []}
         if reason_codes and unit.unit_type in {"productive_unit", "department"}:
             configurable_result = await self._dispatch_configurable_scope_subscriptions(
                 session,
@@ -762,8 +915,23 @@ class NotificationService:
                 alert_event=alert_event,
                 reason_key=reason_key,
             )
+            if unit.unit_type == "productive_unit":
+                field_row = await get_field_by_aoi_unit_id(session, aoi_unit_id=unit.id)
+                if field_row is not None:
+                    field_configurable_result = await self._dispatch_configurable_scope_subscriptions(
+                        session,
+                        scope_type="field",
+                        scope_id=field_row.id,
+                        scope_label=field_row.name,
+                        department=field_row.department,
+                        geometry_geojson=field_row.field_geometry_geojson,
+                        overlay_features=await list_field_overlay_features(session, field_id=field_row.id),
+                        current_state=current_state,
+                        alert_event=alert_event,
+                        reason_key=reason_key,
+                    )
 
-        results = legacy_results + configurable_result.get("results", [])
+        results = legacy_results + configurable_result.get("results", []) + field_configurable_result.get("results", [])
         if not results:
             return {"status": "skipped", "reason": reason_key or "no_operational_trigger", "results": []}
         return {
@@ -771,6 +939,7 @@ class NotificationService:
             "reason": reason_key,
             "legacy_results": legacy_results,
             "configurable_results": configurable_result.get("results", []),
+            "field_configurable_results": field_configurable_result.get("results", []),
             "results": results,
         }
 
@@ -834,6 +1003,7 @@ class NotificationService:
         scope_label: str,
         department: str,
         geometry_geojson: dict[str, Any] | None,
+        overlay_features: list[dict[str, Any]] | None = None,
         current_state: AlertState,
         alert_event: AlertaEvento | None,
         reason_key: str,
@@ -871,6 +1041,7 @@ class NotificationService:
             risk_score=float(current_state.risk_score or 0.0),
             confidence_score=float(current_state.confidence_score or 0.0),
             affected_pct=float(current_state.affected_pct or 0.0),
+            overlay_features=overlay_features,
             alert_event_id=alert_event.id if alert_event else None,
             subscription_id=None,
         )

@@ -314,24 +314,32 @@ async def materialize_productive_unit_cache(
     latest_states = {state.unit_id: state for state in state_result.scalars().all()}
     materialized = 0
     for unit in productive_units:
-        state = latest_states.get(unit.id)
-        if state is None or state.observed_at is None or state.observed_at.date() != target_date:
-            analysis = await analyze_unit(session, unit=unit, target_date=target_date, geojson=unit.geometry_geojson)
-            state = analysis["state"]
-        payload = _format_state_payload(unit, state)
-        payload = {
-            **payload,
-            "unit_category": (unit.metadata_extra or {}).get("unit_category", "predio"),
-            "geometry_source": unit.source,
-            "summary_mode": "productive_unit",
-        }
-        await materialize_unit_payload(
-            session,
-            unit,
-            payload,
-            update_latest_cache=persist_latest,
-            update_spatial_features=True,
-        )
+        metadata_extra = unit.metadata_extra or {}
+        if metadata_extra.get("unit_category") == "campo" and metadata_extra.get("source") == "user_field":
+            from app.services.farms import materialize_field_analytics_for_unit
+
+            bundle = await materialize_field_analytics_for_unit(session, field_unit=unit, target_date=target_date)
+            if bundle is None:
+                continue
+        else:
+            state = latest_states.get(unit.id)
+            if state is None or state.observed_at is None or state.observed_at.date() != target_date:
+                analysis = await analyze_unit(session, unit=unit, target_date=target_date, geojson=unit.geometry_geojson)
+                state = analysis["state"]
+            payload = _format_state_payload(unit, state)
+            payload = {
+                **payload,
+                "unit_category": metadata_extra.get("unit_category", "predio"),
+                "geometry_source": unit.source,
+                "summary_mode": "productive_unit",
+            }
+            await materialize_unit_payload(
+                session,
+                unit,
+                payload,
+                update_latest_cache=persist_latest,
+                update_spatial_features=True,
+            )
         materialized += 1
 
     await session.commit()

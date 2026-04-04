@@ -6,6 +6,7 @@ from pathlib import Path
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.pool import NullPool
 
 from app.core.config import settings
 
@@ -58,6 +59,8 @@ SQLITE_BACKEND_ENABLED = DATABASE_BACKEND_NAME == "sqlite"
 engine_kwargs = {"echo": False, "future": True}
 if SQLITE_BACKEND_ENABLED:
     engine_kwargs["connect_args"] = {"timeout": 30}
+    if settings.app_env == "testing":
+        engine_kwargs["poolclass"] = NullPool
 
 engine = create_async_engine(RESOLVED_DATABASE_URL, **engine_kwargs)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)

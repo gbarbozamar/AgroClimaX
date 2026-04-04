@@ -95,7 +95,7 @@ def _choose_zoom(scope_type: str, bounds: tuple[float, float, float, float]) -> 
     width = abs(bounds[2] - bounds[0])
     height = abs(bounds[3] - bounds[1])
     span = max(width, height)
-    if scope_type == "productive_unit":
+    if scope_type in {"productive_unit", "field"}:
         return 11 if span < 0.2 else 10
     if scope_type == "department":
         return 7 if span > 0.8 else 8
@@ -192,6 +192,56 @@ def _draw_geometry_overlay(image: Image.Image, geometry, meta: dict[str, Any], *
             draw.line(exterior + [exterior[0]], fill=outline_rgba, width=width)
 
 
+def _draw_labeled_overlay_features(
+    image: Image.Image,
+    features: list[dict[str, Any]] | None,
+    meta: dict[str, Any],
+    *,
+    outline_rgba: tuple[int, int, int, int] = (255, 255, 255, 230),
+    label_fill: str = "#f5f7ff",
+    width: int = 3,
+) -> None:
+    if not features:
+        return
+    draw = ImageDraw.Draw(image, "RGBA")
+    font = _font(18)
+    zoom = meta.get("zoom", 0)
+    origin_px = meta.get("origin_px", (0.0, 0.0))
+    crop_box = meta.get("crop_box", (0, 0, image.width, image.height))
+
+    for feature in features:
+        geometry_geojson = feature.get("geometry_geojson")
+        label = str(feature.get("label") or "").strip()
+        geometry = _normalize_geometry(geometry_geojson)
+        if geometry is None:
+            continue
+        polygons: list[Polygon] = []
+        if isinstance(geometry, Polygon):
+            polygons = [geometry]
+        elif isinstance(geometry, MultiPolygon):
+            polygons = list(geometry.geoms)
+        elif isinstance(geometry, GeometryCollection):
+            polygons = [geom for geom in geometry.geoms if isinstance(geom, Polygon)]
+        for polygon in polygons:
+            exterior = [
+                _project_point(lon, lat, zoom, origin_px, crop_box, image.size)
+                for lon, lat in list(polygon.exterior.coords)
+            ]
+            if len(exterior) >= 3:
+                draw.line(exterior + [exterior[0]], fill=outline_rgba, width=width)
+        if label:
+            point = geometry.representative_point()
+            px, py = _project_point(point.x, point.y, zoom, origin_px, crop_box, image.size)
+            text_width = int(draw.textlength(label, font=font))
+            draw.rounded_rectangle(
+                (px - 10, py - 14, px + text_width + 10, py + 18),
+                radius=10,
+                fill=(13, 19, 33, 210),
+                outline=outline_rgba,
+            )
+            draw.text((px, py - 8), label, fill=label_fill, font=font)
+
+
 def _compose_card(base: Image.Image, *, title: str, subtitle: str, badge: str, badge_color: str, lines: list[str]) -> Image.Image:
     card = Image.new("RGBA", (base.width, base.height + HEADER_HEIGHT + FOOTER_HEIGHT), PANEL_BG)
     card.alpha_composite(base, (0, HEADER_HEIGHT))
@@ -273,6 +323,7 @@ async def create_notification_media_assets(
     risk_score: float | None,
     confidence_score: float | None,
     affected_pct: float | None,
+    overlay_features: list[dict[str, Any]] | None = None,
     alert_event_id: str | None = None,
     subscription_id: str | None = None,
 ) -> list[dict[str, Any]]:
@@ -286,6 +337,7 @@ async def create_notification_media_assets(
     overlay = Image.new("RGBA", overview_background.size, (0, 0, 0, 0))
     _draw_geometry_overlay(overlay, geometry, meta, fill_rgba=rgba_fill, outline_rgba=rgba_outline, width=5)
     overview_background = Image.alpha_composite(overview_background, overlay)
+    _draw_labeled_overlay_features(overview_background, overlay_features, meta)
     overview_card = _compose_card(
         overview_background,
         title=f"{scope_label} | alerta {state_name or 'Normal'}",
@@ -303,6 +355,14 @@ async def create_notification_media_assets(
     humidity_overlay = Image.new("RGBA", humidity_background.size, (0, 0, 0, 0))
     _draw_geometry_overlay(humidity_overlay, geometry, meta, fill_rgba=(53, 207, 131, 26), outline_rgba=(141, 255, 194, 255), width=4)
     humidity_background = Image.alpha_composite(humidity_background, humidity_overlay)
+    _draw_labeled_overlay_features(
+        humidity_background,
+        overlay_features,
+        meta,
+        outline_rgba=(173, 234, 206, 220),
+        label_fill="#d8fff0",
+        width=2,
+    )
     humidity_card = _compose_card(
         humidity_background,
         title=f"{scope_label} | Humedad Superficial del Suelo",
