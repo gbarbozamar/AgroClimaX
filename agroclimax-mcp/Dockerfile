@@ -2,10 +2,10 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY agroclimax-mcp/requirements.txt ./
+COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY agroclimax-mcp/ ./
+COPY . ./
 
 EXPOSE 8090
 
