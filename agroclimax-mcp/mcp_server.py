@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from agroclimax_client import AgroClimaXClient
 from config import settings
@@ -15,6 +16,31 @@ client = AgroClimaXClient(
     api_key=settings.agroclimax_api_key,
 )
 
+
+def _build_allowed_hosts() -> list[str]:
+    allowed_hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+    for host in settings.mcp_allowed_hosts:
+        normalized = host.strip()
+        if not normalized:
+            continue
+        allowed_hosts.append(normalized)
+        if ":" not in normalized and "*" not in normalized:
+            allowed_hosts.append(f"{normalized}:*")
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for host in allowed_hosts:
+        if host in seen:
+            continue
+        seen.add(host)
+        deduped.append(host)
+    return deduped
+
+
+transport_security = TransportSecuritySettings(
+    enable_dns_rebinding_protection=True,
+    allowed_hosts=_build_allowed_hosts(),
+)
+
 mcp = FastMCP(
     name="AgroClimaX MCP",
     instructions=(
@@ -25,6 +51,7 @@ mcp = FastMCP(
     stateless_http=True,
     streamable_http_path="/",
     mount_path="/",
+    transport_security=transport_security,
 )
 
 register_search_tools(mcp, client)
