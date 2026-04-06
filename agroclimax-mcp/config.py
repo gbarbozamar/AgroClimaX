@@ -31,7 +31,8 @@ class MCPSettings(BaseSettings):
             return []
         if isinstance(value, list):
             return [str(item).strip() for item in value if str(item).strip()]
-        return [part.strip() for part in str(value).split(",") if part.strip()]
+        normalized = str(value).replace(",", " ")
+        return [part.strip() for part in normalized.split() if part.strip()]
 
 
 settings = MCPSettings()
