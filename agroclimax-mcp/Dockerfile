@@ -9,4 +9,4 @@ COPY . ./
 
 EXPOSE 8090
 
-CMD ["/bin/sh", "-c", "uvicorn server_app:app --host 0.0.0.0 --port ${MCP_SERVER_PORT:-8090}"]
+CMD ["/bin/sh", "-c", "uvicorn server_app:app --host 0.0.0.0 --port ${PORT:-8090}"]
