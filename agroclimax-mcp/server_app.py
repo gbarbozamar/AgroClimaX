@@ -28,11 +28,13 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="AgroClimaX MCP", version="0.1.0", lifespan=lifespan)
 _mcp_http_app = mcp.streamable_http_app()
-_mcp_http_endpoint = _mcp_http_app.routes[0].endpoint
 
 
 @app.middleware("http")
 async def require_client_bearer(request: Request, call_next):
+    if request.scope.get("path") == "/mcp":
+        request.scope["path"] = "/mcp/"
+        request.scope["raw_path"] = b"/mcp/"
     if request.url.path == "/healthz":
         return await call_next(request)
     if not settings.mcp_client_bearer_tokens:
@@ -48,5 +50,5 @@ async def healthz():
     return {"status": "ok", "service": "agroclimax-mcp"}
 
 
-for _path in ("/", "/mcp", "/mcp/"):
-    app.api_route(_path, methods=["GET", "POST", "DELETE"])(_mcp_http_endpoint)
+app.mount("/mcp", _mcp_http_app)
+app.mount("/", _mcp_http_app)
