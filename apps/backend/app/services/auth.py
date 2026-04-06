@@ -363,6 +363,28 @@ async def require_authenticated_request(
     return auth
 
 
+def _extract_bearer_token(request: Request) -> str | None:
+    raw_header = (request.headers.get("authorization") or "").strip()
+    if not raw_header:
+        return None
+    scheme, _, token = raw_header.partition(" ")
+    if scheme.lower() != "bearer":
+        return None
+    normalized = token.strip()
+    return normalized or None
+
+
+async def require_integration_service_request(request: Request) -> str:
+    configured_tokens = settings.integration_service_tokens
+    if not configured_tokens:
+        raise HTTPException(status_code=503, detail="Tokens de integracion no configurados")
+
+    token = _extract_bearer_token(request)
+    if token is None or token not in configured_tokens:
+        raise HTTPException(status_code=401, detail="Bearer token invalido para integracion")
+    return token
+
+
 async def logout_auth_session(request: Request, db: AsyncSession) -> JSONResponse:
     if _is_testing_bypass_enabled():
         response = JSONResponse({"status": "ok", "logged_out": True})

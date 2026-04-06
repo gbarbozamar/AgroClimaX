@@ -1,7 +1,8 @@
 from pathlib import Path
+from typing import Annotated
 
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -64,7 +65,7 @@ class Settings(BaseSettings):
     timeline_historical_window_days: int = 365
     coneat_cache_ttl_hours: int = 168
     coneat_prewarm_enabled: bool = True
-    coneat_prewarm_zoom_levels: list[int] = Field(default_factory=lambda: [6, 7, 8])
+    coneat_prewarm_zoom_levels: Annotated[list[int], NoDecode] = Field(default_factory=lambda: [6, 7, 8])
     preload_enabled: bool = True
     preload_neighbor_days: int = 1
     preload_adjacent_zoom_delta: int = 1
@@ -133,7 +134,8 @@ class Settings(BaseSettings):
     notification_state_change_only: bool = True
 
     # Ground truth / sensores
-    ground_truth_api_keys: list[str] = Field(default_factory=list)
+    ground_truth_api_keys: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    integration_service_tokens: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
     # Frontend / static
     frontend_mount_path: str = "/static"
@@ -141,6 +143,15 @@ class Settings(BaseSettings):
     @field_validator("ground_truth_api_keys", mode="before")
     @classmethod
     def parse_ground_truth_keys(cls, value: object) -> list[str]:
+        if value is None or value == "":
+            return []
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        return [part.strip() for part in str(value).split(",") if part.strip()]
+
+    @field_validator("integration_service_tokens", mode="before")
+    @classmethod
+    def parse_integration_service_tokens(cls, value: object) -> list[str]:
         if value is None or value == "":
             return []
         if isinstance(value, list):

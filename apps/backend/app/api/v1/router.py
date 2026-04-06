@@ -7,6 +7,7 @@ from app.api.v1.endpoints import (
     campos,
     ground_truth,
     hexagonos,
+    integrations_mcp,
     legacy,
     layers,
     notifications,
@@ -25,6 +26,7 @@ protected_router = APIRouter(dependencies=[Depends(require_authenticated_request
 
 api_router.include_router(auth.router)
 api_router.include_router(alert_subscriptions.public_router)
+api_router.include_router(integrations_mcp.router)
 protected_router.include_router(alertas.router)
 protected_router.include_router(alert_subscriptions.router)
 protected_router.include_router(campos.router)
