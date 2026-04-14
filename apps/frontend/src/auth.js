@@ -1,5 +1,5 @@
-import { fetchAuthMe, googleLoginUrl, logoutCurrentUser, profilePageUrl } from './api.js?v=20260404-8';
-import { setStore, store } from './state.js?v=20260404-8';
+import { fetchAuthMe, googleLoginUrl, logoutCurrentUser, profilePageUrl } from './api.js';
+import { setStore, store } from './state.js';
 
 function getNode(id) {
   return document.getElementById(id);

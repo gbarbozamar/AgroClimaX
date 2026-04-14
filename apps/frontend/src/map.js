@@ -1,9 +1,17 @@
-import { API_BASE, API_V1, fetchTimelineFrames, startTimelineWindowPreload, startViewportPreload } from './api.js?v=20260404-8';
-import { store, setStore } from './state.js?v=20260404-8';
+import { API_BASE, API_V1, fetchTimelineFrames, startTimelineWindowPreload, startViewportPreload } from './api.js';
+import { store, setStore } from './state.js';
 
 const CONEAT_MIN_VISIBLE_ZOOM = 11;
 const INITIAL_VIEW = { center: [-32.8, -56.0], zoom: 7 };
+const URUGUAY_SCOPE_BOUNDS = {
+  south: -35.61,
+  west: -58.92,
+  north: -29.89,
+  east: -52.82,
+};
 const TRANSPARENT_TILE_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP4DwQACfsD/Ql8Z9sAAAAASUVORK5CYII=';
+const ANALYTIC_MAX_NATIVE_ZOOM = 17;
+const ANALYTIC_MAX_RENDER_ZOOM = 22;
 const BUILTIN_LAYER_DEFS = [
   {
     id: 'alerta',
@@ -145,10 +153,26 @@ let farmManualMapDblClickHandler = null;
 let farmEditorContextLayer = null;
 let timelineManifestRequestSeq = 0;
 let timelineViewportRefreshHandle = null;
+let timelineViewportRepaintHandle = null;
 let timelinePlaybackHandle = null;
+let timelineApplyRequestSeq = 0;
+let timelineManifestQueued = false;
+let lastTimelineViewportKey = null;
 
 function tileUrl(layerName) {
   return buildAnalyticTileUrl(layerName);
+}
+
+function formatZoomLevel(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '-';
+  return Number.isInteger(numeric) ? String(numeric) : numeric.toFixed(1);
+}
+
+function updateMapZoomIndicator() {
+  const node = document.getElementById('map-zoom-indicator-value');
+  if (!node || !store.map?.getZoom) return;
+  node.textContent = formatZoomLevel(store.map.getZoom());
 }
 
 function clearMarkers() {
@@ -247,39 +271,131 @@ function timelineWarmRunwayDays() {
 }
 
 function timelineSliderIndex(isoDate) {
-  const start = parseIsoDate(startTimelineDate());
+  const dayCount = timelineWindowDayCount();
+  const start = parseIsoDate(timelineWindowStartDate());
   const current = parseIsoDate(isoDate);
-  if (!start || !current) return TIMELINE_WINDOW_DAYS - 1;
-  return Math.max(0, Math.min(TIMELINE_WINDOW_DAYS - 1, Math.round((current.getTime() - start.getTime()) / 86400000)));
+  if (!start || !current) return Math.max(0, dayCount - 1);
+  return Math.max(0, Math.min(dayCount - 1, Math.round((current.getTime() - start.getTime()) / 86400000)));
 }
 
 function isoDateFromSliderIndex(index) {
-  const start = parseIsoDate(startTimelineDate());
+  const start = parseIsoDate(timelineWindowStartDate());
   if (!start) return todayIsoDate();
   start.setUTCDate(start.getUTCDate() + Number(index || 0));
   return formatIsoDate(start);
 }
 
-function timelineViewportContext() {
-  if (!store.map) return { bbox: null, zoom: null, key: 'no-map' };
-  const bounds = store.map.getBounds();
-  const bbox = [
+function timelineWindowStartDate() {
+  return store.timelineFrames?.date_from || startTimelineDate();
+}
+
+function timelineWindowDayCount() {
+  const total = Number(store.timelineFrames?.total_days || 0);
+  return Number.isFinite(total) && total > 0 ? total : TIMELINE_WINDOW_DAYS;
+}
+
+function boundsToBbox(bounds, precision = 4) {
+  if (!bounds) return null;
+  return [
     bounds.getWest(),
     bounds.getSouth(),
     bounds.getEast(),
     bounds.getNorth(),
-  ].map((value) => Number(value).toFixed(4)).join(',');
-  const zoom = Math.round(store.map.getZoom());
-  return { bbox, zoom, key: `${bbox}|${zoom}` };
+  ].map((value) => Number(value).toFixed(precision)).join(',');
+}
+
+function lonToTileX(lon, zoom) {
+  const n = 2 ** zoom;
+  const clamped = Math.max(-180, Math.min(180, Number(lon)));
+  return Math.max(0, Math.min(n - 1, Math.floor(((clamped + 180) / 360) * n)));
+}
+
+function latToTileY(lat, zoom) {
+  const n = 2 ** zoom;
+  const clamped = Math.max(-85.05112878, Math.min(85.05112878, Number(lat)));
+  const radians = (clamped * Math.PI) / 180;
+  const tileY = Math.floor(((1 - (Math.log(Math.tan(radians) + (1 / Math.cos(radians))) / Math.PI)) / 2) * n);
+  return Math.max(0, Math.min(n - 1, tileY));
+}
+
+function boundsToTemporalBucketKey(bounds, zoom, scopeKey) {
+  if (!bounds || !Number.isFinite(Number(zoom))) return `${scopeKey}|no-bounds|${zoom || 'na'}`;
+  const minX = lonToTileX(bounds.getWest(), zoom);
+  const maxX = lonToTileX(bounds.getEast(), zoom);
+  const minY = latToTileY(bounds.getNorth(), zoom);
+  const maxY = latToTileY(bounds.getSouth(), zoom);
+  return `${scopeKey}|${zoom}|${minX}:${maxX}:${minY}:${maxY}`;
+}
+
+function bucketizedTemporalContextZoom(rawZoom, scopeType = 'nacional') {
+  const numericZoom = Number(rawZoom);
+  if (!Number.isFinite(numericZoom)) return 7;
+  const normalizedScopeType = String(scopeType || 'nacional').toLowerCase();
+  const maxZoom = normalizedScopeType === 'nacional'
+    ? 11
+    : normalizedScopeType === 'departamento'
+      ? 13
+      : ANALYTIC_MAX_NATIVE_ZOOM;
+  const rounded = Math.max(7, Math.round(numericZoom));
+  const bucketized = 7 + (Math.floor((rounded - 7) / 2) * 2);
+  return Math.min(Math.max(7, bucketized), maxZoom);
+}
+
+function currentTemporalScopeBounds(descriptor = currentViewportPreloadDescriptor()) {
+  if (!store.map || !descriptor) return null;
+  if (descriptor.scope_type === 'nacional') {
+    return store.departmentsLayer?.getBounds?.()
+      || window.L.latLngBounds(
+        [URUGUAY_SCOPE_BOUNDS.south, URUGUAY_SCOPE_BOUNDS.west],
+        [URUGUAY_SCOPE_BOUNDS.north, URUGUAY_SCOPE_BOUNDS.east],
+      );
+  }
+  if (descriptor.scope_type === 'departamento' && store.selectedDepartment) {
+    return store.departmentsLookup?.[store.selectedDepartment]?.getBounds?.() || null;
+  }
+  if (descriptor.scope_type === 'unidad') {
+    const unitId = descriptor.timeline_unit_id || descriptor.scope_ref;
+    return store.sectionsLookup?.[unitId]?.getBounds?.()
+      || store.productiveLookup?.[unitId]?.getBounds?.()
+      || store.hexLookup?.[unitId]?.getBounds?.()
+      || null;
+  }
+  if (descriptor.scope_type === 'field' && store.selectedFieldId) {
+    return store.farmFieldsLookup?.[store.selectedFieldId]?.getBounds?.() || null;
+  }
+  if (descriptor.scope_type === 'paddock' && store.selectedPaddockId) {
+    return store.farmPaddocksLookup?.[store.selectedPaddockId]?.getBounds?.() || null;
+  }
+  return null;
+}
+
+function timelineViewportContext() {
+  if (!store.map) return { bbox: null, zoom: null, key: 'no-map' };
+  const descriptor = currentViewportPreloadDescriptor();
+  const scopedBounds = currentTemporalScopeBounds(descriptor);
+  const useScopedBounds = Boolean(descriptor?.scope_type && descriptor.scope_type !== 'viewport' && scopedBounds);
+  const bounds = useScopedBounds ? scopedBounds : store.map.getBounds();
+  const bbox = boundsToBbox(bounds, useScopedBounds ? 4 : 2);
+  const zoom = bucketizedTemporalContextZoom(store.map.getZoom(), descriptor?.scope_type || 'nacional');
+  const scopeKey = `${descriptor?.scope_type || 'nacional'}:${descriptor?.scope_ref || 'Uruguay'}`;
+  return { bbox, zoom, key: boundsToTemporalBucketKey(bounds, zoom, scopeKey) };
+}
+
+function currentSelectedDepartmentValue() {
+  if (store.selectedDepartment) return store.selectedDepartment;
+  const selectValue = document.getElementById('department-select')?.value || null;
+  if (selectValue && selectValue !== 'nacional') return selectValue;
+  return null;
 }
 
 function currentViewportPreloadDescriptor() {
-  if (store.selectedPaddockId && store.selectedFieldDetail) {
+  const forceFieldScope = store.sidebarView === 'establishment_viewer';
+  if (!forceFieldScope && store.selectedPaddockId && store.selectedFieldDetail) {
     const paddock = (store.selectedFieldDetail.paddocks || []).find((item) => item.id === store.selectedPaddockId);
     if (paddock?.aoi_unit_id) {
       return {
         scope_type: 'paddock',
-        scope_ref: `paddock:${paddock.id}`,
+        scope_ref: paddock.aoi_unit_id,
         timeline_scope: 'unidad',
         timeline_unit_id: paddock.aoi_unit_id,
         timeline_department: store.selectedFieldDetail.department || null,
@@ -291,7 +407,7 @@ function currentViewportPreloadDescriptor() {
     if (field?.aoi_unit_id) {
       return {
         scope_type: 'field',
-        scope_ref: `field:${field.id}`,
+        scope_ref: field.aoi_unit_id,
         timeline_scope: 'unidad',
         timeline_unit_id: field.aoi_unit_id,
         timeline_department: field.department || null,
@@ -325,13 +441,30 @@ function currentViewportPreloadDescriptor() {
       timeline_department: null,
     };
   }
-  if (store.selectedScope === 'departamento' && store.selectedDepartment) {
+  if (store.selectedScope === 'unidad' && store.selectedUnitId) {
+    return {
+      scope_type: 'unidad',
+      scope_ref: store.selectedUnitId,
+      timeline_scope: 'unidad',
+      timeline_unit_id: store.selectedUnitId,
+      timeline_department: store.selectedDepartment || null,
+    };
+  }
+  const effectiveDepartment = currentSelectedDepartmentValue();
+  if (
+    effectiveDepartment
+    && !store.selectedFieldId
+    && !store.selectedPaddockId
+    && !store.selectedProductiveId
+    && !store.selectedSectionId
+    && !store.selectedHexId
+  ) {
     return {
       scope_type: 'departamento',
-      scope_ref: store.selectedDepartment,
+      scope_ref: effectiveDepartment,
       timeline_scope: 'departamento',
       timeline_unit_id: null,
-      timeline_department: store.selectedDepartment,
+      timeline_department: effectiveDepartment,
     };
   }
   return {
@@ -386,8 +519,9 @@ function currentTimelineDayPayload() {
 function currentTimelineModeLabel() {
   const day = currentTimelineDayPayload();
   if (!day) return 'Sin datos';
-  const layerFrames = Object.values(day.layers || {});
-  if (layerFrames.length && layerFrames.every((frame) => !frame.is_interpolated)) return 'Real';
+  const layerFrames = Object.values(day.layers || {}).filter((frame) => layerFrameIsAvailable(frame));
+  if (!layerFrames.length) return 'Sin cobertura util';
+  if (layerFrames.every((frame) => !frame.is_interpolated)) return 'Real';
   return 'Interpolado';
 }
 
@@ -395,8 +529,9 @@ function currentTimelineSourceSummary() {
   const day = currentTimelineDayPayload();
   if (!day) return 'Sin capas temporales activas';
   const layerFrames = Object.values(day.layers || {});
-  const sample = layerFrames.find(Boolean);
+  const sample = layerFrames.find((frame) => layerFrameIsAvailable(frame)) || layerFrames.find(Boolean);
   if (!sample) return 'Sin datos';
+  if (sample.visual_state === 'empty') return 'Sin cobertura util';
   if (!sample.is_interpolated || !sample.secondary_source_date) {
     return `Fuente ${sample.primary_source_date}`;
   }
@@ -481,10 +616,34 @@ function buildOfficialOverlayViewportUrl(definition) {
   return url.toString().replace(window.location.origin, '');
 }
 
-function buildAnalyticTileUrl(layerName, sourceDate = store.timelineDate || todayIsoDate(), frameRole = 'primary') {
+function buildAnalyticTileUrl(layerName, frameOrDate = store.timelineDate || todayIsoDate(), frameRole = 'primary') {
   const params = new URLSearchParams();
-  if (sourceDate) params.set('source_date', sourceDate);
+  const descriptor = currentViewportPreloadDescriptor();
+  const viewport = timelineViewportContext();
+  const frame = frameOrDate && typeof frameOrDate === 'object' && !Array.isArray(frameOrDate)
+    ? frameOrDate
+    : { display_date: frameOrDate };
+  const displayDate = frame.display_date || store.timelineDate || todayIsoDate();
+  let resolvedSourceDate = frame.resolved_source_date || frame.primary_source_date || null;
+  const frameSignature = frame.frame_signature || null;
+  if (!resolvedSourceDate && displayDate) {
+    const visualState = String(frame.visual_state || '').toLowerCase();
+    if (['ready', 'interpolated'].includes(visualState) || frame.available === true) {
+      // Avoid per-tile temporal probing (patchwork) when the manifest claims the frame is usable.
+      resolvedSourceDate = displayDate;
+    }
+  }
+  if (displayDate) params.set('display_date', displayDate);
+  if (resolvedSourceDate) params.set('source_date', resolvedSourceDate);
   if (frameRole) params.set('frame_role', frameRole);
+  if (frameSignature) params.set('frame_signature', frameSignature);
+  if (descriptor.timeline_scope) params.set('scope', descriptor.timeline_scope);
+  if (descriptor.timeline_unit_id) params.set('unit_id', descriptor.timeline_unit_id);
+  if (descriptor.timeline_department) params.set('department', descriptor.timeline_department);
+  if (descriptor.scope_type) params.set('scope_type', descriptor.scope_type);
+  if (descriptor.scope_ref) params.set('scope_ref', descriptor.scope_ref);
+  if (viewport?.bbox) params.set('viewport_bbox', viewport.bbox);
+  if (Number.isFinite(Number(viewport?.zoom))) params.set('viewport_zoom', String(viewport.zoom));
   const query = params.toString();
   return `${API_BASE}/tiles/${layerName}/{z}/{x}/{y}.png${query ? `?${query}` : ''}`;
 }
@@ -507,6 +666,26 @@ function orderedActiveLayerIds(layerIds = store.activeLayers || []) {
     const right = getLayerDefinition(rightId);
     return (left?.zIndexPriority || 0) - (right?.zIndexPriority || 0);
   });
+}
+
+function controllerHasBufferedTimelineFrame(controller, targetDate) {
+  if (!controller || controller.__kind !== 'temporal-analytic' || !targetDate) return false;
+  if (controller.currentDate === targetDate) return true;
+  if (controller.preloadedDate === targetDate) return true;
+  return Boolean(controller.preloadedFrames?.has?.(targetDate));
+}
+
+function pickPrimaryTemporalLayerId(activeTemporalIds, dayPayload = null) {
+  if (!activeTemporalIds.length) return null;
+  if (!dayPayload) return activeTemporalIds[0];
+  const targetDate = dayPayload.display_date || null;
+  const availableIds = activeTemporalIds.filter((layerId) => layerFrameIsAvailable(dayPayload.layers?.[layerId]));
+  if (!availableIds.length) {
+    return (store.currentLayer && activeTemporalIds.includes(store.currentLayer)) ? store.currentLayer : activeTemporalIds[0];
+  }
+  const bufferedId = availableIds.find((layerId) => controllerHasBufferedTimelineFrame(store.layerInstances?.[layerId], targetDate));
+  if (bufferedId) return bufferedId;
+  return availableIds[0];
 }
 
 function getLayerMenuLabel(definition) {
@@ -575,48 +754,140 @@ function createOfficialOverlayLayerInstance(definition) {
 }
 
 function createTemporalLeafletLayer(definition, frameRole) {
-  return window.L.tileLayer(buildAnalyticTileUrl(definition.tileLayerName, store.timelineDate || todayIsoDate(), frameRole), {
+  return window.L.tileLayer(TRANSPARENT_TILE_DATA_URL, {
     pane: 'satellitePane',
-    maxZoom: 18,
-    maxNativeZoom: 17,
+    maxZoom: ANALYTIC_MAX_RENDER_ZOOM,
+    maxNativeZoom: ANALYTIC_MAX_NATIVE_ZOOM,
     minZoom: definition.minZoom || 7,
     tileSize: 256,
     opacity: 0,
     zIndex: definition.zIndexPriority || 200,
     className: `analytic-layer analytic-${definition.id}`,
-    updateWhenIdle: false,
-    keepBuffer: 1,
+    updateWhenIdle: true,
+    updateWhenZooming: false,
+    keepBuffer: 3,
   });
 }
 
-function waitForTemporalLayerLoad(layerId, definition, layer, url, { silent = false } = {}) {
-  if (layer.__timelineReadyUrl === url) return Promise.resolve();
-  return new Promise((resolve, reject) => {
+function waitForTemporalLayerLoad(layerId, definition, layer, url, { silent = false, reportError = !silent } = {}) {
+  if (layer.__timelineReadyUrl === url) return Promise.resolve({ ready: true, cached: true });
+  if (layer.__timelinePendingUrl === url && layer.__timelinePendingPromise) {
+    return layer.__timelinePendingPromise;
+  }
+  let pendingPromise = null;
+  pendingPromise = new Promise((resolve, reject) => {
     const hint = definition.minZoom ? ` visible desde zoom ${definition.minZoom}+` : '';
-    const onLoad = () => {
+    const requestSeq = Number(layer.__timelineLoadSeq || 0) + 1;
+    layer.__timelineLoadSeq = requestSeq;
+    layer.__timelinePendingUrl = url;
+    let settled = false;
+    let sawTileError = false;
+    let fallbackTimer = null;
+    let progressTimer = null;
+    const isCurrentRequest = () => layer.__timelineLoadSeq === requestSeq && layer.__timelinePendingUrl === url;
+    const loadedTileStats = () => {
+      const tileEntries = Object.values(layer?._tiles || {});
+      if (!tileEntries.length) return { loaded: 0, total: 0 };
+      const loaded = tileEntries.filter((entry) => {
+        const element = entry?.el;
+        const naturalWidth = Number(element?.naturalWidth || 0);
+        const naturalHeight = Number(element?.naturalHeight || 0);
+        const hasImage = naturalWidth > 0 && naturalHeight > 0;
+        return Boolean((entry?.loaded || (element && element.complete)) && hasImage);
+      }).length;
+      return { loaded, total: tileEntries.length };
+    };
+    const finalizeResolve = (payload = { ready: true }) => {
       cleanup();
+      if (!isCurrentRequest()) {
+        resolve({ ready: false, stale: true });
+        return;
+      }
       layer.__timelineReadyUrl = url;
+      layer.__timelinePendingUrl = null;
+      if (layer.__timelinePendingPromise === pendingPromise) layer.__timelinePendingPromise = null;
       setLayerError(layerId, '');
       if (!silent) hideMapStatus(`Cargando ${definition.label}${hint}...`);
-      resolve();
+      resolve(payload);
+    };
+    const finalizeReject = (message) => {
+      cleanup();
+      if (!isCurrentRequest()) {
+        resolve({ ready: false, stale: true });
+        return;
+      }
+      layer.__timelinePendingUrl = null;
+      if (layer.__timelinePendingPromise === pendingPromise) layer.__timelinePendingPromise = null;
+      if (reportError) {
+        setLayerError(layerId, message);
+        if (!silent) showMapStatus(message, 2600);
+      }
+      reject(new Error(message));
+    };
+    const maybeResolveFromPartialLoad = ({ force = false } = {}) => {
+      if (settled) return false;
+      if (!isCurrentRequest()) {
+        cleanup();
+        resolve({ ready: false, stale: true });
+        return true;
+      }
+      const { loaded, total } = loadedTileStats();
+      if (!loaded) return false;
+      const enoughTiles = force || total <= 2 || loaded >= Math.max(1, Math.floor(total * 0.35));
+      if (!enoughTiles) return false;
+      finalizeResolve({ ready: true, partial: loaded < total, loaded, total });
+      return true;
+    };
+    const onLoad = () => {
+      if (maybeResolveFromPartialLoad({ force: true })) return;
+      finalizeResolve({ ready: true, partial: false });
+    };
+    const onTileLoad = () => {
+      maybeResolveFromPartialLoad();
     };
     const onError = () => {
-      cleanup();
-      setLayerError(layerId, `No se pudo cargar ${definition.label}`);
-      if (!silent) showMapStatus(`No se pudo cargar ${definition.label}`, 2600);
-      reject(new Error(`No se pudo cargar ${definition.label}`));
+      sawTileError = true;
+      if (maybeResolveFromPartialLoad()) return;
     };
     const cleanup = () => {
+      settled = true;
+      if (fallbackTimer) window.clearTimeout(fallbackTimer);
+      if (progressTimer) window.clearInterval(progressTimer);
       layer.off('load', onLoad);
+      layer.off('tileload', onTileLoad);
       layer.off('tileerror', onError);
       layer.off('error', onError);
     };
+    if (store.map && definition.minZoom && store.map.getZoom() < definition.minZoom) {
+      cleanup();
+      layer.__timelinePendingUrl = null;
+      if (layer.__timelinePendingPromise === pendingPromise) layer.__timelinePendingPromise = null;
+      setLayerError(layerId, '');
+      if (!silent) showMapStatus(`${definition.label}${hint}`, 1400);
+      resolve({ ready: false, belowMinZoom: true });
+      return;
+    }
     if (!silent) showMapStatus(`Cargando ${definition.label}${hint}...`);
     layer.on('load', onLoad);
+    layer.on('tileload', onTileLoad);
     layer.on('tileerror', onError);
     layer.on('error', onError);
     layer.setUrl(url);
+    progressTimer = window.setInterval(() => {
+      maybeResolveFromPartialLoad();
+    }, 250);
+    fallbackTimer = window.setTimeout(() => {
+      if (maybeResolveFromPartialLoad({ force: sawTileError })) return;
+      const { loaded } = loadedTileStats();
+      if (loaded > 0) {
+        finalizeResolve({ ready: true, partial: true, loaded });
+        return;
+      }
+      finalizeReject(`No se pudo cargar ${definition.label}`);
+    }, 12000);
   });
+  layer.__timelinePendingPromise = pendingPromise;
+  return pendingPromise;
 }
 
 function crossfadeTemporalLayers(outgoingLayer, incomingLayer, targetOpacity, durationMs = 220) {
@@ -668,6 +939,7 @@ function createTemporalLayerController(definition) {
     currentUrl: null,
     preloadedDate: null,
     preloadedUrl: null,
+    preloadedFrames: new Map(),
     baseOpacity: layerOpacityValue(definition.id, Number(definition.opacityDefault || 0.82)),
     addTo(map) {
       group.addTo(map);
@@ -691,33 +963,60 @@ function createTemporalLayerController(definition) {
     clearPrefetch() {
       this.preloadedDate = null;
       this.preloadedUrl = null;
+      this.preloadedFrames.clear();
       if (this.bufferLayer) this.bufferLayer.__timelineReadyUrl = null;
     },
+    hide() {
+      this.primaryLayer.setOpacity(0);
+      this.secondaryLayer.setOpacity(0);
+      this.visibleLayer = null;
+      this.currentUrl = null;
+      this.preloadedDate = null;
+      this.preloadedUrl = null;
+    },
     async prefetch(frame) {
-      if (!frame?.available) return;
+      if (!layerFrameIsAvailable(frame)) return;
       if (frame.display_date === this.currentDate) return;
-      const targetLayer = this.bufferLayer || this.primaryLayer;
-      const url = buildAnalyticTileUrl(definition.tileLayerName, frame.display_date, 'primary');
-      if (this.preloadedDate === frame.display_date && this.preloadedUrl === url) return;
+      const url = buildAnalyticTileUrl(definition.tileLayerName, frame, 'primary');
+      let targetLayer = this.bufferLayer || this.primaryLayer;
+      const alternateLayer = targetLayer === this.primaryLayer ? this.secondaryLayer : this.primaryLayer;
+      if (
+        targetLayer?.__timelinePendingUrl
+        && targetLayer.__timelinePendingUrl !== url
+        && alternateLayer
+        && alternateLayer !== this.visibleLayer
+      ) {
+        targetLayer = alternateLayer;
+      }
+      if (this.preloadedFrames.get(frame.display_date) === url) return;
       try {
-        await waitForTemporalLayerLoad(definition.id, definition, targetLayer, url, { silent: true });
+        const result = await waitForTemporalLayerLoad(definition.id, definition, targetLayer, url, {
+          silent: true,
+          reportError: false,
+        });
+        if (!result?.ready) return;
         this.preloadedDate = frame.display_date;
         this.preloadedUrl = url;
+        this.preloadedFrames.set(frame.display_date, url);
       } catch (error) {
         console.warn(`No se pudo precargar ${definition.label}:`, error);
       }
     },
     async show(frame, { animate = true } = {}) {
-      if (!frame?.available) return;
+      if (!layerFrameIsAvailable(frame)) {
+        if (!layerFrameIsWarming(frame)) this.hide();
+        return;
+      }
       const targetDate = frame.display_date;
-      const targetUrl = buildAnalyticTileUrl(definition.tileLayerName, targetDate, 'primary');
+      const targetUrl = buildAnalyticTileUrl(definition.tileLayerName, frame, 'primary');
       if (this.currentDate === targetDate && this.currentUrl === targetUrl) {
         if (this.visibleLayer) this.visibleLayer.setOpacity(this.baseOpacity);
         return;
       }
       const targetLayer = this.bufferLayer || this.primaryLayer;
-      if (!(this.preloadedDate === targetDate && this.preloadedUrl === targetUrl)) {
-        await waitForTemporalLayerLoad(definition.id, definition, targetLayer, targetUrl, { silent: false });
+      if (this.preloadedFrames.get(targetDate) !== targetUrl) {
+        const result = await waitForTemporalLayerLoad(definition.id, definition, targetLayer, targetUrl, { silent: false });
+        if (!result?.ready) return false;
       }
       const outgoingLayer = this.visibleLayer;
       await crossfadeTemporalLayers(outgoingLayer, targetLayer, this.baseOpacity, animate ? 220 : 0);
@@ -727,6 +1026,9 @@ function createTemporalLayerController(definition) {
       this.currentUrl = targetUrl;
       this.preloadedDate = null;
       this.preloadedUrl = null;
+      this.preloadedFrames.delete(targetDate);
+      setLayerError(definition.id, '');
+      return true;
     },
   };
 
@@ -788,6 +1090,7 @@ function applyLayerInstanceZIndex(definition, instance) {
 function renderActiveTileLayers() {
   if (!store.map) return;
   ensureOfficialOverlayPane();
+  const deferAnalyticBootstrap = !store.preloadCriticalReady && !store.timelineEnabled;
   const nextInstances = { ...(store.layerInstances || {}) };
   const activeIds = new Set(store.activeLayers || []);
   const activeTileIds = orderedActiveLayerIds().filter((layerId) => {
@@ -822,12 +1125,20 @@ function renderActiveTileLayers() {
     }
     if (
       definition.type === 'analytic'
-      && createdNow
       && instance.__kind === 'temporal-analytic'
       && !instance.currentDate
     ) {
-      const initialDate = store.timelineDate || todayIsoDate();
-      instance.show({ available: true, display_date: initialDate }, { animate: false }).catch((error) => {
+      if (deferAnalyticBootstrap) {
+        instance.hide();
+        return;
+      }
+      const dayPayload = currentTimelineDayPayload();
+      const frame = dayPayload?.layers?.[definition.id] || null;
+      if (!frame || !layerFrameIsAvailable(frame)) {
+        instance.hide();
+        return;
+      }
+      instance.show({ ...(frame || {}), display_date: dayPayload.display_date }, { animate: false }).catch((error) => {
         console.warn(`No se pudo mostrar la capa temporal ${definition.label}:`, error);
       });
     }
@@ -935,13 +1246,14 @@ function renderTimelineControls() {
   if (!root || !slider || !playButton || !speed) return;
 
   const enabled = Boolean(store.timelineEnabled);
+  const dayCount = timelineWindowDayCount();
   root.classList.toggle('is-disabled', !enabled);
   slider.disabled = !enabled || store.timelineLoading;
   playButton.disabled = !enabled || store.timelineLoading;
   speed.disabled = !enabled;
   slider.min = '0';
-  slider.max = String(TIMELINE_WINDOW_DAYS - 1);
-  slider.value = String(timelineSliderIndex(store.timelineDate || todayIsoDate()));
+  slider.max = String(Math.max(0, dayCount - 1));
+  slider.value = String(Math.max(0, Math.min(dayCount - 1, timelineSliderIndex(store.timelineDate || todayIsoDate()))));
   speed.innerHTML = TIMELINE_SPEED_PRESETS
     .map((preset) => `<option value="${preset.value}" ${normalizeTimelineSpeed(store.timelineSpeed) === preset.value ? 'selected' : ''}>${preset.label}</option>`)
     .join('');
@@ -968,27 +1280,48 @@ function stopTimelinePlayback() {
   renderTimelineControls();
 }
 
+function layerFrameIsWarming(frame = null) {
+  if (!frame) return false;
+  return ['warming'].includes(String(frame.visual_state || '').toLowerCase())
+    || String(frame.cache_status || '').toLowerCase() === 'warming';
+}
+
 function layerFrameIsAvailable(frame = null) {
   if (!frame) return false;
   if (frame.available === false) return false;
   if (frame.availability === 'missing') return false;
+  if (frame.visual_empty === true) return false;
+  if (frame.skip_in_playback === true) return false;
+  if (['warming', 'empty', 'missing'].includes(String(frame.visual_state || '').toLowerCase())) return false;
+  if (['warming', 'empty'].includes(String(frame.cache_status || '').toLowerCase())) return false;
   return true;
+}
+
+function hasPendingTemporalLayerLoads() {
+  return Object.values(store.layerInstances || {}).some((instance) => {
+    if (instance?.__kind !== 'temporal-analytic') return false;
+    return Boolean(
+      instance.primaryLayer?.__timelinePendingUrl
+      || instance.secondaryLayer?.__timelinePendingUrl,
+    );
+  });
 }
 
 function dayIsPlayable(dayPayload, activeTemporalIds) {
   if (!dayPayload || !activeTemporalIds.length) return false;
-  return activeTemporalIds.every((layerId) => layerFrameIsAvailable(dayPayload.layers?.[layerId]));
+  return activeTemporalIds.some((layerId) => layerFrameIsAvailable(dayPayload.layers?.[layerId]));
 }
 
 function frameVisualSignature(dayPayload, activeTemporalIds) {
   if (!dayPayload || !activeTemporalIds.length) return 'none';
   return activeTemporalIds.map((layerId) => {
     const frame = dayPayload.layers?.[layerId] || {};
-    const availability = frame.availability || (frame.available ? 'available' : 'missing');
+    if (frame.frame_signature) return `${layerId}:${frame.frame_signature}`;
+    const availability = frame.visual_state || frame.availability || (frame.available ? 'available' : 'missing');
     const primary = frame.primary_source_date || 'none';
     const secondary = frame.secondary_source_date || 'none';
     const blend = Number(frame.blend_weight || 0).toFixed(2);
-    return [layerId, availability, primary, secondary, blend, frame.label || ''].join(':');
+    return [layerId, availability, primary, secondary, blend, frame.empty_reason || '', frame.label || ''].join(':');
   }).join('|');
 }
 
@@ -1000,6 +1333,8 @@ function findNextTimelineDay(
     requireWarm = false,
     minStepDays = 1,
     avoidSameSignature = false,
+    maxOffset = null,
+    allowWrap = true,
   } = {},
 ) {
   const days = store.timelineFrames?.days || [];
@@ -1008,13 +1343,24 @@ function findNextTimelineDay(
   const currentDay = days[currentIndex] || null;
   const currentSignature = avoidSameSignature ? frameVisualSignature(currentDay, activeTemporalIds) : null;
   const orderedCandidates = [];
-  for (let offset = 1; offset <= days.length; offset += 1) {
-    orderedCandidates.push({
-      day: days[(currentIndex + offset) % days.length],
-      offset,
-    });
+  if (allowWrap) {
+    for (let offset = 1; offset < days.length; offset += 1) {
+      orderedCandidates.push({
+        day: days[(currentIndex + offset) % days.length],
+        offset,
+      });
+    }
+  } else {
+    for (let index = currentIndex + 1; index < days.length; index += 1) {
+      orderedCandidates.push({
+        day: days[index],
+        offset: index - currentIndex,
+      });
+    }
   }
-  const playableCandidates = orderedCandidates.filter((candidate) => dayIsPlayable(candidate.day, activeTemporalIds));
+  const playableCandidates = orderedCandidates
+    .filter((candidate) => !Number.isFinite(maxOffset) || candidate.offset <= maxOffset)
+    .filter((candidate) => dayIsPlayable(candidate.day, activeTemporalIds));
   if (!playableCandidates.length) return null;
   const stepFiltered = playableCandidates.filter((candidate) => candidate.offset >= Math.max(1, Number(minStepDays || 1)));
   const signatureFiltered = avoidSameSignature && currentSignature
@@ -1028,12 +1374,88 @@ function findNextTimelineDay(
   return candidatePool[0]?.day || null;
 }
 
+function findPreviousTimelineDay(
+  currentDate,
+  activeTemporalIds,
+  {
+    preferWarm = true,
+    requireWarm = false,
+    minStepDays = 1,
+    avoidSameSignature = false,
+    maxOffset = null,
+    allowWrap = true,
+  } = {},
+) {
+  const days = store.timelineFrames?.days || [];
+  if (!days.length || !activeTemporalIds.length) return null;
+  const currentIndex = Math.max(0, days.findIndex((day) => day.display_date === currentDate));
+  const currentDay = days[currentIndex] || null;
+  const currentSignature = avoidSameSignature ? frameVisualSignature(currentDay, activeTemporalIds) : null;
+  const orderedCandidates = [];
+  if (allowWrap) {
+    for (let offset = 1; offset < days.length; offset += 1) {
+      orderedCandidates.push({
+        day: days[(currentIndex - offset + days.length) % days.length],
+        offset,
+      });
+    }
+  } else {
+    for (let index = currentIndex - 1; index >= 0; index -= 1) {
+      orderedCandidates.push({
+        day: days[index],
+        offset: currentIndex - index,
+      });
+    }
+  }
+  const playableCandidates = orderedCandidates
+    .filter((candidate) => !Number.isFinite(maxOffset) || candidate.offset <= maxOffset)
+    .filter((candidate) => dayIsPlayable(candidate.day, activeTemporalIds));
+  if (!playableCandidates.length) return null;
+  const stepFiltered = playableCandidates.filter((candidate) => candidate.offset >= Math.max(1, Number(minStepDays || 1)));
+  const signatureFiltered = avoidSameSignature && currentSignature
+    ? stepFiltered.filter((candidate) => frameVisualSignature(candidate.day, activeTemporalIds) !== currentSignature)
+    : stepFiltered;
+  const candidatePool = signatureFiltered.length ? signatureFiltered : (stepFiltered.length ? stepFiltered : playableCandidates);
+  if (!preferWarm) return candidatePool[0]?.day || null;
+  const warmCandidate = candidatePool.find((candidate) => isWarmFrame(candidate.day, candidate.day.display_date, activeTemporalIds)) || null;
+  if (warmCandidate) return warmCandidate.day;
+  if (requireWarm) return null;
+  return candidatePool[0]?.day || null;
+}
+
+function pickTimelineManifestDate(payload, activeTemporalIds, { preferredDate = null, fallbackDate = null } = {}) {
+  const days = payload?.days || [];
+  if (!days.length) return fallbackDate || preferredDate || todayIsoDate();
+  const byDate = new Map(days.map((day) => [day.display_date, day]));
+  const preferredDay = preferredDate ? byDate.get(preferredDate) || null : null;
+  if (preferredDay && dayIsPlayable(preferredDay, activeTemporalIds)) {
+    return preferredDay.display_date;
+  }
+  const fallbackDay = fallbackDate ? byDate.get(fallbackDate) || null : null;
+  if (fallbackDay && dayIsPlayable(fallbackDay, activeTemporalIds)) {
+    return fallbackDay.display_date;
+  }
+  if (preferredDay) {
+    const preferredIndex = Math.max(0, days.findIndex((day) => day.display_date === preferredDay.display_date));
+    for (let offset = 1; offset < days.length; offset += 1) {
+      const backward = days[preferredIndex - offset];
+      if (dayIsPlayable(backward, activeTemporalIds)) return backward.display_date;
+      const forward = days[preferredIndex + offset];
+      if (dayIsPlayable(forward, activeTemporalIds)) return forward.display_date;
+    }
+  }
+  for (let index = days.length - 1; index >= 0; index -= 1) {
+    if (dayIsPlayable(days[index], activeTemporalIds)) return days[index].display_date;
+  }
+  return fallbackDay?.display_date || preferredDay?.display_date || days[days.length - 1]?.display_date || todayIsoDate();
+}
+
 function scheduleTimelinePlayback() {
   clearTimelinePlayback();
   if (!store.timelinePlaying) return;
   timelinePlaybackHandle = window.setTimeout(async () => {
     if (!store.timelinePlaying) return;
-    if (store.timelineLoading || store.timelineBuffering) {
+    if (store.timelineLoading && !(store.timelineFrames?.days || []).length) {
       scheduleTimelinePlayback();
       return;
     }
@@ -1043,17 +1465,32 @@ function scheduleTimelinePlayback() {
       return;
     }
     const activeTemporalIds = getActiveTemporalLayerIds();
-    const nextDay = findNextTimelineDay(store.timelineDate, activeTemporalIds, {
+    const currentDay = days.find((day) => day.display_date === store.timelineDate) || null;
+    const playbackLayerIds = [pickPrimaryTemporalLayerId(activeTemporalIds, currentDay)].filter(Boolean);
+    const warmTargetLayers = playbackLayerIds.length ? playbackLayerIds : activeTemporalIds;
+    let nextDay = findPreviousTimelineDay(store.timelineDate, warmTargetLayers, {
       preferWarm: true,
-      requireWarm: true,
+      requireWarm: false,
       minStepDays: timelineStepDaysForSpeed(),
       avoidSameSignature: true,
+      maxOffset: timelineWarmRunwayDays(),
+      allowWrap: false,
     });
+    if (!nextDay && warmTargetLayers.join(',') !== activeTemporalIds.join(',')) {
+      nextDay = findPreviousTimelineDay(store.timelineDate, activeTemporalIds, {
+        preferWarm: true,
+        requireWarm: false,
+        minStepDays: timelineStepDaysForSpeed(),
+        avoidSameSignature: true,
+        maxOffset: timelineWarmRunwayDays(),
+        allowWrap: false,
+      });
+    }
     if (!nextDay) {
       maybeWarmTimelineWindow(store.timelineDate || todayIsoDate(), { force: true }).catch((error) => {
         console.warn('No se pudo recalentar la timeline durante playback:', error);
       });
-      scheduleTimelinePlayback();
+      stopTimelinePlayback();
       return;
     }
     await setTimelineDate(nextDay.display_date, { animate: true, fromPlayback: true });
@@ -1066,7 +1503,10 @@ async function preloadTimelineNeighbors(currentDate) {
   if (!days.length) return;
   const currentIndex = Math.max(0, days.findIndex((day) => day.display_date === currentDate));
   const runway = timelineWarmRunwayDays();
-  const targets = days.slice(currentIndex + 1, currentIndex + 1 + runway);
+  const targets = [];
+  for (let index = currentIndex - 1; index >= 0 && targets.length < runway; index -= 1) {
+    targets.push(days[index]);
+  }
   if (!targets.length) return;
   await Promise.all(
     getActiveTemporalLayerIds().map(async (layerId) => {
@@ -1085,11 +1525,11 @@ async function maybeWarmTimelineWindow(anchorDate, { force = false } = {}) {
   if (!activeTemporalIds.length) return;
   const viewport = timelineViewportContext();
   const runway = timelineWarmRunwayDays();
-  const dateFrom = anchorDate;
   const availableDays = store.timelineFrames?.days || [];
   const anchorIndex = Math.max(0, availableDays.findIndex((day) => day.display_date === anchorDate));
-  const clampedDateTo = availableDays[Math.min(availableDays.length - 1, anchorIndex + runway)]?.display_date || addDays(anchorDate, runway);
-  const dateTo = clampedDateTo;
+  const clampedDateFrom = availableDays[Math.max(0, anchorIndex - runway)]?.display_date || addDays(anchorDate, -runway);
+  const dateFrom = clampedDateFrom;
+  const dateTo = anchorDate;
   const signature = [viewport.key, activeTemporalIds.join(','), dateFrom, dateTo, normalizeTimelineSpeed(store.timelineSpeed)].join('|');
   if (!force && store.timelineWarmSignature === signature) return;
   setStore({ timelineWarmSignature: signature });
@@ -1117,29 +1557,62 @@ async function maybeWarmTimelineWindow(anchorDate, { force = false } = {}) {
 }
 
 function isWarmFrame(dayPayload, targetDate, activeTemporalIds) {
-  return activeTemporalIds.every((layerId) => {
+  const playableLayerIds = activeTemporalIds.filter((layerId) => layerFrameIsAvailable(dayPayload?.layers?.[layerId]));
+  if (!playableLayerIds.length) return false;
+  return playableLayerIds.every((layerId) => {
     const controller = store.layerInstances?.[layerId];
     const frame = dayPayload.layers?.[layerId] || {};
     if (controller?.__kind === 'temporal-analytic') {
       if (controller.currentDate === targetDate) return true;
       if (controller.preloadedDate === targetDate) return true;
+      if (controller.preloadedFrames?.has(targetDate)) return true;
     }
-    return Boolean(frame.warm_available || frame.cache_status === 'ready');
+    return Boolean((frame.warm_available || frame.cache_status === 'ready') && !frame.visual_empty);
   });
 }
 
-async function setTimelineDate(targetDate, { animate = true, fromPlayback = false } = {}) {
+async function applySecondaryTimelineLayers(activeTemporalIds, primaryLayerId, dayPayload, targetDate, animate, requestSeq) {
+  const secondaryLayerIds = activeTemporalIds.filter((layerId) => layerId !== primaryLayerId);
+  if (!secondaryLayerIds.length) return;
+  const results = await Promise.allSettled(
+    secondaryLayerIds.map(async (layerId) => {
+      const controller = store.layerInstances?.[layerId];
+      if (!controller || controller.__kind !== 'temporal-analytic') return;
+      const frame = dayPayload.layers?.[layerId];
+      if (!layerFrameIsAvailable(frame)) {
+        if (!layerFrameIsWarming(frame)) controller.hide();
+        return;
+      }
+      await controller.show({ ...(frame || {}), display_date: targetDate }, { animate });
+    }),
+  );
+  if (requestSeq !== timelineApplyRequestSeq) return;
+  const rejected = results.find((result) => result.status === 'rejected');
+  if (rejected) {
+    console.warn('No se pudieron aplicar todas las capas temporales secundarias:', rejected.reason);
+  }
+}
+
+async function setTimelineDate(targetDate, { animate = true, fromPlayback = false, emitChange = true } = {}) {
   if (!store.timelineEnabled || !store.timelineFrames?.days?.length) return;
   const dayPayload = store.timelineFrames.days.find((day) => day.display_date === targetDate);
   if (!dayPayload) return;
   const activeTemporalIds = getActiveTemporalLayerIds();
+  const primaryLayerId = pickPrimaryTemporalLayerId(activeTemporalIds, dayPayload);
+  const playbackLayerIds = primaryLayerId ? [primaryLayerId] : activeTemporalIds;
   if (!dayIsPlayable(dayPayload, activeTemporalIds)) {
+    setStore({ timelineDate: targetDate, timelineBuffering: false });
+    setStore({ timelineBuffering: false });
+    renderTimelineControls();
+    if (emitChange) dispatchTimelineDateChange({ date: targetDate, dayPayload, enabled: true });
     if (fromPlayback) {
-      const nextDay = findNextTimelineDay(targetDate, activeTemporalIds, {
+      const nextDay = findPreviousTimelineDay(targetDate, playbackLayerIds, {
         preferWarm: true,
         requireWarm: true,
         minStepDays: timelineStepDaysForSpeed(),
         avoidSameSignature: true,
+        maxOffset: timelineWarmRunwayDays(),
+        allowWrap: false,
       });
       if (nextDay && nextDay.display_date !== targetDate) {
         await setTimelineDate(nextDay.display_date, { animate, fromPlayback: true });
@@ -1152,14 +1625,27 @@ async function setTimelineDate(targetDate, { animate = true, fromPlayback = fals
     }
     return;
   }
-  const shouldBuffer = !isWarmFrame(dayPayload, targetDate, activeTemporalIds);
+  const shouldBuffer = !isWarmFrame(dayPayload, targetDate, playbackLayerIds)
+    && !isWarmFrame(dayPayload, targetDate, activeTemporalIds);
   if (fromPlayback && shouldBuffer) {
-    const nextWarmDay = findNextTimelineDay(targetDate, activeTemporalIds, {
+    let nextWarmDay = findPreviousTimelineDay(targetDate, playbackLayerIds, {
       preferWarm: true,
       requireWarm: true,
       minStepDays: timelineStepDaysForSpeed(),
       avoidSameSignature: true,
+      maxOffset: timelineWarmRunwayDays(),
+      allowWrap: false,
     });
+    if (!nextWarmDay && playbackLayerIds.join(',') !== activeTemporalIds.join(',')) {
+      nextWarmDay = findPreviousTimelineDay(targetDate, activeTemporalIds, {
+        preferWarm: true,
+        requireWarm: true,
+        minStepDays: timelineStepDaysForSpeed(),
+        avoidSameSignature: true,
+        maxOffset: timelineWarmRunwayDays(),
+        allowWrap: false,
+      });
+    }
     if (nextWarmDay && nextWarmDay.display_date !== targetDate) {
       await setTimelineDate(nextWarmDay.display_date, { animate, fromPlayback: true });
       return;
@@ -1167,22 +1653,50 @@ async function setTimelineDate(targetDate, { animate = true, fromPlayback = fals
     maybeWarmTimelineWindow(targetDate, { force: true }).catch((error) => {
       console.warn('No se pudo recalentar la timeline antes del siguiente frame:', error);
     });
-    return;
   }
-  setStore({ timelineDate: targetDate, timelineBuffering: shouldBuffer });
-  renderTimelineControls();
-  dispatchTimelineDateChange({ date: targetDate, dayPayload, enabled: true });
+    const requestSeq = ++timelineApplyRequestSeq;
+    setStore({ timelineDate: targetDate, timelineBuffering: shouldBuffer });
+    renderTimelineControls();
+    if (emitChange) dispatchTimelineDateChange({ date: targetDate, dayPayload, enabled: true });
   try {
-    await Promise.all(
-      activeTemporalIds.map(async (layerId) => {
-        const controller = store.layerInstances?.[layerId];
-        if (!controller || controller.__kind !== 'temporal-analytic') return;
-        const frame = dayPayload.layers?.[layerId];
-        await controller.show({ ...(frame || {}), display_date: targetDate }, { animate });
-      }),
-    );
+    if (primaryLayerId) {
+      const primaryController = store.layerInstances?.[primaryLayerId];
+      const primaryFrame = dayPayload.layers?.[primaryLayerId];
+      if (primaryController?.__kind === 'temporal-analytic') {
+        if (!layerFrameIsAvailable(primaryFrame)) {
+          if (!fromPlayback && !layerFrameIsWarming(primaryFrame)) primaryController.hide();
+        } else {
+          try {
+            const didShow = await primaryController.show({ ...(primaryFrame || {}), display_date: targetDate }, { animate });
+            if (didShow === false && fromPlayback) {
+              const nextWarmDay = findPreviousTimelineDay(targetDate, playbackLayerIds, {
+                preferWarm: true,
+                requireWarm: true,
+                minStepDays: timelineStepDaysForSpeed(),
+                avoidSameSignature: true,
+                maxOffset: timelineWarmRunwayDays(),
+                allowWrap: false,
+              });
+              if (nextWarmDay && nextWarmDay.display_date !== targetDate) {
+                await setTimelineDate(nextWarmDay.display_date, { animate, fromPlayback: true });
+                return;
+              }
+            }
+          } catch (primaryError) {
+            console.warn(`No se pudo aplicar la capa temporal primaria ${primaryLayerId}:`, primaryError);
+          }
+        }
+      }
+    }
+    if (requestSeq !== timelineApplyRequestSeq) return;
     setStore({ timelineBuffering: false });
     renderTimelineControls();
+    try {
+      await applySecondaryTimelineLayers(activeTemporalIds, primaryLayerId, dayPayload, targetDate, animate, requestSeq);
+    } catch (error) {
+      console.warn('No se pudieron aplicar las capas temporales secundarias:', error);
+    }
+    if (requestSeq !== timelineApplyRequestSeq) return;
     preloadTimelineNeighbors(targetDate).catch((error) => {
       console.warn('No se pudo precargar la timeline vecina:', error);
     });
@@ -1198,7 +1712,9 @@ async function setTimelineDate(targetDate, { animate = true, fromPlayback = fals
 }
 
 async function refreshTimelineManifest({ preserveDate = true } = {}) {
+  timelineManifestQueued = false;
   const activeTemporalIds = getActiveTemporalLayerIds();
+  const hasExistingTimeline = Boolean(store.timelineFrames?.days?.length);
   if (!store.map || !activeTemporalIds.length) {
     stopTimelinePlayback();
     setStore({
@@ -1214,17 +1730,18 @@ async function refreshTimelineManifest({ preserveDate = true } = {}) {
   }
 
   const viewport = timelineViewportContext();
+  const descriptor = currentViewportPreloadDescriptor();
   const requestedDateTo = todayIsoDate();
   const requestedDateFrom = startTimelineDate();
-  const manifestKey = `${activeTemporalIds.join(',')}|${viewport.key}|${requestedDateFrom}|${requestedDateTo}`;
+  const manifestKey = `${activeTemporalIds.join(',')}|${viewport.key}|${descriptor.scope_ref || descriptor.timeline_unit_id || descriptor.timeline_department || descriptor.timeline_scope}|${requestedDateFrom}|${requestedDateTo}`;
   if (store.timelineManifestKey === manifestKey && store.timelineFrames?.days?.length) {
-    setStore({ timelineEnabled: true });
+    setStore({ timelineEnabled: true, timelineLoading: false });
     renderTimelineControls();
     return;
   }
 
   const requestId = ++timelineManifestRequestSeq;
-  setStore({ timelineLoading: true, timelineEnabled: true, timelineManifestKey: manifestKey });
+  setStore({ timelineLoading: !hasExistingTimeline, timelineEnabled: true, timelineManifestKey: manifestKey });
   renderTimelineControls();
   try {
     const payload = await fetchTimelineFrames({
@@ -1233,11 +1750,17 @@ async function refreshTimelineManifest({ preserveDate = true } = {}) {
       dateTo: requestedDateTo,
       bbox: viewport.bbox,
       zoom: viewport.zoom,
+      scope: descriptor.timeline_scope,
+      unitId: descriptor.timeline_unit_id,
+      department: descriptor.timeline_department,
+      scopeType: descriptor.scope_type,
+      scopeRef: descriptor.scope_ref,
     });
     if (requestId !== timelineManifestRequestSeq) return;
-    const nextDate = preserveDate && payload.days?.some((day) => day.display_date === store.timelineDate)
-      ? store.timelineDate
-      : (payload.date_to || requestedDateTo);
+    const nextDate = pickTimelineManifestDate(payload, activeTemporalIds, {
+      preferredDate: preserveDate ? store.timelineDate : null,
+      fallbackDate: payload.date_to || requestedDateTo,
+    });
     setStore({
       timelineFrames: payload,
       timelineDate: nextDate,
@@ -1246,6 +1769,7 @@ async function refreshTimelineManifest({ preserveDate = true } = {}) {
       timelineWindowDays: payload.total_days || TIMELINE_WINDOW_DAYS,
     });
     renderTimelineControls();
+    renderActiveTileLayers();
     maybeStartViewportPreload(activeTemporalIds).catch((error) => {
       console.warn('No se pudo programar la precarga residual del viewport:', error);
     });
@@ -1253,6 +1777,11 @@ async function refreshTimelineManifest({ preserveDate = true } = {}) {
   } catch (error) {
     if (requestId !== timelineManifestRequestSeq) return;
     console.warn('No se pudo cargar la timeline:', error);
+    if (hasExistingTimeline) {
+      setStore({ timelineLoading: false, timelineEnabled: true });
+      renderTimelineControls();
+      return;
+    }
     setStore({ timelineLoading: false, timelineEnabled: false, timelineFrames: null });
     stopTimelinePlayback();
     renderTimelineControls();
@@ -1262,16 +1791,76 @@ async function refreshTimelineManifest({ preserveDate = true } = {}) {
 
 function scheduleTimelineManifestRefresh({ preserveDate = true } = {}) {
   if (timelineViewportRefreshHandle) window.clearTimeout(timelineViewportRefreshHandle);
-  if (store.timelinePlaying) {
-    setStore({ timelineBuffering: true });
-    renderTimelineControls();
+  if (!preserveDate || !store.timelineFrames?.days?.length) {
+    Object.values(store.layerInstances || {}).forEach((instance) => {
+      if (instance?.__kind === 'temporal-analytic') instance.clearPrefetch();
+    });
   }
-  Object.values(store.layerInstances || {}).forEach((instance) => {
-    if (instance?.__kind === 'temporal-analytic') instance.clearPrefetch();
-  });
+  timelineManifestQueued = Boolean(getActiveTemporalLayerIds().length);
   timelineViewportRefreshHandle = window.setTimeout(() => {
+    if (timelineManifestQueued && getActiveTemporalLayerIds().length && !store.timelineFrames?.days?.length) {
+      setStore({ timelineLoading: true, timelineEnabled: true });
+      renderTimelineControls();
+    }
     refreshTimelineManifest({ preserveDate });
   }, 260);
+}
+
+export function requestTimelineManifestRefresh({ preserveDate = false } = {}) {
+  lastTimelineViewportKey = null;
+  scheduleTimelineManifestRefresh({ preserveDate });
+}
+
+export function suspendTemporalLayers() {
+  Object.values(store.layerInstances || {}).forEach((instance) => {
+    if (!instance || instance.__kind !== 'temporal-analytic') return;
+    instance.clearPrefetch?.();
+    [instance.primaryLayer, instance.secondaryLayer].forEach((layer) => {
+      if (!layer) return;
+      layer.__timelineLoadSeq = Number(layer.__timelineLoadSeq || 0) + 1;
+      layer.__timelinePendingUrl = null;
+      layer.__timelinePendingPromise = null;
+      layer.__timelineReadyUrl = null;
+      if (layer.setUrl) layer.setUrl(TRANSPARENT_TILE_DATA_URL);
+      if (layer.setOpacity) layer.setOpacity(0);
+    });
+    instance.visibleLayer = null;
+    instance.bufferLayer = instance.primaryLayer || null;
+    instance.currentDate = null;
+    instance.currentUrl = null;
+    instance.preloadedDate = null;
+    instance.preloadedUrl = null;
+  });
+  setStore({ timelineBuffering: false });
+  renderTimelineControls();
+}
+
+function scheduleTimelineViewportRepaint() {
+  if (timelineViewportRepaintHandle) window.clearTimeout(timelineViewportRepaintHandle);
+  timelineViewportRepaintHandle = window.setTimeout(() => {
+    const activeTemporalIds = getActiveTemporalLayerIds();
+    if (!store.map || !activeTemporalIds.length) return;
+    if (hasPendingTemporalLayerLoads()) {
+      scheduleTimelineViewportRepaint();
+      return;
+    }
+    const viewport = timelineViewportContext();
+    if (viewport.key === lastTimelineViewportKey) {
+      maybeStartViewportPreload(activeTemporalIds).catch((error) => {
+        console.warn('No se pudo programar la precarga residual del viewport tras mover el mapa:', error);
+      });
+      return;
+    }
+    lastTimelineViewportKey = viewport.key;
+    if (store.timelineEnabled && store.timelineDate && store.timelineFrames?.days?.length) {
+      maybeStartViewportPreload(activeTemporalIds).catch((error) => {
+        console.warn('No se pudo programar la precarga residual del viewport tras mover el mapa:', error);
+      });
+      scheduleTimelineManifestRefresh({ preserveDate: true });
+      return;
+    }
+    scheduleTimelineManifestRefresh({ preserveDate: true });
+  }, 180);
 }
 
 function ensureTimelineControlEvents() {
@@ -1289,18 +1878,25 @@ function ensureTimelineControlEvents() {
       const activeTemporalIds = getActiveTemporalLayerIds();
       const playableCurrent = (store.timelineFrames?.days || []).find((day) => day.display_date === (store.timelineDate || todayIsoDate()));
       if (playableCurrent && !dayIsPlayable(playableCurrent, activeTemporalIds)) {
-        const nextPlayable = findNextTimelineDay(store.timelineDate || todayIsoDate(), activeTemporalIds, {
+        const nextPlayable = findPreviousTimelineDay(store.timelineDate || todayIsoDate(), activeTemporalIds, {
           preferWarm: true,
           minStepDays: timelineStepDaysForSpeed(),
           avoidSameSignature: true,
+          maxOffset: timelineWarmRunwayDays(),
         });
         if (nextPlayable) {
           setStore({ timelineDate: nextPlayable.display_date });
         }
       }
-      await maybeWarmTimelineWindow(store.timelineDate || todayIsoDate(), { force: true });
-      setStore({ timelinePlaying: true });
+      const anchorDate = store.timelineDate || todayIsoDate();
+      setStore({ timelinePlaying: true, timelineBuffering: false });
       renderTimelineControls();
+      preloadTimelineNeighbors(anchorDate).catch((error) => {
+        console.warn('No se pudo precargar la timeline al iniciar playback:', error);
+      });
+      maybeWarmTimelineWindow(anchorDate, { force: true }).catch((error) => {
+        console.warn('No se pudo recalentar la timeline al iniciar playback:', error);
+      });
       scheduleTimelinePlayback();
     });
   }
@@ -1442,6 +2038,23 @@ function setFarmOverlayVisibility(visible) {
       store.map.removeLayer(layerGroup);
     }
   });
+}
+
+function setOperationalLayerVisibility(layerGroup, visible) {
+  if (!store.map || !layerGroup) return;
+  const onMap = store.map.hasLayer(layerGroup);
+  if (visible && !onMap) {
+    layerGroup.addTo(store.map);
+  }
+  if (!visible && onMap) {
+    store.map.removeLayer(layerGroup);
+  }
+}
+
+function syncOperationalOverlayVisibility() {
+  setOperationalLayerVisibility(store.sectionsLayer, Boolean(isLayerActive('judicial') || store.selectedSectionId));
+  setOperationalLayerVisibility(store.productiveLayer, Boolean(isLayerActive('productiva') || store.selectedProductiveId));
+  setOperationalLayerVisibility(store.hexLayer, Boolean(isLayerActive('hex') || store.selectedHexId));
 }
 
 function clearFarmEditorContextLayer() {
@@ -1846,6 +2459,15 @@ function ensureLayerGroupOnMap(layerGroup) {
 
 export function refreshFarmPrivateOverlays() {
   if (!store.map) return;
+  const keepVisible = Boolean(
+    store.farmEditorActive
+    || store.sidebarView === 'fields'
+    || store.sidebarView === 'establishment_viewer'
+    || store.selectedFieldId
+    || store.selectedPaddockId,
+  );
+  setFarmOverlayVisibility(keepVisible);
+  if (!keepVisible) return;
   [
     store.farmGuideLayer,
     store.farmFieldsLayer,
@@ -1899,7 +2521,16 @@ function paddockPopup(props) {
 
 function fitLayerBounds(layer, fitBounds = false, maxZoom = 15) {
   if (!store.map || !fitBounds || !layer?.getBounds) return;
+  queueProgrammaticViewportChange();
   store.map.fitBounds(layer.getBounds(), { padding: [28, 28], maxZoom });
+}
+
+function queueProgrammaticViewportChange(eventCount = 2) {
+  const pending = Math.max(0, Number(store.viewportProgrammaticEvents || 0));
+  setStore({
+    viewportProgrammaticEvents: Math.max(pending, eventCount),
+    viewportUserPinned: false,
+  });
 }
 
 function captureDraftGeometry(layer, handler) {
@@ -1927,10 +2558,11 @@ export function fitGeojsonBounds(geojson, maxZoom = 15) {
   if (!store.map || !geojson) return;
   const layer = window.L.geoJSON(geojson);
   if (!layer.getLayers().length) return;
+  queueProgrammaticViewportChange();
   store.map.fitBounds(layer.getBounds(), { padding: [28, 28], maxZoom });
 }
 
-export function setFarmGuideOnMap(feature) {
+export function setFarmGuideOnMap(feature, { fitBounds = false } = {}) {
   if (!store.map) return;
   clearFarmGuideLayer();
   if (!feature) return;
@@ -1939,7 +2571,7 @@ export function setFarmGuideOnMap(feature) {
     style: farmGuideStyle,
   }).addTo(store.map);
   setStore({ farmGuideLayer: guideLayer });
-  fitGeojsonBounds(feature, 15);
+  if (fitBounds) fitGeojsonBounds(feature, 15);
 }
 
 export function setFarmFieldsOnMap(featureCollection, onFieldSelect, selectedFieldId = null) {
@@ -1954,7 +2586,7 @@ export function setFarmFieldsOnMap(featureCollection, onFieldSelect, selectedFie
     onEachFeature: (feature, featureLayer) => {
       const props = feature.properties || {};
       lookup[props.field_id] = featureLayer;
-      featureLayer.bindPopup(farmFieldPopup(props));
+      featureLayer.bindPopup(farmFieldPopup(props), { autoPan: false });
       createFarmAnchoredLabel({
         featureLayer,
         id: props.field_id,
@@ -1965,7 +2597,7 @@ export function setFarmFieldsOnMap(featureCollection, onFieldSelect, selectedFie
       }).forEach((item) => labelLayer.addLayer(item));
       featureLayer.on('click', (event) => {
         if (stopEditorLayerClick(event)) return;
-        highlightFarmField(props.field_id, true);
+        highlightFarmField(props.field_id);
         if (onFieldSelect) onFieldSelect(props);
       });
     },
@@ -1992,7 +2624,7 @@ export function setFarmPaddocksOnMap(featureCollection, onPaddockSelect, selecte
     onEachFeature: (feature, featureLayer) => {
       const props = feature.properties || {};
       lookup[props.paddock_id] = featureLayer;
-      featureLayer.bindPopup(paddockPopup(props));
+      featureLayer.bindPopup(paddockPopup(props), { autoPan: false });
       createFarmAnchoredLabel({
         featureLayer,
         id: props.paddock_id,
@@ -2003,7 +2635,7 @@ export function setFarmPaddocksOnMap(featureCollection, onPaddockSelect, selecte
       }).forEach((item) => labelLayer.addLayer(item));
       featureLayer.on('click', (event) => {
         if (stopEditorLayerClick(event)) return;
-        highlightFarmPaddock(props.paddock_id, true);
+        highlightFarmPaddock(props.paddock_id);
         if (onPaddockSelect) onPaddockSelect(props);
       });
     },
@@ -2018,8 +2650,24 @@ export function setFarmPaddocksOnMap(featureCollection, onPaddockSelect, selecte
   refreshFarmPrivateOverlays();
 }
 
-export function highlightFarmField(fieldId, fitBounds = false) {
+function normalizeHighlightOptions(optionsOrFitBounds, defaultMaxZoom) {
+  if (typeof optionsOrFitBounds === 'object' && optionsOrFitBounds !== null) {
+    return {
+      fitBounds: Boolean(optionsOrFitBounds.fitBounds),
+      openPopup: Boolean(optionsOrFitBounds.openPopup),
+      maxZoom: Number.isFinite(Number(optionsOrFitBounds.maxZoom)) ? Number(optionsOrFitBounds.maxZoom) : defaultMaxZoom,
+    };
+  }
+  return {
+    fitBounds: Boolean(optionsOrFitBounds),
+    openPopup: false,
+    maxZoom: defaultMaxZoom,
+  };
+}
+
+export function highlightFarmField(fieldId, optionsOrFitBounds = false) {
   if (!store.farmFieldsLookup || !Object.keys(store.farmFieldsLookup).length) return;
+  const options = normalizeHighlightOptions(optionsOrFitBounds, 15);
   setStore({ selectedFieldId: fieldId });
   Object.entries(store.farmFieldsLookup).forEach(([id, layer]) => {
     layer.setStyle(farmFieldStyle(id === fieldId));
@@ -2027,12 +2675,13 @@ export function highlightFarmField(fieldId, fitBounds = false) {
   const layer = store.farmFieldsLookup[fieldId];
   if (!layer) return;
   if (layer.bringToFront) layer.bringToFront();
-  fitLayerBounds(layer, fitBounds, 15);
-  if (layer.openPopup) layer.openPopup();
+  fitLayerBounds(layer, options.fitBounds, options.maxZoom);
+  if (options.openPopup && layer.openPopup) layer.openPopup();
 }
 
-export function highlightFarmPaddock(paddockId, fitBounds = false) {
+export function highlightFarmPaddock(paddockId, optionsOrFitBounds = false) {
   if (!store.farmPaddocksLookup || !Object.keys(store.farmPaddocksLookup).length) return;
+  const options = normalizeHighlightOptions(optionsOrFitBounds, 16);
   setStore({ selectedPaddockId: paddockId });
   Object.entries(store.farmPaddocksLookup).forEach(([id, layer]) => {
     layer.setStyle(farmPaddockStyle(id === paddockId));
@@ -2040,8 +2689,8 @@ export function highlightFarmPaddock(paddockId, fitBounds = false) {
   const layer = store.farmPaddocksLookup[paddockId];
   if (!layer) return;
   if (layer.bringToFront) layer.bringToFront();
-  fitLayerBounds(layer, fitBounds, 16);
-  if (layer.openPopup) layer.openPopup();
+  fitLayerBounds(layer, options.fitBounds, options.maxZoom);
+  if (options.openPopup && layer.openPopup) layer.openPopup();
 }
 
 export function startFarmGeometryEditor({ mode = 'field', geometry = null, onChange = null, onComplete = null } = {}) {
@@ -2160,11 +2809,14 @@ function ensureConeatVisibleZoom() {
     : null;
 
   if (selectedDepartmentLayer?.getBounds) {
+    queueProgrammaticViewportChange();
     store.map.fitBounds(selectedDepartmentLayer.getBounds(), { padding: [24, 24] });
     if (store.map.getZoom() < CONEAT_MIN_VISIBLE_ZOOM) {
+      queueProgrammaticViewportChange(1);
       store.map.setZoom(CONEAT_MIN_VISIBLE_ZOOM);
     }
   } else {
+    queueProgrammaticViewportChange(1);
     store.map.setZoom(CONEAT_MIN_VISIBLE_ZOOM);
   }
 
@@ -2183,7 +2835,7 @@ function departmentStyle(props, selected = false) {
     weight: selected ? 3 : 1.5,
     opacity: selected ? 1 : Math.max(0.55, opacity),
     fillColor: color,
-    fillOpacity: selected ? Math.min(0.45, opacity * 0.45) : Math.min(0.22, opacity * 0.22),
+    fillOpacity: selected ? Math.min(0.12, opacity * 0.14) : 0,
   };
 }
 
@@ -2371,12 +3023,19 @@ export async function initMap(onPolygonDraw, onDepartmentSelect, onSectionSelect
   renderLayerMenu();
   renderTimelineControls();
   renderActiveTileLayers();
-  map.on('moveend zoomend', () => scheduleTimelineManifestRefresh({ preserveDate: true }));
-  window.setTimeout(() => {
-    refreshTimelineManifest({ preserveDate: false }).catch((error) => {
-      console.warn('No se pudo inicializar la timeline base del mapa:', error);
-    });
-  }, 0);
+  updateMapZoomIndicator();
+  map.on('moveend zoomend', () => {
+    const pendingViewportEvents = Math.max(0, Number(store.viewportProgrammaticEvents || 0));
+    if (pendingViewportEvents > 0) {
+      const remainingProgrammatic = pendingViewportEvents - 1;
+      setStore({ viewportProgrammaticEvents: remainingProgrammatic, viewportUserPinned: false });
+      if (remainingProgrammatic > 0) return;
+    } else if (!store.viewportUserPinned) {
+      setStore({ viewportUserPinned: true });
+    }
+    updateMapZoomIndicator();
+    scheduleTimelineViewportRepaint();
+  });
   return map;
 }
 
@@ -2456,6 +3115,7 @@ function exposeMapControls(onDepartmentSelect) {
     if (store.focusMarker && store.focusMarker.openTooltip) store.focusMarker.openTooltip();
     syncConeatVisibilityHint();
     updateFarmLabelScales();
+    updateMapZoomIndicator();
   });
 
   store.map.on('load', () => {
@@ -2521,9 +3181,10 @@ export function setSectionsOnMap(featureCollection, onSectionSelect, selectedSec
         if (onSectionSelect) onSectionSelect(props);
       });
     },
-  }).addTo(store.map);
+  });
 
   setStore({ sectionsLayer: layer, sectionsLookup, selectedSectionId });
+  syncOperationalOverlayVisibility();
 }
 
 export function setProductivesOnMap(featureCollection, onProductiveSelect, selectedProductiveId = null) {
@@ -2542,9 +3203,10 @@ export function setProductivesOnMap(featureCollection, onProductiveSelect, selec
         if (onProductiveSelect) onProductiveSelect(props);
       });
     },
-  }).addTo(store.map);
+  });
 
   setStore({ productiveLayer: layer, productiveLookup, selectedProductiveId });
+  syncOperationalOverlayVisibility();
 }
 
 export function setHexesOnMap(featureCollection, onHexSelect, selectedHexId = null) {
@@ -2563,9 +3225,10 @@ export function setHexesOnMap(featureCollection, onHexSelect, selectedHexId = nu
         if (onHexSelect) onHexSelect(props);
       });
     },
-  }).addTo(store.map);
+  });
 
   setStore({ hexLayer: layer, hexLookup, selectedHexId });
+  syncOperationalOverlayVisibility();
 }
 
 export function highlightDepartment(departmentName, fitBounds = false) {
@@ -2576,7 +3239,8 @@ export function highlightDepartment(departmentName, fitBounds = false) {
   if (!layer) return;
   if (layer.bringToFront) layer.bringToFront();
   if (fitBounds && layer.getBounds) {
-    store.map.fitBounds(layer.getBounds(), { padding: [20, 20], maxZoom: 8 });
+    queueProgrammaticViewportChange();
+    store.map.fitBounds(layer.getBounds(), { padding: [20, 20], maxZoom: 10 });
   }
   if (layer.openPopup) layer.openPopup();
 }
@@ -2584,11 +3248,13 @@ export function highlightDepartment(departmentName, fitBounds = false) {
 export function highlightSection(sectionId, fitBounds = false) {
   if (!store.sectionsLookup || !Object.keys(store.sectionsLookup).length) return;
   setStore({ selectedSectionId: sectionId });
+  syncOperationalOverlayVisibility();
   applySectionOpacity();
   const layer = store.sectionsLookup[sectionId];
   if (!layer) return;
   if (layer.bringToFront) layer.bringToFront();
   if (fitBounds && layer.getBounds) {
+    queueProgrammaticViewportChange();
     store.map.fitBounds(layer.getBounds(), { padding: [20, 20], maxZoom: 10 });
   }
   if (layer.openPopup) layer.openPopup();
@@ -2597,11 +3263,13 @@ export function highlightSection(sectionId, fitBounds = false) {
 export function highlightProductive(unitId, fitBounds = false) {
   if (!store.productiveLookup || !Object.keys(store.productiveLookup).length) return;
   setStore({ selectedProductiveId: unitId });
+  syncOperationalOverlayVisibility();
   applyProductiveOpacity();
   const layer = store.productiveLookup[unitId];
   if (!layer) return;
   if (layer.bringToFront) layer.bringToFront();
   if (fitBounds && layer.getBounds) {
+    queueProgrammaticViewportChange();
     store.map.fitBounds(layer.getBounds(), { padding: [20, 20], maxZoom: 13 });
   }
   if (layer.openPopup) layer.openPopup();
@@ -2610,11 +3278,13 @@ export function highlightProductive(unitId, fitBounds = false) {
 export function highlightHex(hexId, fitBounds = false) {
   if (!store.hexLookup || !Object.keys(store.hexLookup).length) return;
   setStore({ selectedHexId: hexId });
+  syncOperationalOverlayVisibility();
   applyHexOpacity();
   const layer = store.hexLookup[hexId];
   if (!layer) return;
   if (layer.bringToFront) layer.bringToFront();
   if (fitBounds && layer.getBounds) {
+    queueProgrammaticViewportChange();
     store.map.fitBounds(layer.getBounds(), { padding: [20, 20], maxZoom: 10 });
   }
   if (layer.openPopup) layer.openPopup();
@@ -2622,15 +3292,17 @@ export function highlightHex(hexId, fitBounds = false) {
 
 export function updateFocus(model) {
   if (!store.map) return;
-  const preserveFarmViewport = Boolean(store.selectedFieldId || store.selectedPaddockId);
+  const preserveFarmViewport = Boolean(store.selectedFieldId || store.selectedPaddockId || store.viewportUserPinned);
   if (store.focusMarker) store.map.removeLayer(store.focusMarker);
   if (model.unitLat && model.unitLon) {
     store.focusMarker = window.L.marker([model.unitLat, model.unitLon]).addTo(store.map);
     store.focusMarker.bindPopup(`<strong>${model.scopeLabel}</strong><br>${model.title}<br>Risk ${model.riskScore ?? '—'}`);
     if (!preserveFarmViewport && !((isLayerActive('judicial') && store.selectedSectionId) || (isLayerActive('productiva') && store.selectedProductiveId) || (isLayerActive('hex') && store.selectedHexId))) {
+      queueProgrammaticViewportChange();
       store.map.setView([model.unitLat, model.unitLon], model.scope === 'nacional' ? 7 : 9);
     }
   } else if (!preserveFarmViewport) {
+    queueProgrammaticViewportChange();
     store.map.setView(INITIAL_VIEW.center, INITIAL_VIEW.zoom);
   }
 }
@@ -2682,6 +3354,7 @@ export async function toggleMapLayer(layerId, desiredActive = null) {
     currentLayer: nextLayers[nextLayers.length - 1] || layerId,
   });
   renderActiveTileLayers();
+  syncOperationalOverlayVisibility();
   applyLayerOpacitySideEffects(layerId);
   renderLayerMenu();
   if (layerId === 'coneat') syncConeatVisibilityHint();
@@ -2725,6 +3398,7 @@ export async function applyRecommendedLayers() {
 
 export function restoreMapInitialView() {
   if (!store.map) return;
+  queueProgrammaticViewportChange();
   store.map.setView(INITIAL_VIEW.center, INITIAL_VIEW.zoom, { animate: false });
   scheduleTimelineManifestRefresh({ preserveDate: true });
 }

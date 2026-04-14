@@ -79,9 +79,17 @@ class ApiContractTests(unittest.TestCase):
                             "secondary_source_date": "2026-04-06",
                             "blend_weight": 0.4,
                             "label": "Interpolado",
-                            "cache_status": "ready",
-                            "warm_available": True,
-                        }
+                            "visual_state": "interpolated",
+                            "visual_empty": False,
+                            "renderable_pixel_pct": 88.4,
+                            "skip_in_playback": False,
+                            "empty_reason": None,
+                        "resolved_source_date": "2026-04-01",
+                        "source_locked": True,
+                        "frame_signature": "frame-ndmi-20260403",
+                        "cache_status": "ready",
+                        "warm_available": True,
+                    }
                     },
                 }
             ],
@@ -96,6 +104,9 @@ class ApiContractTests(unittest.TestCase):
         self.assertEqual(response.json()["total_days"], 5)
         self.assertEqual(response.json()["days"][0]["layers"]["ndmi"]["primary_source_date"], "2026-04-01")
         self.assertTrue(response.json()["days"][0]["layers"]["ndmi"]["warm_available"])
+        self.assertEqual(response.json()["days"][0]["layers"]["ndmi"]["visual_state"], "interpolated")
+        self.assertFalse(response.json()["days"][0]["layers"]["ndmi"]["skip_in_playback"])
+        self.assertEqual(response.json()["days"][0]["layers"]["ndmi"]["resolved_source_date"], "2026-04-01")
 
     def test_v1_timeline_context_contract(self):
         payload = {
@@ -148,17 +159,70 @@ class ApiContractTests(unittest.TestCase):
         self.assertEqual(response.json()["display_date"], "2026-03-31")
         self.assertEqual(response.json()["history_payload"]["datos"][0]["fecha"], "2026-03-30")
 
+    def test_v1_pipeline_raster_status_contract(self):
+        payload = {
+            "window_days": 365,
+            "scenes": {"count": 120, "coverages": 340},
+            "products": {"count": 850, "ready": 800, "empty": 50, "kinds": ["department_daily_cog"]},
+            "mosaics": {"count": 40, "ready": 35, "empty": 5},
+            "aoi_stats": {"count": 1200},
+        }
+        with patch("app.api.v1.endpoints.pipeline.get_raster_status", new=AsyncMock(return_value=payload)):
+            with TestClient(app) as client:
+                response = client.get("/api/v1/pipeline/raster-status?window_days=365")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["products"]["ready"], 800)
+
+    def test_v1_pipeline_backfill_raster_products_contract(self):
+        payload = {
+            "status": "success",
+            "job": {"job_type": "raster_backfill", "status": "success"},
+            "result": {
+                "date_from": "2026-03-01",
+                "date_to": "2026-03-30",
+                "product_count": 100,
+                "mosaic_count": 8,
+                "ready_count": 92,
+                "empty_count": 8,
+            },
+        }
+        with patch("app.api.v1.endpoints.pipeline.execute_raster_backfill_job", new=AsyncMock(return_value=payload)):
+            with TestClient(app) as client:
+                response = client.post("/api/v1/pipeline/backfill-raster-products?fecha_desde=2026-03-01&fecha_hasta=2026-03-30")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["result"]["mosaic_count"], 8)
+
     def test_v1_temporal_tile_contract_accepts_source_date(self):
         with patch(
             "app.api.v1.endpoints.public.fetch_tile_png",
             new=AsyncMock(return_value=b"timeline-png"),
         ) as fetch_tile:
             with TestClient(app) as client:
-                response = client.get("/api/v1/tiles/ndmi/7/45/63.png?source_date=2026-04-01&frame_role=primary")
+                response = client.get(
+                    "/api/v1/tiles/ndmi/7/45/63.png"
+                    "?display_date=2026-04-03&source_date=2026-04-01&frame_role=primary&frame_signature=frame-ndmi-20260403"
+                    "&scope=unidad&unit_id=unit-1&scope_type=field&scope_ref=field:1"
+                )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["content-type"], "image/png")
         self.assertEqual(response.content, b"timeline-png")
-        fetch_tile.assert_awaited_once_with("ndmi", 7, 45, 63, target_date=date(2026, 4, 1), frame_role="primary")
+        fetch_tile.assert_awaited_once_with(
+            "ndmi",
+            7,
+            45,
+            63,
+            target_date=date(2026, 4, 3),
+            requested_source_date=date(2026, 4, 1),
+            frame_role="primary",
+            frame_signature="frame-ndmi-20260403",
+            scope="unidad",
+            unit_id="unit-1",
+            department=None,
+            scope_type="field",
+            scope_ref="field:1",
+            viewport_bbox=None,
+            viewport_zoom=None,
+        )
 
     def test_v1_capas_departamentos_contract(self):
         payload = {

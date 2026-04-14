@@ -3028,6 +3028,29 @@ async def list_units(
     include_hex: bool = False,
     include_productive: bool = False,
 ) -> list[dict[str, Any]]:
+    departments_only = not include_custom and not include_hex and not include_productive
+
+    async def _load_latest_snapshots(unit_ids: list[str]) -> dict[str, UnitIndexSnapshot]:
+        if not unit_ids:
+            return {}
+        latest_subquery = (
+            select(
+                UnitIndexSnapshot.unit_id.label("unit_id"),
+                func.max(UnitIndexSnapshot.observed_at).label("observed_at"),
+            )
+            .where(UnitIndexSnapshot.unit_id.in_(unit_ids))
+            .group_by(UnitIndexSnapshot.unit_id)
+            .subquery()
+        )
+        latest_result = await session.execute(
+            select(UnitIndexSnapshot).join(
+                latest_subquery,
+                (UnitIndexSnapshot.unit_id == latest_subquery.c.unit_id)
+                & (UnitIndexSnapshot.observed_at == latest_subquery.c.observed_at),
+            )
+        )
+        return {snapshot.unit_id: snapshot for snapshot in latest_result.scalars().all()}
+
     query = select(AOIUnit).order_by(AOIUnit.unit_type, AOIUnit.department, AOIUnit.name)
     if not include_custom:
         allowed_types = ["department"]
@@ -3038,16 +3061,36 @@ async def list_units(
         query = query.where(AOIUnit.unit_type.in_(allowed_types))
     result = await session.execute(query)
     units = list(result.scalars().all())
-    cache_result = await session.execute(select(UnitIndexSnapshot).order_by(desc(UnitIndexSnapshot.observed_at)))
-    latest_snapshots: dict[str, UnitIndexSnapshot] = {}
-    for snapshot in cache_result.scalars().all():
-        latest_snapshots.setdefault(snapshot.unit_id, snapshot)
+    unit_ids = [unit.id for unit in units]
+    state_result = await session.execute(select(AlertState).where(AlertState.unit_id.in_(unit_ids)))
+    states = {state.unit_id: state for state in state_result.scalars().all()}
+    if departments_only:
+        return [
+            {
+                "id": unit.id,
+                "slug": unit.slug,
+                "name": unit.name,
+                "department": unit.department,
+                "unit_type": unit.unit_type,
+                "scope": unit.scope,
+                "centroid_lat": unit.centroid_lat,
+                "centroid_lon": unit.centroid_lon,
+                "coverage_class": unit.coverage_class,
+                "unit_category": (unit.metadata_extra or {}).get("unit_category"),
+                "geometry_source": unit.source,
+                "h3_index": (unit.metadata_extra or {}).get("h3_index"),
+                "h3_resolution": (unit.metadata_extra or {}).get("h3_resolution"),
+                "data_mode": states[unit.id].data_mode if unit.id in states else unit.data_mode,
+                "state": states[unit.id].current_state if unit.id in states else None,
+                "risk_score": (round(states[unit.id].risk_score, 1) if unit.id in states else None),
+                "confidence_score": (round(states[unit.id].confidence_score, 1) if unit.id in states else None),
+            }
+            for unit in units
+        ]
+    latest_snapshots = await _load_latest_snapshots(unit_ids)
     if units and not latest_snapshots:
         await ensure_latest_daily_analysis(session)
-        cache_result = await session.execute(select(UnitIndexSnapshot).order_by(desc(UnitIndexSnapshot.observed_at)))
-        latest_snapshots = {}
-        for snapshot in cache_result.scalars().all():
-            latest_snapshots.setdefault(snapshot.unit_id, snapshot)
+        latest_snapshots = await _load_latest_snapshots(unit_ids)
     if include_productive:
         missing_productive_ids = [unit.id for unit in units if unit.unit_type == "productive_unit" and unit.id not in latest_snapshots]
         if missing_productive_ids:
@@ -3060,12 +3103,7 @@ async def list_units(
                 ensure_base_analysis=True,
                 persist_latest=True,
             )
-            cache_result = await session.execute(select(UnitIndexSnapshot).order_by(desc(UnitIndexSnapshot.observed_at)))
-            latest_snapshots = {}
-            for snapshot in cache_result.scalars().all():
-                latest_snapshots.setdefault(snapshot.unit_id, snapshot)
-    state_result = await session.execute(select(AlertState))
-    states = {state.unit_id: state for state in state_result.scalars().all()}
+            latest_snapshots = await _load_latest_snapshots(unit_ids)
     return [
         {
             "id": unit.id,

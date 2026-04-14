@@ -32,6 +32,9 @@ services:
     environment:
       APP_RUNTIME_ROLE: web
       PIPELINE_SCHEDULER_ENABLED: "false"
+      SERVE_TILES_INTERNAL: "true"
+      DISABLE_HEURISTIC_READY: "false"
+      TILESERVER_INTERNAL_URL: "http://tiles:8100"
     volumes:
       - ../apps/backend/app:/app/app
       - ../apps/backend/tasks:/app/tasks
@@ -51,12 +54,46 @@ services:
     environment:
       APP_RUNTIME_ROLE: worker
       PIPELINE_SCHEDULER_ENABLED: "true"
+      SERVE_TILES_INTERNAL: "true"
+      DISABLE_HEURISTIC_READY: "false"
+      TILESERVER_INTERNAL_URL: "http://tiles:8100"
     volumes:
       - ../apps/backend/app:/app/app
       - ../apps/backend/tasks:/app/tasks
       - ../apps/backend/data_fetcher.py:/app/data_fetcher.py
       - ../apps/frontend:/frontend
     command: python -m app.worker
+
+  tiles:
+    build:
+      context: ..
+      dockerfile: agroclimax-tiles/Dockerfile
+    env_file:
+      - ../apps/backend/.env
+    depends_on:
+      - db
+      - redis
+    environment:
+      PORT: "8100"
+      SERVE_TILES_INTERNAL: "true"
+    volumes:
+      - ../apps/backend:/app/apps/backend
+      - ../agroclimax-tiles:/app/agroclimax-tiles
+      - ../evalscripts:/app/evalscripts
+    command: uvicorn server_app:app --host 0.0.0.0 --port 8100 --reload
+
+  smoke-api:
+    build:
+      context: ..
+      dockerfile: apps/backend/Dockerfile
+    depends_on:
+      - backend
+      - tiles
+    profiles:
+      - smoke
+    volumes:
+      - ../scripts:/app/scripts
+    command: python scripts/smoke_tiles_api.py --base-url http://backend:8000
 
   celery-worker:
     build:

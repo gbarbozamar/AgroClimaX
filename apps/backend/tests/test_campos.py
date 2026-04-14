@@ -64,6 +64,11 @@ PADDOCK_WITHIN_BUFFER = {
     "coordinates": [[[-55.742, -31.36], [-55.73993, -31.36], [-55.73993, -31.38], [-55.742, -31.38], [-55.742, -31.36]]],
 }
 
+PADDOCK_INVALID_BOWTIE = {
+    "type": "Polygon",
+    "coordinates": [[[-55.79, -31.355], [-55.75, -31.385], [-55.79, -31.385], [-55.75, -31.355], [-55.79, -31.355]]],
+}
+
 
 class CamposEndpointTests(unittest.TestCase):
     def setUp(self):
@@ -360,6 +365,25 @@ class CamposEndpointTests(unittest.TestCase):
         self.assertIn("analytics", paddock_feature["properties"])
         self.assertEqual(paddock_feature["properties"]["analytics"]["state"], "Vigilancia")
 
+    def test_delete_paddock_deactivates_it_without_500(self):
+        with TestClient(app) as client:
+            establishment_id = self._create_establishment(client)
+            field = self._create_field(client, establishment_id)
+            paddock = client.post(
+                f"/api/v1/campos/{field['id']}/potreros",
+                json={"name": "Potrero Norte", "geometry_geojson": PADDOCK_A},
+            )
+            self.assertEqual(paddock.status_code, 200)
+            paddock_id = paddock.json()["id"]
+
+            deleted = client.delete(f"/api/v1/campos/{field['id']}/potreros/{paddock_id}")
+            remaining = client.get(f"/api/v1/campos/{field['id']}/potreros")
+
+        self.assertEqual(deleted.status_code, 200)
+        self.assertEqual(deleted.json()["status"], "deleted")
+        self.assertEqual(remaining.status_code, 200)
+        self.assertEqual(remaining.json()["total"], 0)
+
     def test_paddock_allows_small_outside_tolerance(self):
         with TestClient(app) as client:
             establishment_id = self._create_establishment(client)
@@ -382,7 +406,7 @@ class CamposEndpointTests(unittest.TestCase):
         self.assertIn("m fuera del campo", response.json()["detail"])
         self.assertIn("tolerancia operativa de 10 m", response.json()["detail"])
 
-    def test_paddocks_cannot_overlap(self):
+    def test_overlapping_paddocks_are_saved_with_warning(self):
         with TestClient(app) as client:
             establishment_id = self._create_establishment(client)
             field = self._create_field(client, establishment_id)
@@ -395,8 +419,23 @@ class CamposEndpointTests(unittest.TestCase):
                 f"/api/v1/campos/{field['id']}/potreros",
                 json={"name": "Potrero B", "geometry_geojson": PADDOCK_B_OVERLAP},
             )
-        self.assertEqual(second.status_code, 422)
-        self.assertIn("no pueden solaparse", second.json()["detail"])
+        self.assertEqual(second.status_code, 200)
+        body = second.json()
+        self.assertIn("warnings", body)
+        self.assertTrue(body["warnings"])
+        self.assertEqual(body["warnings"][0]["code"], "paddock_overlap")
+        self.assertIn("Potrero A", body["warnings"][0]["message"])
+
+    def test_invalid_paddock_geometry_returns_422_instead_of_500(self):
+        with TestClient(app) as client:
+            establishment_id = self._create_establishment(client)
+            field = self._create_field(client, establishment_id)
+            response = client.post(
+                f"/api/v1/campos/{field['id']}/potreros",
+                json={"name": "Potrero Invalido", "geometry_geojson": PADDOCK_INVALID_BOWTIE},
+            )
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("geometry_geojson invalido", response.json()["detail"])
 
 
 if __name__ == "__main__":

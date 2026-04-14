@@ -36,6 +36,63 @@ class SatelliteLayerCatalog(Base):
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class SatelliteScene(Base):
+    __tablename__ = "satellite_scenes"
+
+    scene_id = Column(String(180), primary_key=True)
+    provider = Column(String(120), nullable=False, index=True, default="Copernicus")
+    collection = Column(String(64), nullable=False, index=True)
+    platform = Column(String(64), nullable=True, index=True)
+    acquired_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    footprint_geojson = Column(JSON, nullable=True)
+    bbox = Column(JSON, nullable=True)
+    epsg = Column(Integer, nullable=True)
+    tile_id = Column(String(64), nullable=True, index=True)
+    orbit = Column(String(64), nullable=True, index=True)
+    cloud_cover_scene_pct = Column(Float, nullable=True)
+    quicklook_url = Column(String(500), nullable=True)
+    assets_json = Column(JSON, default=dict)
+    raw_metadata = Column(JSON, default=dict)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, index=True)
+
+    __table_args__ = (
+        # Common access pattern for backfills: filter by collection and time window.
+        Index("ix_satellite_scene_collection_acquired_at", "collection", "acquired_at"),
+        # Useful for per-tile rebuilds and debugging coverage gaps.
+        Index("ix_satellite_scene_tile_acquired_at", "tile_id", "acquired_at"),
+    )
+
+
+class SceneCoverage(Base):
+    __tablename__ = "scene_coverages"
+
+    id = Column(String(36), primary_key=True, default=new_uuid)
+    scene_id = Column(String(180), ForeignKey("satellite_scenes.scene_id"), nullable=False, index=True)
+    scope_type = Column(String(32), nullable=False, index=True)
+    scope_ref = Column(String(160), nullable=False, index=True)
+    unit_id = Column(String(64), ForeignKey("aoi_units.id"), nullable=True, index=True)
+    department = Column(String(120), nullable=True, index=True)
+    bbox_bucket = Column(String(180), nullable=True, index=True)
+    covered_area_pct = Column(Float, nullable=True)
+    valid_pixel_pct = Column(Float, nullable=True)
+    cloud_pixel_pct = Column(Float, nullable=True)
+    nodata_pixel_pct = Column(Float, nullable=True)
+    renderable_pixel_pct = Column(Float, nullable=True)
+    visual_empty = Column(Integer, nullable=False, default=0, index=True)
+    quality_score = Column(Float, nullable=True)
+    rank_within_day = Column(Integer, nullable=True)
+    metadata_extra = Column(JSON, default=dict)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, index=True)
+
+    __table_args__ = (
+        Index("ix_scene_coverage_scope", "scene_id", "scope_type", "scope_ref", "bbox_bucket", unique=True),
+        Index("ix_scene_coverage_scope_lookup", "scope_type", "scope_ref", "department", "visual_empty"),
+        Index("ix_scene_coverage_scope_ref_scene", "scope_type", "scope_ref", "scene_id"),
+    )
+
+
 class SatelliteLayerSnapshot(Base):
     __tablename__ = "satellite_layer_snapshots"
 
@@ -183,6 +240,65 @@ class RasterCacheEntry(Base):
 
     __table_args__ = (
         Index("ix_raster_cache_lookup", "layer_id", "cache_kind", "display_date", "zoom", "bbox_bucket"),
+    )
+
+
+class RasterProduct(Base):
+    __tablename__ = "raster_products"
+
+    id = Column(String(36), primary_key=True, default=new_uuid)
+    product_key = Column(String(220), nullable=False, unique=True, index=True)
+    layer_id = Column(String(64), nullable=False, index=True)
+    product_kind = Column(String(48), nullable=False, default="viewport_bucket_mosaic", index=True)
+    scope_type = Column(String(32), nullable=True, index=True)
+    scope_ref = Column(String(160), nullable=True, index=True)
+    display_date = Column(DateTime(timezone=True), nullable=False, index=True)
+    source_date = Column(DateTime(timezone=True), nullable=True, index=True)
+    zoom = Column(Integer, nullable=False, index=True)
+    bbox_bucket = Column(String(180), nullable=False, index=True)
+    storage_backend = Column(String(32), nullable=False, default="filesystem")
+    storage_key = Column(String(255), nullable=True)
+    content_type = Column(String(120), nullable=False, default="image/png")
+    width = Column(Integer, nullable=True)
+    height = Column(Integer, nullable=True)
+    tile_min_x = Column(Integer, nullable=True)
+    tile_min_y = Column(Integer, nullable=True)
+    tile_max_x = Column(Integer, nullable=True)
+    tile_max_y = Column(Integer, nullable=True)
+    visual_empty = Column(Integer, nullable=False, default=0, index=True)
+    status = Column(String(24), nullable=False, default="pending", index=True)
+    bytes_size = Column(Integer, nullable=True)
+    metadata_extra = Column(JSON, default=dict)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, index=True)
+
+    __table_args__ = (
+        Index("ix_raster_product_lookup", "layer_id", "display_date", "zoom", "bbox_bucket", "scope_type", "scope_ref"),
+        Index("ix_raster_product_scope_status", "layer_id", "product_kind", "display_date", "scope_ref", "status"),
+    )
+
+
+class RasterMosaic(Base):
+    __tablename__ = "raster_mosaics"
+
+    id = Column(String(36), primary_key=True, default=new_uuid)
+    mosaic_key = Column(String(220), nullable=False, unique=True, index=True)
+    layer_id = Column(String(64), nullable=False, index=True)
+    scope_type = Column(String(32), nullable=False, index=True, default="nacional")
+    scope_ref = Column(String(160), nullable=False, index=True, default="Uruguay")
+    display_date = Column(DateTime(timezone=True), nullable=False, index=True)
+    storage_backend = Column(String(32), nullable=False, default="filesystem")
+    storage_key = Column(String(255), nullable=True)
+    status = Column(String(24), nullable=False, default="pending", index=True)
+    visual_empty = Column(Integer, nullable=False, default=0, index=True)
+    source_product_keys = Column(JSON, default=list)
+    metadata_extra = Column(JSON, default=dict)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, index=True)
+
+    __table_args__ = (
+        Index("ix_raster_mosaic_lookup", "layer_id", "display_date", "scope_type", "scope_ref"),
+        Index("ix_raster_mosaic_scope_status", "layer_id", "display_date", "scope_type", "scope_ref", "status"),
     )
 
 

@@ -8,6 +8,7 @@ Descarga datos reales de Copernicus CDSE:
 
 import concurrent.futures
 import os, json, httpx, numpy as np
+import threading
 from datetime import date, datetime, timedelta, timezone
 import time
 from typing import Any
@@ -25,6 +26,8 @@ TOKEN_URL   = "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protoco
 PROCESS_URL = "https://sh.dataspace.copernicus.eu/api/v1/process"
 CATALOG_URL = "https://sh.dataspace.copernicus.eu/api/v1/catalog/1.0.0/search"
 CDS_URL     = os.getenv("CDS_API_URL", "https://cds.climate.copernicus.eu/api")
+_TOKEN_CACHE: dict[str, Any] = {"access_token": None, "expires_at": 0.0}
+_TOKEN_CACHE_LOCK = threading.Lock()
 
 # ── AOI Rivera, Uruguay ──────────────────────────────────────
 # BBox más ajustada al departamento de Rivera
@@ -85,13 +88,29 @@ def _build_time_window(reference_date: date | None = None, lookback_days: int = 
 
 def get_token() -> str:
     """Obtiene token OAuth2 de CDSE."""
-    r = httpx.post(TOKEN_URL, data={
-        "grant_type":    "client_credentials",
-        "client_id":     CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
-    }, timeout=30)
-    r.raise_for_status()
-    return r.json()["access_token"]
+    now = time.time()
+    cached_token = _TOKEN_CACHE.get("access_token")
+    expires_at = float(_TOKEN_CACHE.get("expires_at") or 0.0)
+    if cached_token and expires_at > (now + 60):
+        return str(cached_token)
+    with _TOKEN_CACHE_LOCK:
+        now = time.time()
+        cached_token = _TOKEN_CACHE.get("access_token")
+        expires_at = float(_TOKEN_CACHE.get("expires_at") or 0.0)
+        if cached_token and expires_at > (now + 60):
+            return str(cached_token)
+        r = httpx.post(TOKEN_URL, data={
+            "grant_type":    "client_credentials",
+            "client_id":     CLIENT_ID,
+            "client_secret": CLIENT_SECRET,
+        }, timeout=30)
+        r.raise_for_status()
+        payload = r.json()
+        access_token = payload["access_token"]
+        expires_in = max(int(payload.get("expires_in") or 3600), 120)
+        _TOKEN_CACHE["access_token"] = access_token
+        _TOKEN_CACHE["expires_at"] = time.time() + expires_in - 120
+        return access_token
 
 
 def buscar_escenas_s2(token: str, dias: int = 10) -> list:

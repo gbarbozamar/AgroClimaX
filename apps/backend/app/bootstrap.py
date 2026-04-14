@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.db.session import AsyncSessionLocal, Base, SPATIAL_BACKEND_ENABLED, SQLITE_BACKEND_ENABLED, engine
 from app.services.analysis import ensure_latest_daily_analysis
 from app.services.catalog import seed_catalog_units
+from app.services.preload import schedule_default_temporal_preload
 from app.services.public_api import prewarm_coneat_tiles
 from app.services.sections import seed_police_section_units
 from app.services.warehouse import seed_layer_catalog
@@ -89,3 +90,6 @@ async def run_startup_warmup() -> None:
             prewarm.get("warmed_tiles"),
             prewarm.get("reused_tiles"),
         )
+    if settings.preload_enabled and settings.temporal_prewarm_enabled:
+        preload = await schedule_default_temporal_preload()
+        logger.info("Preload temporal inicial programado: %s", preload.get("run_key") or preload.get("status"))

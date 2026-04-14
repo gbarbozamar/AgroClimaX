@@ -1,7 +1,8 @@
 from pathlib import Path
+from typing import Annotated
 
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -64,12 +65,51 @@ class Settings(BaseSettings):
     timeline_historical_window_days: int = 365
     coneat_cache_ttl_hours: int = 168
     coneat_prewarm_enabled: bool = True
-    coneat_prewarm_zoom_levels: list[int] = Field(default_factory=lambda: [6, 7, 8])
+    coneat_prewarm_zoom_levels: Annotated[list[int], NoDecode] = Field(default_factory=lambda: [6, 7, 8])
     preload_enabled: bool = True
     preload_neighbor_days: int = 1
     preload_adjacent_zoom_delta: int = 1
+    preload_critical_max_tiles_per_zoom: int = 12
     preload_max_tiles_per_zoom: int = 48
     preload_run_ttl_hours: int = 24
+    preload_task_liveness_seconds: int = 90
+    preload_official_overlay_parallelism: int = 3
+    preload_official_overlay_timeout_seconds: int = 20
+    temporal_prewarm_enabled: bool = True
+    temporal_prewarm_scope_type: str = "nacional"
+    temporal_prewarm_scope_ref: str = "Uruguay"
+    temporal_prewarm_unit_id: str = ""
+    temporal_prewarm_department: str = ""
+    temporal_prewarm_temporal_layers: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["alerta", "rgb", "ndmi"])
+    temporal_prewarm_zoom: int = 7
+    temporal_prewarm_width: int = 1280
+    temporal_prewarm_height: int = 720
+    temporal_prewarm_bbox: str = ""
+    temporal_prewarm_history_days: int = 30
+    raster_pipeline_enabled: bool = True
+    raster_backfill_default_days: int = 365
+    raster_catalog_sync_default_days: int = 30
+    raster_canonical_zoom_optical: int = 14
+    raster_canonical_zoom_sar: int = 14
+    raster_canonical_zoom_lst: int = 11
+    raster_canonical_zoom_alerta: int = 14
+    serve_tiles_internal: bool = True
+    internal_only_layers: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    internal_only_scopes: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    disable_heuristic_ready: bool = False
+    raster_backfill_priority_layers: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["alerta_fusion", "rgb", "ndmi", "sar", "ndvi", "ndwi", "savi", "lst"]
+    )
+    raster_catalog_default_collections: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["sentinel-2-l2a", "sentinel-1-grd", "sentinel-3-slstr"]
+    )
+    raster_refresh_optical_days: int = 14
+    raster_refresh_sar_days: int = 7
+    raster_refresh_lst_days: int = 3
+    raster_product_build_version: str = "raster-v1"
+    raster_visual_style_version: str = "visual-v1"
+    tileserver_internal_url: str = ""
+    tileserver_request_timeout_seconds: float = 20.0
 
     # Object storage / buckets
     storage_backend: str = "filesystem"
@@ -133,7 +173,8 @@ class Settings(BaseSettings):
     notification_state_change_only: bool = True
 
     # Ground truth / sensores
-    ground_truth_api_keys: list[str] = Field(default_factory=list)
+    ground_truth_api_keys: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    integration_service_tokens: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
     # Frontend / static
     frontend_mount_path: str = "/static"
@@ -141,6 +182,15 @@ class Settings(BaseSettings):
     @field_validator("ground_truth_api_keys", mode="before")
     @classmethod
     def parse_ground_truth_keys(cls, value: object) -> list[str]:
+        if value is None or value == "":
+            return []
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        return [part.strip() for part in str(value).split(",") if part.strip()]
+
+    @field_validator("integration_service_tokens", mode="before")
+    @classmethod
+    def parse_integration_service_tokens(cls, value: object) -> list[str]:
         if value is None or value == "":
             return []
         if isinstance(value, list):
@@ -155,6 +205,51 @@ class Settings(BaseSettings):
         if isinstance(value, list):
             return [int(item) for item in value]
         return [int(part.strip()) for part in str(value).split(",") if part.strip()]
+
+    @field_validator("temporal_prewarm_temporal_layers", mode="before")
+    @classmethod
+    def parse_temporal_prewarm_layers(cls, value: object) -> list[str]:
+        if value is None or value == "":
+            return ["alerta", "rgb", "ndmi"]
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        return [part.strip() for part in str(value).split(",") if part.strip()]
+
+    @field_validator("internal_only_layers", mode="before")
+    @classmethod
+    def parse_internal_only_layers(cls, value: object) -> list[str]:
+        if value is None or value == "":
+            return []
+        if isinstance(value, list):
+            return [str(item).strip().lower() for item in value if str(item).strip()]
+        return [part.strip().lower() for part in str(value).split(",") if part.strip()]
+
+    @field_validator("internal_only_scopes", mode="before")
+    @classmethod
+    def parse_internal_only_scopes(cls, value: object) -> list[str]:
+        if value is None or value == "":
+            return []
+        if isinstance(value, list):
+            return [str(item).strip().lower() for item in value if str(item).strip()]
+        return [part.strip().lower() for part in str(value).split(",") if part.strip()]
+
+    @field_validator("raster_backfill_priority_layers", mode="before")
+    @classmethod
+    def parse_raster_backfill_priority_layers(cls, value: object) -> list[str]:
+        if value is None or value == "":
+            return ["alerta_fusion", "rgb", "ndmi", "sar", "ndvi", "ndwi", "savi", "lst"]
+        if isinstance(value, list):
+            return [str(item).strip().lower() for item in value if str(item).strip()]
+        return [part.strip().lower() for part in str(value).split(",") if part.strip()]
+
+    @field_validator("raster_catalog_default_collections", mode="before")
+    @classmethod
+    def parse_raster_catalog_default_collections(cls, value: object) -> list[str]:
+        if value is None or value == "":
+            return ["sentinel-2-l2a", "sentinel-1-grd", "sentinel-3-slstr"]
+        if isinstance(value, list):
+            return [str(item).strip().lower() for item in value if str(item).strip()]
+        return [part.strip().lower() for part in str(value).split(",") if part.strip()]
 
     @field_validator("database_url", mode="before")
     @classmethod
@@ -218,6 +313,10 @@ class Settings(BaseSettings):
             and bool(self.storage_s3_access_key_id)
             and bool(self.storage_s3_secret_access_key)
         )
+
+    @property
+    def tileserver_enabled(self) -> bool:
+        return bool(self.tileserver_internal_url.strip())
 
     @property
     def google_oauth_enabled(self) -> bool:

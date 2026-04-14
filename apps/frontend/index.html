@@ -768,6 +768,45 @@
       min-height: 0;
     }
 
+    .map-zoom-indicator {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      z-index: 640;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(88, 103, 136, 0.7);
+      background: rgba(15, 17, 23, 0.92);
+      color: var(--text);
+      font-size: 0.76rem;
+      font-weight: 700;
+      backdrop-filter: blur(8px);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+      pointer-events: none;
+    }
+
+    .map-zoom-indicator-icon {
+      color: var(--accent);
+      font-size: 0.92rem;
+      line-height: 1;
+    }
+
+    .map-zoom-indicator-copy {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 6px;
+    }
+
+    .map-zoom-indicator-label {
+      font-size: 0.64rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+
     .map-legend {
       position: absolute;
       bottom: 20px;
@@ -1192,6 +1231,10 @@
       .map-tile-loading {
         bottom: 16px;
       }
+      .map-zoom-indicator {
+        top: 60px;
+        left: 10px;
+      }
     }
 
     /* â”€â”€ SIDEBAR PANEL â”€â”€ */
@@ -1219,15 +1262,48 @@
       font-weight: 600;
     }
 
+    .panel-title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .panel-title-row .panel-title {
+      margin-bottom: 0;
+    }
+
+    .fields-title-action {
+      min-width: 32px;
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      border-radius: 999px;
+      font-size: 1rem;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+    }
+
     .sidebar-tabs {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(5, minmax(0, 1fr));
       gap: 1px;
       background: var(--border);
       border-bottom: 1px solid var(--border);
       position: sticky;
       top: 0;
       z-index: 3;
+    }
+
+    @media (max-width: 420px) {
+      .sidebar-tab {
+        padding: 10px 10px;
+        font-size: 0.76rem;
+      }
     }
 
     .sidebar-tab {
@@ -1363,6 +1439,18 @@
       justify-content: space-between;
       align-items: flex-start;
       gap: 10px;
+    }
+
+    .fields-analytics-meta {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 8px;
+    }
+
+    .fields-analytics-action {
+      min-width: 0;
+      white-space: nowrap;
     }
 
     .fields-analytics-title {
@@ -1677,6 +1765,7 @@
     .settings-status[data-tone="success"] { color: #8de0b0; border-color: rgba(46, 204, 113, 0.4); }
     .settings-status[data-tone="error"] { color: #f4b0a8; border-color: rgba(231, 76, 60, 0.4); }
     .settings-status[data-tone="info"] { color: #b4d6ff; border-color: rgba(74, 144, 217, 0.4); }
+    .settings-status[data-tone="warning"] { color: #ffd27d; border-color: rgba(241, 196, 15, 0.4); }
 
     .settings-section-card {
       display: flex;
@@ -2658,6 +2747,13 @@
   <!-- MAPA -->
   <div class="map-container">
     <div id="map"></div>
+    <div class="map-zoom-indicator" id="map-zoom-indicator" aria-live="polite">
+      <span class="map-zoom-indicator-icon">&#128269;</span>
+      <span class="map-zoom-indicator-copy">
+        <span class="map-zoom-indicator-label">Zoom</span>
+        <span id="map-zoom-indicator-value">7</span>
+      </span>
+    </div>
 
     <div class="map-layer-menu" id="map-layer-menu">
       <button class="map-layer-menu-toggle" id="map-layer-menu-toggle" type="button" aria-expanded="false">
@@ -2706,6 +2802,7 @@
     <div class="sidebar-tabs">
       <button class="sidebar-tab active" id="sidebar-monitor-tab" type="button">Monitor</button>
       <button class="sidebar-tab" id="sidebar-fields-tab" type="button">Campos</button>
+      <button class="sidebar-tab" id="sidebar-establishment-viewer-tab" type="button" title="Visor de Establecimiento" aria-label="Visor de Establecimiento">Visor</button>
       <button class="sidebar-tab" id="sidebar-settings-tab" type="button">Settings</button>
       <button class="sidebar-tab" id="sidebar-profile-tab" type="button">Perfil</button>
     </div>
@@ -2858,6 +2955,22 @@
       </div>
     </div><!-- /sidebar-profile-view -->
 
+    <div class="sidebar-view hidden" id="sidebar-establishment-viewer-view">
+      <div class="panel-section">
+        <div class="panel-title">Visor de Establecimiento</div>
+        <div class="settings-card">
+          <div class="settings-status" id="establishment-viewer-status">En construccion. Este visor sera de lectura y no modifica campos/potreros.</div>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-title">Alcance</div>
+        <div class="settings-card" style="color:var(--text-muted);font-size:0.84rem;line-height:1.45">
+          Este panel se usa para explorar un establecimiento con foco operativo, sin tocar la logica del mapa ni las metricas actuales.
+        </div>
+      </div>
+    </div><!-- /sidebar-establishment-viewer-view -->
+
     <div class="sidebar-view hidden" id="sidebar-fields-view">
       <div class="panel-section">
         <div class="panel-title">Campos privados</div>
@@ -2936,7 +3049,10 @@
       </div>
 
       <div class="panel-section">
-        <div class="panel-title">Potreros</div>
+        <div class="panel-title-row">
+          <div class="panel-title">Potreros</div>
+          <button class="settings-btn primary fields-title-action" id="fields-paddock-add-btn" type="button" aria-label="Agregar nuevo potrero" title="Agregar nuevo potrero">+</button>
+        </div>
         <div class="settings-card">
           <div class="fields-grid">
             <label class="settings-field">
@@ -2988,7 +3104,7 @@
   </div>
 </footer>
 
-  <script type="module" src="/static/src/app.js?v=20260404-8"></script>
+    <script type="module" src="/static/src/app.js?v=20260414-6"></script>
 <script type="text/plain" data-legacy="disabled">
 // â”€â”€ API REAL â€” Copernicus CDSE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // API_BASE: en producciÃ³n usa URL relativa (FastAPI sirve el frontend).

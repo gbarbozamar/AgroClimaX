@@ -1,11 +1,12 @@
-import { API_BASE, API_V1, downloadJsonFile, fetchCustomState, fetchDepartmentLayers, fetchHexagonsGeojson, fetchHistory, fetchMapOverlayCatalog, fetchPreloadStatus, fetchProductiveTemplate, fetchProductiveUnits, fetchProductiveUnitsGeojson, fetchScopeState, fetchSectionsGeojson, fetchTimelineContext, fetchUnits, fetchWeatherForecast, startStartupPreload, uploadProductiveUnitsFile } from './api.js?v=20260404-8';
-import { initAuth } from './auth.js?v=20260329-7';
-import { clearDepartmentLayer, clearHexLayer, clearProductiveLayer, clearSectionsLayer, highlightDepartment, highlightHex, highlightProductive, highlightSection, initMap, isLayerActive, refreshFarmPrivateOverlays, setAvailableOverlays, setHexesOnMap, setDepartmentsOnMap, setMapLayerChangeHandler, setProductivesOnMap, setSectionsOnMap, updateFocus } from './map.js?v=20260404-8';
-import { initFieldsPanel } from './fields.js?v=20260404-8';
-import { initProfilePanel, refreshProfilePanel } from './profile.js?v=20260403-2';
-import { normalizeState, populateDepartmentSelect, renderChart, renderDashboard, renderDrivers, renderError, renderForecast, renderHistory, renderLoading, renderWeatherCards } from './render.js?v=20260327-15';
-import { initSettingsPanel } from './settings.js?v=20260331-1';
-import { setStore, store } from './state.js?v=20260404-8';
+import { API_BASE, API_V1, downloadJsonFile, fetchCustomState, fetchDepartmentLayers, fetchHexagonsGeojson, fetchHistory, fetchMapOverlayCatalog, fetchPreloadStatus, fetchProductiveTemplate, fetchProductiveUnits, fetchProductiveUnitsGeojson, fetchScopeState, fetchSectionsGeojson, fetchTimelineContext, fetchUnits, fetchWeatherForecast, startStartupPreload, uploadProductiveUnitsFile } from './api.js';
+import { initAuth } from './auth.js';
+import { clearDepartmentLayer, clearHexLayer, clearProductiveLayer, clearSectionsLayer, highlightDepartment, highlightHex, highlightProductive, highlightSection, initMap, isLayerActive, refreshFarmPrivateOverlays, requestTimelineManifestRefresh, setAvailableOverlays, setHexesOnMap, setDepartmentsOnMap, setMapLayerChangeHandler, setProductivesOnMap, setSectionsOnMap, updateFocus } from './map.js';
+import { initFieldsPanel } from './fields.js';
+import { initEstablishmentViewerPanel } from './establishment-viewer.js';
+import { initProfilePanel, refreshProfilePanel } from './profile.js';
+import { normalizeState, populateDepartmentSelect, renderChart, renderDashboard, renderDrivers, renderError, renderForecast, renderHistory, renderLoading, renderWeatherCards } from './render.js';
+import { initSettingsPanel } from './settings.js';
+import { setStore, store } from './state.js';
 
 setStore({ apiBase: API_BASE, apiV1: API_V1 });
 const TIMELINE_CONTEXT_CACHE = new Map();
@@ -30,6 +31,13 @@ const frontendPreloadState = {
   catalog: { status: 'pending', detail: FRONTEND_PRELOAD_STAGES.catalog.detail },
   selection: { status: 'pending', detail: FRONTEND_PRELOAD_STAGES.selection.detail },
 };
+const PRELOAD_MONITOR_WINDOW_MS = 45000;
+const PRELOAD_MONITOR_RETRY_DELAY_MS = 1500;
+const PRELOAD_MONITOR_ERROR_RETRY_DELAY_MS = 5000;
+const PRELOAD_TERMINAL_STATUSES = new Set(['success', 'failed', 'missing', 'stale', 'superseded', 'completed']);
+let preloadMonitorToken = 0;
+let preloadMonitorRetryTimer = null;
+let preloadMonitorAbortController = null;
 
 function readHeaderCollapsedPreference() {
   try {
@@ -127,6 +135,16 @@ function setFrontendPreloadStage(stageKey, status, detail = null) {
   renderPreloadUi();
 }
 
+function preloadResidualOnlyState() {
+  const status = store.preloadStatus || {};
+  const residualStage = status.residual_stage || status.details?.residual_stage || null;
+  return Boolean(
+    store.preloadCriticalReady
+    && residualStage === 'official_overlays'
+    && !PRELOAD_TERMINAL_STATUSES.has(String(status.status || '').toLowerCase()),
+  );
+}
+
 function combinedPreloadStages() {
   const frontendStages = Object.entries(FRONTEND_PRELOAD_STAGES).map(([key, meta]) => ({
     key,
@@ -148,8 +166,11 @@ function combinedPreloadStages() {
   return [...frontendStages, ...backendStages];
 }
 
-function preloadProgressRatio() {
-  const stages = combinedPreloadStages();
+function preloadProgressRatio({ excludeResidualOfficialOverlays = false } = {}) {
+  let stages = combinedPreloadStages();
+  if (excludeResidualOfficialOverlays) {
+    stages = stages.filter((stage) => stage.key !== 'official_overlays');
+  }
   if (!stages.length) return 0;
   const total = stages.reduce((acc, stage) => acc + Math.max(0, Number(stage.total || 0)), 0);
   if (total <= 0) return 1;
@@ -163,17 +184,29 @@ function preloadProgressRatio() {
 function renderPreloadUi() {
   const nodes = preloadNodes();
   const stages = combinedPreloadStages();
-  const progress = preloadProgressRatio();
+  const residualOnly = preloadResidualOnlyState();
+  const progress = preloadProgressRatio({ excludeResidualOfficialOverlays: residualOnly });
   const currentStage = stages.find((stage) => stage.status === 'running') || stages.find((stage) => stage.status === 'pending') || stages[stages.length - 1];
   const progressPct = Math.round(progress * 100);
-  if (nodes.overlay) nodes.overlay.classList.toggle('hidden', !store.preloadVisible);
-  if (nodes.title) nodes.title.textContent = store.preloadCriticalReady ? 'App lista, completando cache residual' : 'Preparando capas y cache inicial';
-  if (nodes.copy) nodes.copy.textContent = store.preloadCriticalReady
-    ? 'La parte critica ya esta lista. El resto sigue calentando cache en segundo plano.'
-    : 'Cargando sesion, catalogos y frames temporales para reducir buffering inicial.';
-  if (nodes.stageLabel) nodes.stageLabel.textContent = currentStage ? currentStage.label : 'Iniciando...';
-  if (nodes.progressLabel) nodes.progressLabel.textContent = `${progressPct}%`;
-  if (nodes.progressFill) nodes.progressFill.style.width = `${progressPct}%`;
+  const backgroundWarming = Boolean(
+    store.preloadCriticalReady
+    && store.preloadStatus
+    && !['success', 'failed'].includes(store.preloadStatus.status),
+  );
+  const overlayVisible = Boolean(store.preloadVisible && !store.preloadCriticalReady);
+  const miniVisible = Boolean(store.preloadMiniVisible || backgroundWarming);
+  if (nodes.overlay) nodes.overlay.classList.toggle('hidden', !overlayVisible);
+  if (nodes.title) nodes.title.textContent = residualOnly
+    ? 'App lista, completando overlays oficiales'
+    : (store.preloadCriticalReady ? 'App lista, completando cache residual' : 'Preparando capas y cache inicial');
+  if (nodes.copy) nodes.copy.textContent = residualOnly
+    ? 'La parte critica ya esta lista. Los overlays oficiales siguen calentando en segundo plano y ya no bloquean la app.'
+    : (store.preloadCriticalReady
+      ? 'La parte critica ya esta lista. El resto sigue calentando cache en segundo plano.'
+      : 'Cargando sesion, catalogos y frames temporales para reducir buffering inicial.');
+  if (nodes.stageLabel) nodes.stageLabel.textContent = residualOnly ? 'Listo para usar' : (currentStage ? currentStage.label : 'Iniciando...');
+  if (nodes.progressLabel) nodes.progressLabel.textContent = residualOnly ? 'Listo' : `${progressPct}%`;
+  if (nodes.progressFill) nodes.progressFill.style.width = residualOnly ? '100%' : `${progressPct}%`;
   if (nodes.stageList) {
     nodes.stageList.innerHTML = stages.map((stage) => {
       const className = stage.status === 'done' ? ' is-done' : (stage.status === 'running' ? ' is-running' : '');
@@ -194,18 +227,25 @@ function renderPreloadUi() {
     }).join('');
   }
   if (nodes.footnote) {
-    nodes.footnote.textContent = store.preloadCriticalReady
-      ? 'Se liberaron las partes criticas. El calentamiento residual sigue para mejorar reproduccion y cambios de capa.'
-      : 'La app se habilita apenas lo critico queda listo. El resto sigue calentando en segundo plano.';
+    nodes.footnote.textContent = residualOnly
+      ? 'El sistema principal ya esta listo. Los overlays oficiales restantes son trabajo residual no critico.'
+      : (store.preloadCriticalReady
+        ? 'Se liberaron las partes criticas. El calentamiento residual sigue para mejorar reproduccion y cambios de capa.'
+        : 'La app se habilita apenas lo critico queda listo. El resto sigue calentando en segundo plano.');
   }
   if (nodes.mini) nodes.mini.classList.toggle('hidden', !store.preloadMiniVisible);
-  if (nodes.miniTitle) nodes.miniTitle.textContent = store.preloadCriticalReady ? 'Cache residual en progreso' : 'Precarga inicial';
+  if (nodes.miniTitle) nodes.miniTitle.textContent = residualOnly
+    ? 'Listo para usar'
+    : (store.preloadCriticalReady ? 'Cache residual en progreso' : 'Precarga inicial');
   if (nodes.miniDetail) {
     const stageKey = store.preloadStatus?.stage;
-    nodes.miniDetail.textContent = BACKEND_PRELOAD_STAGE_META[stageKey]?.label || currentStage?.label || 'Preparando cache';
+    nodes.miniDetail.textContent = residualOnly
+      ? 'Completando overlays oficiales en segundo plano.'
+      : (BACKEND_PRELOAD_STAGE_META[stageKey]?.label || currentStage?.label || 'Preparando cache');
   }
-  if (nodes.miniProgress) nodes.miniProgress.textContent = `${progressPct}%`;
-  document.body.classList.toggle('preload-blocked', Boolean(store.preloadVisible));
+  if (nodes.miniProgress) nodes.miniProgress.textContent = residualOnly ? 'Listo' : `${progressPct}%`;
+  if (nodes.mini) nodes.mini.classList.toggle('hidden', !miniVisible);
+  document.body.classList.toggle('preload-blocked', overlayVisible);
   setStore({ preloadProgress: progress });
 }
 
@@ -221,11 +261,11 @@ function selectionPreloadPayload(descriptor = currentSelectionDescriptor()) {
   }
   if (descriptor.scope === 'unidad') {
     const selectionKind = descriptor.selectionKind || descriptor.unitMeta?.selection_kind || 'unidad';
-    const scopeRef = descriptor.unitMeta?.source_paddock_id
-      ? `paddock:${descriptor.unitMeta.source_paddock_id}`
-      : descriptor.unitMeta?.source_field_id
-        ? `field:${descriptor.unitMeta.source_field_id}`
-        : descriptor.unitId;
+    const scopeRef = descriptor.unitId
+      || descriptor.unitMeta?.unit_id
+      || descriptor.unitMeta?.source_paddock_id
+      || descriptor.unitMeta?.source_field_id
+      || null;
     return {
       scope_type: selectionKind,
       scope_ref: scopeRef,
@@ -266,40 +306,93 @@ function currentViewportPreloadPayload() {
   };
 }
 
-async function pollPreloadRun(runKey, { timeoutMs = 0, stopOnCritical = false } = {}) {
+async function pollPreloadRun(runKey, { timeoutMs = 0, stopOnCritical = false, shouldContinue = null, signal = null } = {}) {
   const startedAt = Date.now();
   let latest = null;
   while (true) {
-    latest = await fetchPreloadStatus(runKey);
+    if (signal?.aborted) return null;
+    if (shouldContinue && !shouldContinue()) return null;
+    try {
+      latest = await fetchPreloadStatus(runKey, { signal });
+    } catch (error) {
+      if (error?.name === 'AbortError' || signal?.aborted) return null;
+      throw error;
+    }
+    if (signal?.aborted) return null;
+    if (shouldContinue && !shouldContinue()) return null;
+    if (store.preloadRunKey && store.preloadRunKey !== runKey) return null;
     setStore({
       preloadStatus: latest,
-      preloadRunKey: runKey,
       preloadCriticalReady: Boolean(latest.critical_ready),
     });
     renderPreloadUi();
-    if (latest.status === 'success' || latest.status === 'failed') return latest;
+    if (PRELOAD_TERMINAL_STATUSES.has(String(latest.status || '').toLowerCase())) return latest;
     if (stopOnCritical && latest.critical_ready) return latest;
     if (timeoutMs > 0 && (Date.now() - startedAt) >= timeoutMs) return latest;
+    if (shouldContinue && !shouldContinue()) return null;
     await sleep(500);
   }
 }
 
+function stopPreloadMonitoring({ hideMini = false } = {}) {
+  preloadMonitorToken += 1;
+  if (preloadMonitorRetryTimer) {
+    window.clearTimeout(preloadMonitorRetryTimer);
+    preloadMonitorRetryTimer = null;
+  }
+  if (preloadMonitorAbortController) {
+    preloadMonitorAbortController.abort();
+    preloadMonitorAbortController = null;
+  }
+  if (hideMini) {
+    setStore({ preloadMiniVisible: false });
+    renderPreloadUi();
+  }
+}
+
 function continuePreloadMonitoring(runKey) {
-  (async () => {
+  if (!runKey) return;
+  stopPreloadMonitoring();
+  const token = preloadMonitorToken;
+  const abortController = new AbortController();
+  preloadMonitorAbortController = abortController;
+
+  const scheduleRetry = (delayMs) => {
+    if (token !== preloadMonitorToken) return;
+    preloadMonitorRetryTimer = window.setTimeout(() => {
+      preloadMonitorRetryTimer = null;
+      void monitor();
+    }, delayMs);
+  };
+
+  const monitor = async () => {
+    if (token !== preloadMonitorToken) return;
     try {
-      const latest = await pollPreloadRun(runKey, { timeoutMs: 45000, stopOnCritical: false });
-      if (latest?.status === 'success' || latest?.status === 'failed') {
-        setStore({ preloadMiniVisible: false });
-        renderPreloadUi();
+      const latest = await pollPreloadRun(runKey, {
+        timeoutMs: PRELOAD_MONITOR_WINDOW_MS,
+        stopOnCritical: false,
+        shouldContinue: () => token === preloadMonitorToken && store.preloadRunKey === runKey,
+        signal: abortController.signal,
+      });
+      if (token !== preloadMonitorToken) return;
+      if (!latest) return;
+      if (PRELOAD_TERMINAL_STATUSES.has(String(latest?.status || '').toLowerCase())) {
+        stopPreloadMonitoring({ hideMini: true });
+        return;
       }
+      scheduleRetry(PRELOAD_MONITOR_RETRY_DELAY_MS);
     } catch (error) {
+      if (token !== preloadMonitorToken) return;
       console.warn('No se pudo completar el monitoreo de precarga:', error);
+      scheduleRetry(PRELOAD_MONITOR_ERROR_RETRY_DELAY_MS);
     }
-  })();
+  };
+
+  void monitor();
 }
 
 function releasePreloadOverlay() {
-  const stillRunning = Boolean(store.preloadRunKey && store.preloadStatus && !['success', 'failed'].includes(store.preloadStatus.status));
+  const stillRunning = Boolean(store.preloadRunKey && store.preloadStatus && !PRELOAD_TERMINAL_STATUSES.has(String(store.preloadStatus.status || '').toLowerCase()));
   setStore({
     preloadVisible: false,
     preloadMiniVisible: stillRunning,
@@ -736,8 +829,24 @@ async function refreshProductiveImportSummary(department = null) {
 
 async function loadUnits() {
   const payload = await fetchUnits();
-  setStore({ units: payload.datos || [] });
-  populateDepartmentSelect(store.units);
+  const units = Array.isArray(payload?.datos) ? payload.datos : [];
+  setStore({ units });
+  populateDepartmentSelect(units, store.selectedDepartment || 'nacional');
+}
+
+function populateDepartmentSelectFromFeatureCollection(featureCollection, selectedDepartment = null) {
+  const departments = Array.from(
+    new Set(
+      (featureCollection?.features || [])
+        .map((feature) => feature?.properties?.department || feature?.properties?.name || null)
+        .filter(Boolean),
+    ),
+  ).sort((a, b) => String(a).localeCompare(String(b), 'es'));
+  if (!departments.length) return;
+  populateDepartmentSelect(
+    departments.map((department) => ({ department })),
+    selectedDepartment || store.selectedDepartment || 'nacional',
+  );
 }
 
 async function loadUnitsSafe() {
@@ -775,8 +884,9 @@ async function loadDepartmentLayer(selectedDepartment = null) {
       loading.style.display = 'block';
     }
     const collection = await fetchDepartmentLayers();
+    populateDepartmentSelectFromFeatureCollection(collection, selectedDepartment);
     setDepartmentsOnMap(collection, handleDepartmentSelect, selectedDepartment);
-    if (selectedDepartment) highlightDepartment(selectedDepartment, false);
+    if (selectedDepartment) highlightDepartment(selectedDepartment, true);
     refreshFarmPrivateOverlays();
     syncWeatherFilterOptions();
   } catch (error) {
@@ -949,38 +1059,51 @@ async function loadSelection(scope, department = null, unitId = null) {
   }
 }
 
-function handleDepartmentSelect(department) {
+async function handleDepartmentSelect(department) {
   const select = document.getElementById('department-select');
   if (select) select.value = department;
-  setStore({ customGeojson: null, selectedSectionId: null, selectedHexId: null });
-  setStore({ selectedProductiveId: null });
+  setStore({
+    customGeojson: null,
+    selectedSectionId: null,
+    selectedHexId: null,
+    selectedFieldId: null,
+    selectedPaddockId: null,
+    selectedFieldDetail: null,
+    viewportUserPinned: false,
+    viewportProgrammaticEvents: 0,
+  });
+  setStore({ selectedProductiveId: null, selectedScope: 'departamento', selectedDepartment: department, selectedUnitId: null });
   document.getElementById('btn-limpiar').style.display = 'none';
-  refreshProductiveImportSummary(department);
-  loadSelection('departamento', department, null);
+  await refreshProductiveImportSummary(department);
+  await loadSelection('departamento', department, null);
   if (isLayerActive('judicial')) {
-    loadSectionsLayer(department);
+    await loadSectionsLayer(department);
+    requestTimelineManifestRefresh({ preserveDate: false });
     return;
   }
   if (isLayerActive('productiva')) {
-    loadProductiveLayer(department);
+    await loadProductiveLayer(department);
+    requestTimelineManifestRefresh({ preserveDate: false });
     return;
   }
-  loadDepartmentLayer(department);
+  await loadDepartmentLayer(department);
+  setStore({ selectedScope: 'departamento', selectedDepartment: department, selectedUnitId: null });
+  requestTimelineManifestRefresh({ preserveDate: false });
 }
 
-function handleSectionSelect(section) {
-  setStore({ customGeojson: null, selectedSectionId: section.unit_id, selectedProductiveId: null, selectedHexId: null });
-  loadSelection('unidad', null, section.unit_id);
+async function handleSectionSelect(section) {
+  setStore({ customGeojson: null, selectedSectionId: section.unit_id, selectedProductiveId: null, selectedHexId: null, viewportUserPinned: false, viewportProgrammaticEvents: 0 });
+  await loadSelection('unidad', null, section.unit_id);
 }
 
-function handleProductiveSelect(unit) {
-  setStore({ customGeojson: null, selectedProductiveId: unit.unit_id, selectedSectionId: null, selectedHexId: null });
-  loadSelection('unidad', null, unit.unit_id);
+async function handleProductiveSelect(unit) {
+  setStore({ customGeojson: null, selectedProductiveId: unit.unit_id, selectedSectionId: null, selectedHexId: null, viewportUserPinned: false, viewportProgrammaticEvents: 0 });
+  await loadSelection('unidad', null, unit.unit_id);
 }
 
-function handleHexSelect(hex) {
-  setStore({ customGeojson: null, selectedHexId: hex.unit_id, selectedProductiveId: null, selectedSectionId: null });
-  loadSelection('unidad', null, hex.unit_id);
+async function handleHexSelect(hex) {
+  setStore({ customGeojson: null, selectedHexId: hex.unit_id, selectedProductiveId: null, selectedSectionId: null, viewportUserPinned: false, viewportProgrammaticEvents: 0 });
+  await loadSelection('unidad', null, hex.unit_id);
 }
 
 async function refreshCurrentSelection() {
@@ -1086,6 +1209,7 @@ async function bootstrap() {
   window.addEventListener('agroclimax:viewport-preload-started', (event) => {
     const payload = event?.detail || {};
     if (!payload.run_key) return;
+    stopPreloadMonitoring();
     setStore({
       preloadRunKey: payload.run_key,
       preloadStatus: payload,
@@ -1123,20 +1247,37 @@ async function bootstrap() {
     setFrontendPreloadStage('catalog', 'done', 'Catalogo de overlays no disponible; se sigue con fallback local.');
   }
 
+  initSettingsPanel({
+    onRefreshSelection: refreshCurrentSelection,
+    onRefreshLayers: refreshCurrentLayer,
+  });
+  initEstablishmentViewerPanel();
+  await initFieldsPanel();
+  initProfilePanel();
+
   const select = document.getElementById('department-select');
   const weatherSelect = document.getElementById('weather-filter-select');
   select.addEventListener('change', async (event) => {
     const value = event.target.value;
-    setStore({ customGeojson: null, selectedSectionId: null, selectedProductiveId: null, selectedHexId: null });
+    setStore({
+      customGeojson: null,
+      selectedSectionId: null,
+      selectedProductiveId: null,
+      selectedHexId: null,
+      selectedFieldId: null,
+      selectedPaddockId: null,
+      selectedFieldDetail: null,
+      viewportUserPinned: false,
+      viewportProgrammaticEvents: 0,
+    });
     if (value === 'nacional') {
       await refreshProductiveImportSummary(null);
       await loadSelection('nacional');
+      requestTimelineManifestRefresh({ preserveDate: false });
       await refreshCurrentLayer();
       return;
     }
-    await refreshProductiveImportSummary(value);
-    await loadSelection('departamento', value);
-    await refreshCurrentLayer();
+    await handleDepartmentSelect(value);
   });
 
   weatherSelect?.addEventListener('change', async (event) => {
@@ -1144,56 +1285,50 @@ async function bootstrap() {
     await refreshWeatherCards();
   });
 
+  setFrontendPreloadStage('selection', 'running');
+  await loadUnitsSafe();
+  const initialDepartmentLayerPromise = loadDepartmentLayer(null);
+  setStore({
+    preloadCriticalReady: true,
+    preloadMiniVisible: false,
+  });
+  releasePreloadOverlay();
+  await loadSelection('nacional');
+  setFrontendPreloadStage('selection', 'done', 'Contexto inicial y capas base listas.');
+  await initialDepartmentLayerPromise;
+
+  requestTimelineManifestRefresh({ preserveDate: false });
+
   const preloadSelection = selectionPreloadPayload();
   const preloadViewport = currentViewportPreloadPayload();
   let startupPreloadRunKey = null;
-  try {
-    const preloadResponse = await startStartupPreload({
-      ...preloadViewport,
-      temporal_layers: (store.activeLayers || []).filter((layerId) => ['alerta', 'rgb', 'ndvi', 'ndmi', 'ndwi', 'savi', 'sar', 'lst'].includes(layerId)),
-      official_layers: (store.availableOverlays || []).filter((item) => item.recommended).map((item) => item.id),
-      ...preloadSelection,
-      target_date: todayIsoDate(),
-      history_days: 30,
-    });
+  startStartupPreload({
+    ...preloadViewport,
+    temporal_layers: (store.activeLayers || []).filter((layerId) => ['alerta', 'rgb', 'ndvi', 'ndmi', 'ndwi', 'savi', 'sar', 'lst'].includes(layerId)),
+    official_layers: (store.availableOverlays || []).filter((item) => item.recommended).map((item) => item.id),
+    ...preloadSelection,
+    target_date: todayIsoDate(),
+    history_days: 30,
+  }).then((preloadResponse) => {
     startupPreloadRunKey = preloadResponse?.run_key || null;
-    setStore({ preloadRunKey: startupPreloadRunKey, preloadStatus: preloadResponse || null });
+    stopPreloadMonitoring();
+    setStore({
+      preloadRunKey: startupPreloadRunKey,
+      preloadStatus: preloadResponse || null,
+      preloadMiniVisible: Boolean(startupPreloadRunKey),
+    });
     renderPreloadUi();
-  } catch (error) {
-    console.warn('No se pudo iniciar la precarga de startup:', error);
-  }
-
-  const unitsPromise = loadUnitsSafe();
-  const departmentsPromise = loadDepartmentLayer(null);
-  setFrontendPreloadStage('selection', 'running');
-  await loadSelection('nacional');
-  await unitsPromise;
-  await departmentsPromise;
-  setFrontendPreloadStage('selection', 'done', 'Contexto inicial y capas base listas.');
-
-  if (startupPreloadRunKey) {
-    try {
-      const criticalStatus = await pollPreloadRun(startupPreloadRunKey, { timeoutMs: 12000, stopOnCritical: true });
-      if (criticalStatus?.status && !['success', 'failed'].includes(criticalStatus.status)) {
-        setStore({ preloadMiniVisible: true });
-        continuePreloadMonitoring(startupPreloadRunKey);
-      }
-    } catch (error) {
-      console.warn('No se pudo confirmar el estado critico de la precarga:', error);
+    if (startupPreloadRunKey) {
+      continuePreloadMonitoring(startupPreloadRunKey);
     }
-  }
-  releasePreloadOverlay();
+  }).catch((error) => {
+    console.warn('No se pudo iniciar la precarga de startup:', error);
+  });
 
   syncWeatherFilterOptions();
   await refreshWeatherCards();
   await refreshProductiveImportSummary(null);
   wireProductiveImportControls();
-  initSettingsPanel({
-    onRefreshSelection: refreshCurrentSelection,
-    onRefreshLayers: refreshCurrentLayer,
-  });
-  await initFieldsPanel();
-  initProfilePanel();
   await refreshProfilePanel();
   setProductiveImportStatus('Subi un .geojson o .zip shapefile para activar la capa Predios.', 'muted');
 }

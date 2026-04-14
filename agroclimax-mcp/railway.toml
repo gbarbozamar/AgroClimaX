@@ -1,0 +1,11 @@
+[build]
+dockerfilePath = "agroclimax-mcp/Dockerfile"
+dockerContext = "."
+
+[deploy]
+healthcheckPath = "/healthz"
+healthcheckTimeout = 120
+restartPolicyType = "on_failure"
+
+[[services]]
+name = "AgroClimaX MCP"

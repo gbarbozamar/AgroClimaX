@@ -270,6 +270,8 @@ async def get_raster_cache_status_index(
     date_to: date,
     bbox_bucket: str | list[str] | None,
     zoom_levels: list[int] | None = None,
+    scope_type: str | None = None,
+    scope_ref: str | None = None,
 ) -> dict[str, dict[str, str]]:
     if not layer_ids:
         return {}
@@ -287,6 +289,10 @@ async def get_raster_cache_status_index(
         query = query.where(RasterCacheEntry.bbox_bucket == bbox_bucket)
     if zoom_levels:
         query = query.where(RasterCacheEntry.zoom.in_([int(level) for level in zoom_levels]))
+    if scope_type:
+        query = query.where(RasterCacheEntry.scope_type == scope_type)
+    if scope_ref:
+        query = query.where(RasterCacheEntry.scope_ref == scope_ref)
     result = await session.execute(query.order_by(desc(RasterCacheEntry.updated_at)))
     index: dict[str, dict[str, str]] = {}
     for row in result.scalars().all():

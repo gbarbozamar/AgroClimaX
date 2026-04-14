@@ -1,4 +1,4 @@
-import { store } from './state.js?v=20260404-8';
+import { store } from './state.js';
 
 const params = new URLSearchParams(window.location.search);
 const isHttpOrigin = window.location.protocol === 'http:' || window.location.protocol === 'https:';
@@ -10,6 +10,7 @@ export const API_BASE =
 
 export const API_V1 = `${API_BASE}/v1`;
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+const timelineFramesInFlight = new Map();
 
 async function fetchJson(url, options = {}) {
   const {
@@ -164,14 +165,39 @@ export async function fetchMapOverlayCatalog() {
   return fetchJson(`${API_V1}/map-overlays/catalog`);
 }
 
-export async function fetchTimelineFrames({ layers = [], dateFrom = null, dateTo = null, bbox = null, zoom = null } = {}) {
+export async function fetchTimelineFrames({
+  layers = [],
+  dateFrom = null,
+  dateTo = null,
+  bbox = null,
+  zoom = null,
+  scope = null,
+  unitId = null,
+  department = null,
+  scopeType = null,
+  scopeRef = null,
+} = {}) {
   const url = new URL(`${API_V1}/timeline/frames`, window.location.origin);
   layers.forEach((layerId) => url.searchParams.append('layers', layerId));
   if (dateFrom) url.searchParams.set('date_from', dateFrom);
   if (dateTo) url.searchParams.set('date_to', dateTo);
   if (bbox) url.searchParams.set('bbox', bbox);
   if (Number.isFinite(Number(zoom))) url.searchParams.set('zoom', String(zoom));
-  return fetchJson(url.toString().replace(window.location.origin, ''));
+  if (scope) url.searchParams.set('scope', scope);
+  if (unitId) url.searchParams.set('unit_id', unitId);
+  if (department) url.searchParams.set('department', department);
+  if (scopeType) url.searchParams.set('scope_type', scopeType);
+  if (scopeRef) url.searchParams.set('scope_ref', scopeRef);
+  const requestPath = url.toString().replace(window.location.origin, '');
+  const inflightRequest = timelineFramesInFlight.get(requestPath);
+  if (inflightRequest) return inflightRequest;
+  const requestPromise = fetchJson(requestPath).finally(() => {
+    if (timelineFramesInFlight.get(requestPath) === requestPromise) {
+      timelineFramesInFlight.delete(requestPath);
+    }
+  });
+  timelineFramesInFlight.set(requestPath, requestPromise);
+  return requestPromise;
 }
 
 export async function fetchTimelineContext({ scope, department = null, unitId = null, targetDate, historyDays = 30 } = {}) {
@@ -208,10 +234,14 @@ export async function startTimelineWindowPreload(payload = {}) {
   });
 }
 
-export async function fetchPreloadStatus(runKey) {
+export async function fetchPreloadStatus(runKey, { signal } = {}) {
   const url = new URL(`${API_V1}/preload/status`, window.location.origin);
   url.searchParams.set('run_key', runKey);
-  return fetchJson(url.toString().replace(window.location.origin, ''));
+  url.searchParams.set('_ts', String(Date.now()));
+  return fetchJson(url.toString().replace(window.location.origin, ''), {
+    cache: 'no-store',
+    signal,
+  });
 }
 
 export async function fetchSettingsSchema() {
@@ -360,6 +390,8 @@ export async function saveEstablishment(payload, establishmentId = null) {
 export async function deleteEstablishment(establishmentId) {
   return fetchJson(`${API_V1}/establecimientos/${encodeURIComponent(establishmentId)}`, {
     method: 'DELETE',
+    cache: 'no-store',
+    priority: 'high',
   });
 }
 
@@ -388,6 +420,8 @@ export async function saveField(payload, fieldId = null) {
 export async function deleteField(fieldId) {
   return fetchJson(`${API_V1}/campos/${encodeURIComponent(fieldId)}`, {
     method: 'DELETE',
+    cache: 'no-store',
+    priority: 'high',
   });
 }
 
@@ -416,6 +450,8 @@ export async function savePaddock(fieldId, payload, paddockId = null) {
 export async function deletePaddock(fieldId, paddockId) {
   return fetchJson(`${API_V1}/campos/${encodeURIComponent(fieldId)}/potreros/${encodeURIComponent(paddockId)}`, {
     method: 'DELETE',
+    cache: 'no-store',
+    priority: 'high',
   });
 }
 

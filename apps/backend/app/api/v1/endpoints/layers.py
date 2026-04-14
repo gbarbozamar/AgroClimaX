@@ -1,14 +1,60 @@
+from typing import Any
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.services.analysis import backfill_department_spatial_cache, ensure_latest_daily_analysis
+from app.services.catalog import department_payloads
 from app.services.hexagons import materialize_h3_cache
 from app.services.productive_units import materialize_productive_unit_cache
 from app.services.sections import materialize_police_section_cache
 from app.services.warehouse import build_feature_collection, get_cached_layer_features
 
 router = APIRouter(prefix="/capas", tags=["capas"])
+
+
+def _catalog_department_feature_collection(department: str | None = None) -> dict[str, Any]:
+    payloads = department_payloads()
+    if department:
+        normalized = str(department).strip().lower()
+        payloads = [
+            item
+            for item in payloads
+            if str(item.get("department") or "").strip().lower() == normalized
+        ]
+
+    features = []
+    for payload in payloads:
+        properties = {
+            "unit_id": payload.get("id"),
+            "unit_name": payload.get("name"),
+            "department": payload.get("department"),
+            "coverage_class": payload.get("coverage_class"),
+            "geometry_source": payload.get("geometry_source"),
+            "cache_status": "bootstrap",
+            "raw_metrics": {},
+        }
+        features.append(
+            {
+                "type": "Feature",
+                "geometry": payload.get("geometry_geojson"),
+                "properties": properties,
+            }
+        )
+
+    return {
+        "type": "FeatureCollection",
+        "metadata": {
+            "scope": "departamentos",
+            "department_filter": department,
+            "count": len(features),
+            "generated_at": None,
+            "observed_at": None,
+            "source": "catalog_boundaries_bootstrap",
+            "cache_status": "bootstrap",
+        },
+        "features": features,
+    }
 
 
 @router.get("/catalogo")
@@ -31,10 +77,7 @@ async def capas_departamentos(
 ):
     rows = await get_cached_layer_features(db, layer_scope="departamento", department=department)
     if not rows:
-        await ensure_latest_daily_analysis(db)
-        await backfill_department_spatial_cache(db, department=department)
-        await db.commit()
-        rows = await get_cached_layer_features(db, layer_scope="departamento", department=department)
+        return _catalog_department_feature_collection(department=department)
     return build_feature_collection(rows, layer_scope="departamentos", department=department)
 
 

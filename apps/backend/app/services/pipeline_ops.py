@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.models.humedad import AOIUnit
-from app.models.materialized import HistoricalStateCache, SatelliteLayerSnapshot
+from app.models.materialized import HistoricalStateCache, RasterCacheEntry, RasterMosaic, RasterProduct, SatelliteLayerSnapshot, SatelliteScene, SceneCoverage
 from app.models.pipeline import PipelineRun
 from app.services.analysis import (
     _current_analysis_status,
@@ -24,9 +24,14 @@ from app.services.analysis import (
     recompute_calibrations,
     run_daily_pipeline,
 )
+from app.services.catalog import DEPARTMENTS
 from app.services.hexagons import materialize_h3_cache
+from app.services.preload import schedule_default_temporal_preload, warm_tileserver_temporal_tiles
 from app.services.public_api import prewarm_coneat_tiles
 from app.services.productive_units import materialize_productive_unit_cache
+from app.services.raster_aoi_stats import backfill_aoi_raster_stats
+from app.services.raster_catalog import scene_catalog_status, sync_scene_catalog
+from app.services.raster_products import build_department_daily_cog, build_national_mosaic
 from app.services.sections import materialize_police_section_cache
 from app.services.warehouse import historical_state_cache_key
 from app.services.public_api import TEMPORAL_LAYER_CONFIGS
@@ -44,6 +49,20 @@ RECALIBRATION_WEEKDAYS = {
     "saturday": 5,
     "sunday": 6,
 }
+
+
+def _default_raster_backfill_layers() -> list[str]:
+    configured = list(getattr(settings, "raster_backfill_priority_layers", []) or [])
+    if configured:
+        return [str(item).strip().lower() for item in configured if str(item).strip()]
+    return [str(key).strip().lower() for key in TEMPORAL_LAYER_CONFIGS.keys()]
+
+
+def _default_raster_catalog_collections() -> list[str]:
+    configured = list(getattr(settings, "raster_catalog_default_collections", []) or [])
+    if configured:
+        return [str(item).strip().lower() for item in configured if str(item).strip()]
+    return ["sentinel-2-l2a", "sentinel-1-grd", "sentinel-3-slstr"]
 
 
 def _now_utc() -> datetime:
@@ -219,10 +238,55 @@ def _compact_timeline_backfill_result(result: dict[str, Any], warehouse_status: 
     }
 
 
+def _compact_scene_catalog_result(result: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "date_from": result.get("date_from"),
+        "date_to": result.get("date_to"),
+        "scene_count": result.get("scene_count"),
+        "coverage_count": result.get("coverage_count"),
+    }
+
+
+def _compact_raster_backfill_result(result: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "date_from": result.get("date_from"),
+        "date_to": result.get("date_to"),
+        "product_count": result.get("product_count"),
+        "mosaic_count": result.get("mosaic_count"),
+        "ready_count": result.get("ready_count"),
+        "empty_count": result.get("empty_count"),
+    }
+
+
+def _compact_aoi_stats_result(result: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "date_from": result.get("date_from"),
+        "date_to": result.get("date_to"),
+        "rows": result.get("rows"),
+    }
+
+
 def _coverage_pct(available: int, expected: int) -> float:
     if expected <= 0:
         return 0.0
     return round((available / expected) * 100.0, 1)
+
+
+def _normalized_raster_layers(layers: list[str] | None) -> list[str]:
+    if layers:
+        cleaned = [str(item).strip().lower() for item in layers if str(item).strip()]
+        return cleaned or list(settings.raster_backfill_priority_layers or [])
+    return list(settings.raster_backfill_priority_layers or [])
+
+
+def _layer_refresh_window_days(layer_id: str) -> int:
+    lid = str(layer_id or "").strip().lower()
+    if lid == "sar":
+        return max(int(settings.raster_refresh_sar_days or 7), 1)
+    if lid == "lst":
+        return max(int(settings.raster_refresh_lst_days or 3), 1)
+    # optical + derived (alerta_fusion/rgb/nd* etc)
+    return max(int(settings.raster_refresh_optical_days or 14), 1)
 
 
 def _coverage_status(available: int, expected: int) -> str:
@@ -604,6 +668,53 @@ async def get_pipeline_status(session: AsyncSession) -> dict[str, Any]:
     }
 
 
+async def get_raster_status(
+    session: AsyncSession,
+    *,
+    window_days: int | None = None,
+) -> dict[str, Any]:
+    today = date.today()
+    resolved_window = max(int(window_days or settings.raster_backfill_default_days), 1)
+    start_dt = datetime.combine(today - timedelta(days=resolved_window - 1), time.min, tzinfo=timezone.utc)
+
+    scene_result = await session.execute(select(SatelliteScene).where(SatelliteScene.acquired_at >= start_dt))
+    coverage_result = await session.execute(select(SceneCoverage))
+    product_result = await session.execute(select(RasterProduct).where(RasterProduct.display_date >= start_dt))
+    mosaic_result = await session.execute(select(RasterMosaic).where(RasterMosaic.display_date >= start_dt))
+    aoi_stats_result = await session.execute(
+        select(RasterCacheEntry).where(
+            RasterCacheEntry.cache_kind == "aoi_raster_stats",
+            RasterCacheEntry.display_date >= start_dt,
+        )
+    )
+
+    products = product_result.scalars().all()
+    mosaics = mosaic_result.scalars().all()
+    return {
+        "window_days": resolved_window,
+        "scenes": {
+            "count": len(scene_result.scalars().all()),
+            "coverages": len(coverage_result.scalars().all()),
+            "default_collections": _default_raster_catalog_collections(),
+        },
+        "products": {
+            "count": len(products),
+            "ready": sum(1 for item in products if item.status == "ready" and not item.visual_empty),
+            "empty": sum(1 for item in products if item.status == "empty" or item.visual_empty),
+            "kinds": sorted({str(item.product_kind) for item in products}),
+            "priority_layers": _default_raster_backfill_layers(),
+        },
+        "mosaics": {
+            "count": len(mosaics),
+            "ready": sum(1 for item in mosaics if item.status == "ready" and not item.visual_empty),
+            "empty": sum(1 for item in mosaics if item.status == "empty" or item.visual_empty),
+        },
+        "aoi_stats": {
+            "count": len(aoi_stats_result.scalars().all()),
+        },
+    }
+
+
 async def execute_daily_pipeline_job(
     session: AsyncSession,
     *,
@@ -777,6 +888,527 @@ async def refresh_materialized_layers(
     return {"status": "success", "job": _serialize_run(finalized), "result": result}
 
 
+async def backfill_scene_catalog(
+    session: AsyncSession,
+    *,
+    start_date: date,
+    end_date: date,
+    departments: list[str] | None = None,
+    collections: list[str] | None = None,
+) -> dict[str, Any]:
+    if end_date < start_date:
+        raise ValueError("La fecha final no puede ser anterior a la inicial")
+    result = await sync_scene_catalog(
+        session,
+        start_date=start_date,
+        end_date=end_date,
+        departments=departments,
+        collections=collections,
+    )
+    await session.commit()
+    return result
+
+
+async def backfill_raster_products(
+    session: AsyncSession,
+    *,
+    start_date: date,
+    end_date: date,
+    departments: list[str] | None = None,
+    layers: list[str] | None = None,
+    include_national: bool = True,
+    force: bool = False,
+) -> dict[str, Any]:
+    if end_date < start_date:
+        raise ValueError("La fecha final no puede ser anterior a la inicial")
+    target_departments = departments or [record.name for record in DEPARTMENTS]
+    target_layers = [str(item).strip().lower() for item in (layers or _default_raster_backfill_layers())]
+    product_count = 0
+    mosaic_count = 0
+    ready_count = 0
+    empty_count = 0
+    current_date = start_date
+    while current_date <= end_date:
+        for layer_id in target_layers:
+            for department_name in target_departments:
+                result = await build_department_daily_cog(
+                    layer_id=layer_id,
+                    display_date=current_date,
+                    department=department_name,
+                    force=force,
+                )
+                if result.get("status") in {"ready", "empty", "reused"}:
+                    product_count += 1
+                if result.get("status") in {"ready", "reused"} and not result.get("visual_empty", False):
+                    ready_count += 1
+                if result.get("status") == "empty" or result.get("visual_empty", False):
+                    empty_count += 1
+            if include_national:
+                mosaic_result = await build_national_mosaic(
+                    layer_id=layer_id,
+                    display_date=current_date,
+                    force=force,
+                )
+                if mosaic_result.get("status") in {"ready", "empty", "reused"}:
+                    mosaic_count += 1
+        current_date += timedelta(days=1)
+    await session.commit()
+    return {
+        "status": "success",
+        "date_from": start_date.isoformat(),
+        "date_to": end_date.isoformat(),
+        "product_count": product_count,
+        "mosaic_count": mosaic_count,
+        "ready_count": ready_count,
+        "empty_count": empty_count,
+        "departments": target_departments,
+        "layers": target_layers,
+    }
+
+
+async def execute_scene_catalog_sync_job(
+    session: AsyncSession,
+    *,
+    start_date: date,
+    end_date: date,
+    departments: list[str] | None = None,
+    collections: list[str] | None = None,
+    trigger_source: str = "manual",
+    force: bool = False,
+) -> dict[str, Any]:
+    run_row, claimed, status = await _claim_run(
+        session,
+        job_type="scene_catalog_sync",
+        target_date=end_date,
+        trigger_source=trigger_source,
+        scheduled_for=_now_utc(),
+        force=force,
+        qualifier=f"{start_date.isoformat()}::{end_date.isoformat()}",
+    )
+    if not claimed:
+        return {"status": status, "job": _serialize_run(run_row)}
+    try:
+        result = await backfill_scene_catalog(
+            session,
+            start_date=start_date,
+            end_date=end_date,
+            departments=departments,
+            collections=collections,
+        )
+    except Exception as exc:
+        await session.rollback()
+        await _finalize_run(
+            session,
+            run_id=run_row.id,
+            status="failed",
+            details={"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+            error_message=str(exc),
+        )
+        raise RuntimeError("Fallo la sincronizacion del catalogo de escenas") from exc
+    finalized = await _finalize_run(
+        session,
+        run_id=run_row.id,
+        status="success",
+        details=_compact_scene_catalog_result(result),
+    )
+    return {"status": "success", "job": _serialize_run(finalized), "result": result}
+
+
+async def execute_raster_backfill_job(
+    session: AsyncSession,
+    *,
+    start_date: date,
+    end_date: date,
+    departments: list[str] | None = None,
+    layers: list[str] | None = None,
+    include_national: bool = True,
+    trigger_source: str = "manual",
+    force: bool = False,
+) -> dict[str, Any]:
+    run_row, claimed, status = await _claim_run(
+        session,
+        job_type="raster_backfill",
+        target_date=end_date,
+        trigger_source=trigger_source,
+        scheduled_for=_now_utc(),
+        force=force,
+        qualifier=f"{start_date.isoformat()}::{end_date.isoformat()}",
+    )
+    if not claimed:
+        return {"status": status, "job": _serialize_run(run_row)}
+    try:
+        result = await backfill_raster_products(
+            session,
+            start_date=start_date,
+            end_date=end_date,
+            departments=departments,
+            layers=layers,
+            include_national=include_national,
+            force=force,
+        )
+    except Exception as exc:
+        await session.rollback()
+        await _finalize_run(
+            session,
+            run_id=run_row.id,
+            status="failed",
+            details={"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+            error_message=str(exc),
+        )
+        raise RuntimeError("Fallo el backfill raster") from exc
+    finalized = await _finalize_run(
+        session,
+        run_id=run_row.id,
+        status="success",
+        details=_compact_raster_backfill_result(result),
+    )
+    return {"status": "success", "job": _serialize_run(finalized), "result": result}
+
+
+async def execute_aoi_stats_backfill_job(
+    session: AsyncSession,
+    *,
+    start_date: date,
+    end_date: date,
+    layers: list[str] | None = None,
+    trigger_source: str = "manual",
+    force: bool = False,
+) -> dict[str, Any]:
+    run_row, claimed, status = await _claim_run(
+        session,
+        job_type="aoi_stats_backfill",
+        target_date=end_date,
+        trigger_source=trigger_source,
+        scheduled_for=_now_utc(),
+        force=force,
+        qualifier=f"{start_date.isoformat()}::{end_date.isoformat()}",
+    )
+    if not claimed:
+        return {"status": status, "job": _serialize_run(run_row)}
+    try:
+        result = await backfill_aoi_raster_stats(
+            session,
+            start_date=start_date,
+            end_date=end_date,
+            layers=layers,
+        )
+        await session.commit()
+    except Exception as exc:
+        await session.rollback()
+        await _finalize_run(
+            session,
+            run_id=run_row.id,
+            status="failed",
+            details={"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+            error_message=str(exc),
+        )
+        raise RuntimeError("Fallo el backfill de stats AOI") from exc
+    finalized = await _finalize_run(
+        session,
+        run_id=run_row.id,
+        status="success",
+        details=_compact_aoi_stats_result(result),
+    )
+    return {"status": "success", "job": _serialize_run(finalized), "result": result}
+
+
+async def execute_raster_daily_refresh_job(
+    session: AsyncSession,
+    *,
+    target_date: date | None = None,
+    departments: list[str] | None = None,
+    layers: list[str] | None = None,
+    include_national: bool = True,
+    warm: bool = True,
+    warm_days: int | None = None,
+    warm_bbox: str | None = None,
+    warm_zoom: int | None = None,
+    warm_layers: list[str] | None = None,
+    trigger_source: str = "manual",
+    force: bool = False,
+) -> dict[str, Any]:
+    target_date = target_date or date.today()
+    scope = "nacional"
+    resolved_layers = _normalized_raster_layers(layers)
+    qualifier = f"{include_national}::{','.join(sorted(departments or []))}::{','.join(resolved_layers)}"
+    run_row, claimed, status = await _claim_run(
+        session,
+        job_type="raster_daily_refresh",
+        target_date=target_date,
+        trigger_source=trigger_source,
+        scope=scope,
+        scheduled_for=_now_utc(),
+        force=force,
+        qualifier=qualifier,
+    )
+    if not claimed:
+        return {"status": status, "job": _serialize_run(run_row)}
+
+    target_departments = departments or [record.name for record in DEPARTMENTS]
+    max_refresh_days = max((_layer_refresh_window_days(layer_id) for layer_id in resolved_layers), default=1)
+    catalog_days = max(max_refresh_days, int(settings.raster_catalog_sync_default_days or 30))
+    catalog_start = target_date - timedelta(days=catalog_days - 1)
+    collections = list(settings.raster_catalog_default_collections or [])
+
+    async with PIPELINE_RUNTIME_LOCK:
+        try:
+            scene_result = await sync_scene_catalog(
+                session,
+                start_date=catalog_start,
+                end_date=target_date,
+                departments=departments,
+                collections=collections or None,
+            )
+            await session.commit()
+
+            product_count = 0
+            reused_count = 0
+            ready_count = 0
+            empty_count = 0
+            mosaic_count = 0
+            for layer_id in resolved_layers:
+                lookback = _layer_refresh_window_days(layer_id)
+                layer_start = target_date - timedelta(days=lookback - 1)
+                current_date = layer_start
+                while current_date <= target_date:
+                    for department_name in target_departments:
+                        build_result = await build_department_daily_cog(
+                            layer_id=layer_id,
+                            display_date=current_date,
+                            department=department_name,
+                            force=force,
+                        )
+                        status_value = str(build_result.get("status") or "")
+                        if status_value in {"ready", "empty", "reused"}:
+                            product_count += 1
+                        if status_value == "reused":
+                            reused_count += 1
+                        if status_value in {"ready", "reused"} and not build_result.get("visual_empty", False):
+                            ready_count += 1
+                        if status_value == "empty" or build_result.get("visual_empty", False):
+                            empty_count += 1
+
+                    if include_national:
+                        mosaic_result = await build_national_mosaic(
+                            layer_id=layer_id,
+                            display_date=current_date,
+                            force=force,
+                        )
+                        mosaic_status = str(mosaic_result.get("status") or "")
+                        if mosaic_status in {"ready", "empty", "reused"}:
+                            mosaic_count += 1
+                    current_date += timedelta(days=1)
+
+            stats_start = target_date - timedelta(days=max_refresh_days - 1)
+            aoi_stats_result = await backfill_aoi_raster_stats(
+                session,
+                start_date=stats_start,
+                end_date=target_date,
+                layers=resolved_layers,
+            )
+            await session.commit()
+
+            warm_result = None
+            if warm and getattr(settings, "tileserver_enabled", False):
+                resolved_warm_days = int(warm_days) if warm_days is not None else max(int(settings.preload_neighbor_days or 1), 1)
+                resolved_warm_days = max(resolved_warm_days, 0)
+                warm_start = target_date - timedelta(days=resolved_warm_days)
+                effective_bbox = warm_bbox or (settings.temporal_prewarm_bbox.strip() or "")
+                if not effective_bbox:
+                    effective_bbox = f"{settings.aoi_bbox_west},{settings.aoi_bbox_south},{settings.aoi_bbox_east},{settings.aoi_bbox_north}"
+                effective_zoom = int(warm_zoom) if warm_zoom is not None else int(settings.temporal_prewarm_zoom or 7)
+                warm_layer_ids = warm_layers if warm_layers is not None else list(settings.temporal_prewarm_temporal_layers or [])
+                warm_result = await warm_tileserver_temporal_tiles(
+                    layers=[str(item) for item in warm_layer_ids],
+                    date_from=warm_start,
+                    date_to=target_date,
+                    bbox=effective_bbox,
+                    zoom=effective_zoom,
+                    scope_type="nacional",
+                    scope_ref="Uruguay",
+                    unit_id=None,
+                    department=None,
+                    critical_only=True,
+                )
+
+            result = {
+                "target_date": target_date.isoformat(),
+                "catalog": {
+                    "date_from": catalog_start.isoformat(),
+                    "date_to": target_date.isoformat(),
+                    "departments": target_departments,
+                    "collections": collections,
+                    "scene_count": (scene_result or {}).get("scene_count"),
+                    "coverage_count": (scene_result or {}).get("coverage_count"),
+                },
+                "products": {
+                    "layers": resolved_layers,
+                    "departments": target_departments,
+                    "product_count": product_count,
+                    "reused_count": reused_count,
+                    "ready_count": ready_count,
+                    "empty_count": empty_count,
+                    "mosaic_count": mosaic_count,
+                    "include_national": include_national,
+                },
+                "aoi_stats": aoi_stats_result,
+                "warming": warm_result,
+            }
+        except Exception as exc:
+            await session.rollback()
+            await _finalize_run(
+                session,
+                run_id=run_row.id,
+                status="failed",
+                details={"target_date": target_date.isoformat(), "qualifier": qualifier},
+                error_message=str(exc),
+            )
+            raise RuntimeError("Fallo el refresh diario raster") from exc
+
+    finalized = await _finalize_run(
+        session,
+        run_id=run_row.id,
+        status="success",
+        details={
+            "target_date": target_date.isoformat(),
+            "layers": resolved_layers,
+            "departments": len(target_departments),
+            "include_national": include_national,
+            "warm_enabled": bool(warm),
+        },
+    )
+    return {"status": "success", "job": _serialize_run(finalized), "result": result}
+
+
+async def execute_stage2_backfill_job(
+    session: AsyncSession,
+    *,
+    end_date: date | None = None,
+    window_days: int | None = None,
+    departments: list[str] | None = None,
+    layers: list[str] | None = None,
+    include_national: bool = True,
+    warm_days: int | None = None,
+    warm_bbox: str | None = None,
+    warm_zoom: int | None = None,
+    warm_layers: list[str] | None = None,
+    trigger_source: str = "manual",
+    force: bool = False,
+) -> dict[str, Any]:
+    end_date = end_date or date.today()
+    resolved_window = max(int(window_days or settings.raster_backfill_default_days or 365), 1)
+    resolved_window = min(resolved_window, 365)
+    start_date = end_date - timedelta(days=resolved_window - 1)
+
+    resolved_layers = _normalized_raster_layers(layers)
+    qualifier = f"{start_date.isoformat()}::{end_date.isoformat()}::{resolved_window}::{include_national}::{','.join(resolved_layers)}"
+    run_row, claimed, status = await _claim_run(
+        session,
+        job_type="stage2_backfill",
+        target_date=end_date,
+        trigger_source=trigger_source,
+        scope="nacional",
+        scheduled_for=_now_utc(),
+        force=force,
+        qualifier=qualifier,
+    )
+    if not claimed:
+        return {"status": status, "job": _serialize_run(run_row)}
+
+    target_departments = departments or [record.name for record in DEPARTMENTS]
+    collections = list(settings.raster_catalog_default_collections or [])
+
+    async with PIPELINE_RUNTIME_LOCK:
+        try:
+            scenes = await sync_scene_catalog(
+                session,
+                start_date=start_date,
+                end_date=end_date,
+                departments=departments,
+                collections=collections or None,
+            )
+            await session.commit()
+
+            raster_result = await backfill_raster_products(
+                session,
+                start_date=start_date,
+                end_date=end_date,
+                departments=target_departments,
+                layers=resolved_layers,
+                include_national=include_national,
+                force=force,
+            )
+
+            aoi_stats_result = await backfill_aoi_raster_stats(
+                session,
+                start_date=start_date,
+                end_date=end_date,
+                layers=resolved_layers,
+                commit_every=5000,
+            )
+            await session.commit()
+
+            warm_result = None
+            resolved_warm_days = int(warm_days or 0)
+            if resolved_warm_days > 0 and getattr(settings, "tileserver_enabled", False):
+                warm_start = end_date - timedelta(days=min(resolved_warm_days, resolved_window) - 1)
+                effective_bbox = warm_bbox or (settings.temporal_prewarm_bbox.strip() or "")
+                if not effective_bbox:
+                    effective_bbox = f"{settings.aoi_bbox_west},{settings.aoi_bbox_south},{settings.aoi_bbox_east},{settings.aoi_bbox_north}"
+                effective_zoom = int(warm_zoom) if warm_zoom is not None else int(settings.temporal_prewarm_zoom or 7)
+                warm_layer_ids = warm_layers if warm_layers is not None else list(settings.temporal_prewarm_temporal_layers or [])
+                warm_result = await warm_tileserver_temporal_tiles(
+                    layers=[str(item) for item in warm_layer_ids],
+                    date_from=warm_start,
+                    date_to=end_date,
+                    bbox=effective_bbox,
+                    zoom=effective_zoom,
+                    scope_type="nacional",
+                    scope_ref="Uruguay",
+                    unit_id=None,
+                    department=None,
+                    critical_only=True,
+                )
+
+            result = {
+                "window_days": resolved_window,
+                "date_from": start_date.isoformat(),
+                "date_to": end_date.isoformat(),
+                "departments": target_departments,
+                "layers": resolved_layers,
+                "scene_catalog": scenes,
+                "raster_products": raster_result,
+                "aoi_stats": aoi_stats_result,
+                "warming": warm_result,
+            }
+        except Exception as exc:
+            await session.rollback()
+            await _finalize_run(
+                session,
+                run_id=run_row.id,
+                status="failed",
+                details={"start_date": start_date.isoformat(), "end_date": end_date.isoformat(), "window_days": resolved_window},
+                error_message=str(exc),
+            )
+            raise RuntimeError("Fallo el backfill stage2 (365d)") from exc
+
+    finalized = await _finalize_run(
+        session,
+        run_id=run_row.id,
+        status="success",
+        details={
+            "date_from": start_date.isoformat(),
+            "date_to": end_date.isoformat(),
+            "window_days": resolved_window,
+            "layers": resolved_layers,
+            "departments": len(target_departments),
+            "include_national": include_national,
+            "warm_days": int(warm_days or 0),
+        },
+    )
+    return {"status": "success", "job": _serialize_run(finalized), "result": result}
+
+
 async def run_historical_backfill(
     session: AsyncSession,
     *,
@@ -921,6 +1553,24 @@ async def run_due_scheduled_jobs(session: AsyncSession, *, reference: datetime |
         )
         executed.append({"job_type": "weekly_recalibration", "target_date": target_date.isoformat(), "status": result["status"]})
 
+    if settings.raster_pipeline_enabled:
+        # Raster refresh is anchored to "today" to avoid replaying large windows during bootstrap backfill.
+        raster_result = await execute_raster_daily_refresh_job(
+            session,
+            target_date=date.today(),
+            trigger_source="scheduler",
+            force=False,
+        )
+        executed.append({"job_type": "raster_daily_refresh", "target_date": date.today().isoformat(), "status": raster_result["status"]})
+
+    if settings.temporal_prewarm_enabled and settings.preload_enabled:
+        result = await execute_temporal_prewarm_job(
+            session,
+            trigger_source="scheduler",
+            force=False,
+        )
+        executed.append({"job_type": "temporal_prewarm", "target_date": date.today().isoformat(), "status": result["status"]})
+
     return {"status": "ok", "executed": executed, "reference": reference.isoformat()}
 
 
@@ -959,6 +1609,51 @@ async def execute_coneat_prewarm_job(
                 error_message=str(exc),
             )
             raise RuntimeError("Fallo el precache de CONEAT") from exc
+
+    finalized = await _finalize_run(
+        session,
+        run_id=run_row.id,
+        status="success",
+        details=result,
+    )
+    return {"status": "success", "job": _serialize_run(finalized), "result": result}
+
+
+async def execute_temporal_prewarm_job(
+    session: AsyncSession,
+    *,
+    trigger_source: str = "manual",
+    force: bool = False,
+) -> dict[str, Any]:
+    target_date = date.today()
+    scope = str(settings.temporal_prewarm_scope_type or "nacional").strip().lower() or "nacional"
+    qualifier = f"{scope}::{settings.temporal_prewarm_zoom}::{','.join(settings.temporal_prewarm_temporal_layers or [])}"
+    run_row, claimed, status = await _claim_run(
+        session,
+        job_type="temporal_prewarm",
+        target_date=target_date,
+        trigger_source=trigger_source,
+        scope=scope,
+        scheduled_for=_now_utc(),
+        force=force,
+        qualifier=qualifier,
+    )
+    if not claimed:
+        return {"status": status, "job": _serialize_run(run_row)}
+
+    async with PIPELINE_RUNTIME_LOCK:
+        try:
+            result = await schedule_default_temporal_preload()
+        except Exception as exc:
+            await session.rollback()
+            await _finalize_run(
+                session,
+                run_id=run_row.id,
+                status="failed",
+                details={"scope": scope, "qualifier": qualifier},
+                error_message=str(exc),
+            )
+            raise RuntimeError("Fallo el precache temporal") from exc
 
     finalized = await _finalize_run(
         session,

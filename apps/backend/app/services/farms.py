@@ -10,13 +10,16 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import httpx
+from shapely.errors import GEOSException
 from shapely.geometry import Point
 from shapely.geometry import MultiPolygon, Polygon, mapping, shape
 from shapely.ops import transform
+from shapely.validation import explain_validity
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.models.alerta import AlertState
 from app.models.auth import AppUser
 from app.models.farm import FarmEstablishment, FarmField, FarmPaddock, PadronLookupCache
 from app.models.humedad import AOIUnit
@@ -88,6 +91,9 @@ def _geometry_shape(geojson: dict[str, Any] | None, *, field_name: str = "geomet
         raise ValueError(f"{field_name} vacio")
     if not isinstance(geometry, Polygon):
         raise ValueError(f"{field_name} debe ser un Polygon continuo")
+    if not geometry.is_valid:
+        detail = explain_validity(geometry)
+        raise ValueError(f"{field_name} invalido: {detail}")
     return geometry
 
 
@@ -203,6 +209,15 @@ def _serialize_paddock(row: FarmPaddock) -> dict[str, Any]:
         "active": bool(row.active),
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+def _build_paddock_overlap_warning(*, paddock_id: str, paddock_name: str) -> dict[str, Any]:
+    return {
+        "code": "paddock_overlap",
+        "message": f"El potrero se solapa con {paddock_name}.",
+        "overlapping_paddock_id": paddock_id,
+        "overlapping_paddock_name": paddock_name,
     }
 
 
@@ -1218,18 +1233,21 @@ async def save_paddock(
 
     geometry_geojson = payload.get("geometry_geojson")
     geometry = _geometry_shape(geometry_geojson, field_name="geometry_geojson")
-    reference_lat = field_geometry.centroid.y
-    projected_field = _project_geometry_local_meters(field_geometry, reference_lat=reference_lat)
-    projected_paddock = _project_geometry_local_meters(geometry, reference_lat=reference_lat)
-    if not projected_field.buffer(PADDOCK_CONTAINMENT_TOLERANCE_METERS).covers(projected_paddock):
-        outside_distance = _max_outside_distance_meters(field_geometry, geometry)
-        exceeded_by = max(outside_distance - PADDOCK_CONTAINMENT_TOLERANCE_METERS, 0.0)
-        raise ValueError(
-            "El potrero queda {:.1f} m fuera del campo y supera la tolerancia operativa de 10 m por {:.1f} m".format(
-                outside_distance,
-                exceeded_by,
+    try:
+        reference_lat = field_geometry.centroid.y
+        projected_field = _project_geometry_local_meters(field_geometry, reference_lat=reference_lat)
+        projected_paddock = _project_geometry_local_meters(geometry, reference_lat=reference_lat)
+        if not projected_field.buffer(PADDOCK_CONTAINMENT_TOLERANCE_METERS).covers(projected_paddock):
+            outside_distance = _max_outside_distance_meters(field_geometry, geometry)
+            exceeded_by = max(outside_distance - PADDOCK_CONTAINMENT_TOLERANCE_METERS, 0.0)
+            raise ValueError(
+                "El potrero queda {:.1f} m fuera del campo y supera la tolerancia operativa de 10 m por {:.1f} m".format(
+                    outside_distance,
+                    exceeded_by,
+                )
             )
-        )
+    except GEOSException as exc:
+        raise ValueError(f"geometry_geojson invalido: {explain_validity(geometry)}") from exc
 
     row = await session.get(FarmPaddock, paddock_id) if paddock_id else None
     if row is not None and (row.user_id != user.id or row.field_id != field_id or not row.active):
@@ -1241,14 +1259,23 @@ async def save_paddock(
         .order_by(FarmPaddock.display_order, FarmPaddock.name)
     )
     existing_paddocks = list(existing_result.scalars().all())
+    overlap_warnings: list[dict[str, Any]] = []
     for item in existing_paddocks:
         if row is not None and item.id == row.id:
             continue
         if item.name.strip().lower() == name.lower():
             raise ValueError("El nombre del potrero debe ser unico dentro del campo")
         existing_geometry = _geometry_shape(item.geometry_geojson, field_name="geometry_geojson")
-        if existing_geometry.overlaps(geometry) or existing_geometry.contains(geometry) or geometry.contains(existing_geometry):
-            raise ValueError("Los potreros del mismo campo no pueden solaparse")
+        try:
+            overlaps_existing = (
+                existing_geometry.overlaps(geometry)
+                or existing_geometry.contains(geometry)
+                or geometry.contains(existing_geometry)
+            )
+        except GEOSException as exc:
+            raise ValueError(f"geometry_geojson invalido: {explain_validity(geometry)}") from exc
+        if overlaps_existing:
+            overlap_warnings.append(_build_paddock_overlap_warning(paddock_id=item.id, paddock_name=item.name))
 
     if row is None:
         row = FarmPaddock(user_id=user.id, field_id=field_id)
@@ -1287,6 +1314,7 @@ async def save_paddock(
             analytics_mode="paddock_direct",
             area_ha=row.area_ha,
         ),
+        "warnings": overlap_warnings,
     }
 
 

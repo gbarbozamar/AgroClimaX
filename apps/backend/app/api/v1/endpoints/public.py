@@ -102,6 +102,11 @@ async def timeline_frames(
     date_to: date | None = Query(None),
     bbox: str | None = Query(None),
     zoom: int | None = Query(None),
+    scope: str | None = Query(None),
+    unit_id: str | None = Query(None),
+    department: str | None = Query(None),
+    scope_type: str | None = Query(None),
+    scope_ref: str | None = Query(None),
 ):
     return await build_timeline_frame_manifest(
         layers=layers,
@@ -109,6 +114,11 @@ async def timeline_frames(
         date_to=date_to,
         bbox=bbox,
         zoom=zoom,
+        scope=scope,
+        unit_id=unit_id,
+        department=department,
+        scope_type=scope_type,
+        scope_ref=scope_ref,
     )
 
 
@@ -199,8 +209,33 @@ async def tiles(
     z: int,
     x: int,
     y: int,
+    display_date: date | None = Query(None),
     source_date: date | None = Query(None),
     frame_role: str | None = Query(None),
+    frame_signature: str | None = Query(None),
+    scope: str | None = Query(None),
+    unit_id: str | None = Query(None),
+    department: str | None = Query(None),
+    scope_type: str | None = Query(None),
+    scope_ref: str | None = Query(None),
+    viewport_bbox: str | None = Query(None),
+    viewport_zoom: int | None = Query(None),
 ):
-    image = await fetch_tile_png(layer, z, x, y, target_date=source_date, frame_role=frame_role)
+    image = await fetch_tile_png(
+        layer,
+        z,
+        x,
+        y,
+        target_date=display_date or source_date,
+        requested_source_date=source_date,
+        frame_role=frame_role,
+        frame_signature=frame_signature,
+        scope=scope,
+        unit_id=unit_id,
+        department=department,
+        scope_type=scope_type,
+        scope_ref=scope_ref,
+        viewport_bbox=viewport_bbox,
+        viewport_zoom=viewport_zoom,
+    )
     return Response(content=image or TRANSPARENT_PNG, media_type="image/png", headers={"Cache-Control": "max-age=7200"})

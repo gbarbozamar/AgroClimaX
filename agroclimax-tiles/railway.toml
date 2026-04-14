@@ -1,0 +1,8 @@
+[build]
+  dockerfilePath = "agroclimax-tiles/Dockerfile"
+  dockerContext = "."
+
+[deploy]
+  healthcheckPath = "/healthz"
+  healthcheckTimeout = 300
+  restartPolicyType = "on_failure"
