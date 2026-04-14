@@ -343,7 +343,9 @@ function bucketizedTemporalContextZoom(rawZoom, scopeType = 'nacional') {
 
 function currentTemporalScopeBounds(descriptor = currentViewportPreloadDescriptor()) {
   if (!store.map || !descriptor) return null;
-  const viewerFieldId = store.viewerMode ? (store.estViewerSelectedFieldId || store.estViewerFieldDetail?.id || null) : null;
+  const viewerFieldId = (store.viewerMode || store.sidebarView === 'establishment_viewer')
+    ? (store.estViewerSelectedFieldId || store.estViewerFieldDetail?.id || null)
+    : null;
   if (descriptor.scope_type === 'nacional') {
     return store.departmentsLayer?.getBounds?.()
       || window.L.latLngBounds(
@@ -392,7 +394,7 @@ function currentSelectedDepartmentValue() {
 
 function currentViewportPreloadDescriptor() {
   const viewerActive = store.viewerMode || store.sidebarView === 'establishment_viewer';
-  const viewerField = store.viewerMode
+  const viewerField = viewerActive
     ? (store.estViewerFieldDetail || (store.estViewerFields || []).find((item) => item.id === store.estViewerSelectedFieldId) || null)
     : null;
   if (viewerField?.aoi_unit_id) {
@@ -526,7 +528,7 @@ async function maybeStartViewportPreload(activeTemporalIds) {
         ...descriptor,
         target_date: todayIsoDate(),
         history_days: 30,
-        preload_profile: store.viewerMode ? 'field_viewer' : undefined,
+        preload_profile: (store.viewerMode || store.sidebarView === 'establishment_viewer') ? 'field_viewer' : undefined,
       });
       if (payload?.run_key) {
         window.dispatchEvent(new CustomEvent('agroclimax:viewport-preload-started', { detail: payload }));
@@ -1575,7 +1577,7 @@ async function maybeWarmTimelineWindow(anchorDate, { force = false } = {}) {
         date_from: dateFrom,
         date_to: dateTo,
         history_days: 30,
-        preload_profile: store.viewerMode ? 'field_viewer' : undefined,
+        preload_profile: (store.viewerMode || store.sidebarView === 'establishment_viewer') ? 'field_viewer' : undefined,
       });
     } catch (error) {
       console.warn('No se pudo lanzar la precarga adelantada de la timeline:', error);
@@ -2635,7 +2637,7 @@ export function setFarmFieldsOnMap(featureCollection, onFieldSelect, selectedFie
     farmFieldsLookup: lookup,
     farmFieldLabelsLayer: labelLayer,
   };
-  if (selectionTarget === 'viewer') nextState.estViewerSelectedFieldId = selectedFieldId;
+  if (selectionTarget === 'viewer' && selectedFieldId) nextState.estViewerSelectedFieldId = selectedFieldId;
   else if (selectionTarget !== 'none') nextState.selectedFieldId = selectedFieldId;
   setStore(nextState);
   refreshFarmPrivateOverlays();
@@ -3339,7 +3341,12 @@ export function highlightHex(hexId, fitBounds = false) {
 
 export function updateFocus(model) {
   if (!store.map) return;
-  const preserveFarmViewport = Boolean(store.selectedFieldId || store.selectedPaddockId || store.viewportUserPinned);
+  const preserveFarmViewport = Boolean(
+    store.selectedFieldId
+    || store.selectedPaddockId
+    || store.viewportUserPinned
+    || ((store.viewerMode || store.sidebarView === 'establishment_viewer') && store.estViewerSelectedFieldId),
+  );
   if (store.focusMarker) store.map.removeLayer(store.focusMarker);
   if (model.unitLat && model.unitLon) {
     store.focusMarker = window.L.marker([model.unitLat, model.unitLon]).addTo(store.map);

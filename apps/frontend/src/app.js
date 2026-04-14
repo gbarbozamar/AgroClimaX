@@ -509,7 +509,7 @@ function selectedEstablishmentViewerFieldUnitMeta() {
 }
 
 function currentFarmSelectionDescriptor() {
-  if (store.viewerMode) {
+  if (store.viewerMode || store.sidebarView === 'establishment_viewer') {
     const viewerFieldMeta = selectedEstablishmentViewerFieldUnitMeta();
     if (!viewerFieldMeta) return null;
     return {
@@ -550,7 +550,7 @@ function currentSelectionDescriptor() {
   if (store.customGeojson) return { scope: 'custom', supported: false };
   const farmSelection = currentFarmSelectionDescriptor();
   if (farmSelection) return farmSelection;
-  if (store.viewerMode) {
+  if (store.viewerMode || store.sidebarView === 'establishment_viewer') {
     return { scope: 'viewer', supported: false };
   }
   if (store.selectedProductiveId) {
@@ -636,7 +636,7 @@ function buildTimelineModel(contextPayload, descriptor) {
 
 function applyDashboardModel(model, { renderForecastPanel = true, renderWeather = true } = {}) {
   renderDashboard(model);
-  if (store.viewerMode && store.estViewerSelectedFieldId) {
+  if ((store.viewerMode || store.sidebarView === 'establishment_viewer') && store.estViewerSelectedFieldId) {
     renderEstablishmentViewerDashboard(model);
   }
   renderDrivers(model);
@@ -1191,7 +1191,7 @@ async function handleHexSelect(hex) {
 }
 
 async function refreshCurrentSelection() {
-  if (store.viewerMode) {
+  if (store.viewerMode || store.sidebarView === 'establishment_viewer') {
     if (store.estViewerSelectedFieldId) {
       if (isHistoricalTimelineDate()) {
         await refreshDashboardFromTimelineDate(store.timelineDate, { silent: true });
@@ -1242,7 +1242,7 @@ async function refreshCurrentSelection() {
 }
 
 async function refreshEstablishmentViewerDashboardCurrent() {
-  if (!store.viewerMode || !store.estViewerSelectedFieldId) {
+  if (!(store.viewerMode || store.sidebarView === 'establishment_viewer') || !store.estViewerSelectedFieldId) {
     clearEstablishmentViewerDashboard();
     return false;
   }
@@ -1262,6 +1262,23 @@ async function refreshEstablishmentViewerDashboardCurrent() {
   });
   renderEstablishmentViewerDashboard(model);
   return true;
+}
+
+async function ensureEstablishmentViewerFieldInitialFit(detail, { maxZoom = 15, minReadyZoom = 10, retries = 3, delayMs = 140 } = {}) {
+  if (!detail?.id || !detail?.field_geometry_geojson || !store.map?.fitBounds) return false;
+  for (let attempt = 0; attempt < retries; attempt += 1) {
+    const currentZoom = Number(store.map?.getZoom?.() || 0);
+    if (store.establishmentViewerInitialFitFieldId === detail.id && currentZoom >= minReadyZoom) {
+      return true;
+    }
+    fitGeojsonBounds(detail.field_geometry_geojson, maxZoom);
+    setStore({ establishmentViewerInitialFitFieldId: detail.id });
+    if (attempt < retries - 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+    }
+  }
+  const finalZoom = Number(store.map?.getZoom?.() || 0);
+  return store.establishmentViewerInitialFitFieldId === detail.id && finalZoom >= minReadyZoom;
 }
 
 async function selectEstablishmentViewerField(fieldOrId, { fitBounds = true } = {}) {
@@ -1284,23 +1301,21 @@ async function selectEstablishmentViewerField(fieldOrId, { fitBounds = true } = 
     : await fetchField(fieldId);
 
   setStore({
+    estViewerSelectedEstablishmentId: detail.establishment_id || store.estViewerSelectedEstablishmentId || null,
     estViewerSelectedFieldId: detail.id,
     estViewerFieldDetail: detail,
   });
   renderEstablishmentViewer();
   await refreshEstablishmentViewerMap(detail.establishment_id || store.estViewerSelectedEstablishmentId, detail.id);
   highlightFarmField(detail.id, { fitBounds: false, openPopup: false, selectionTarget: 'viewer' });
-  const shouldFit = fitBounds && store.establishmentViewerInitialFitFieldId !== detail.id;
-  if (shouldFit && detail.field_geometry_geojson) {
-    fitGeojsonBounds(detail.field_geometry_geojson, 15);
-    setStore({ establishmentViewerInitialFitFieldId: detail.id });
-  }
+  if (fitBounds) await ensureEstablishmentViewerFieldInitialFit(detail);
   requestTimelineManifestRefresh({ preserveDate: false });
   if (isHistoricalTimelineDate()) {
     await refreshDashboardFromTimelineDate(store.timelineDate, { silent: true });
   } else {
     await refreshEstablishmentViewerDashboardCurrent();
   }
+  if (fitBounds) await ensureEstablishmentViewerFieldInitialFit(detail, { retries: 2, delayMs: 180 });
   return true;
 }
 

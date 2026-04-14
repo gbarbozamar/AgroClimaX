@@ -1,6 +1,12 @@
-import { fetchFarmOptions, fetchFields } from './api.js';
+import { fetchFarmOptions, fetchField, fetchFields } from './api.js';
+import { fitGeojsonBounds } from './map.js';
 import { setSidebarView, syncSidebarView } from './settings.js';
 import { setStore, store } from './state.js';
+
+const viewerHandlers = {
+  onSelectField: null,
+  onSelectEstablishment: null,
+};
 
 function getNode(id) {
   return document.getElementById(id);
@@ -103,6 +109,9 @@ function renderFieldsList(onSelectField) {
       const field = (store.estViewerFields || []).find((item) => item.id === fieldId) || null;
       if (!field) return;
       await onSelectField?.(field, { source: 'list' });
+      if ((store.map?.getZoom?.() || 0) < 10 || store.establishmentViewerInitialFitFieldId !== field.id) {
+        await ensureViewerFieldFocus(field.id);
+      }
     });
   });
 }
@@ -132,6 +141,24 @@ async function resolveInitialEstablishmentId() {
     }
   }
   return establishments[0]?.id || null;
+}
+
+async function ensureViewerFieldFocus(fieldId, { maxZoom = 15, retries = 4 } = {}) {
+  if (!fieldId) return false;
+  for (let attempt = 0; attempt < retries; attempt += 1) {
+    const currentDetail = store.estViewerFieldDetail?.id === fieldId ? store.estViewerFieldDetail : null;
+    const detail = currentDetail || await fetchField(fieldId);
+    if (detail?.field_geometry_geojson) {
+      fitGeojsonBounds(detail.field_geometry_geojson, maxZoom);
+      setStore({
+        estViewerFieldDetail: detail,
+        establishmentViewerInitialFitFieldId: fieldId,
+      });
+      return true;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
+  }
+  return false;
 }
 
 async function loadFieldsForEstablishment(establishmentId) {
@@ -171,9 +198,10 @@ async function loadFieldsForEstablishment(establishmentId) {
 }
 
 export function renderEstablishmentViewer({ onSelectField } = {}) {
+  const effectiveOnSelectField = onSelectField || viewerHandlers.onSelectField;
   renderEstablishmentOptions();
   renderFieldOptions();
-  renderFieldsList(onSelectField);
+  renderFieldsList(effectiveOnSelectField);
   renderSummary();
   if (store.estViewerError) {
     setStatus(store.estViewerError, 'error');
@@ -195,6 +223,10 @@ export function renderEstablishmentViewer({ onSelectField } = {}) {
 }
 
 export function initEstablishmentViewerPanel({ onSelectField, onSelectEstablishment } = {}) {
+  viewerHandlers.onSelectField = onSelectField || viewerHandlers.onSelectField;
+  viewerHandlers.onSelectEstablishment = onSelectEstablishment || viewerHandlers.onSelectEstablishment;
+  const effectiveOnSelectField = viewerHandlers.onSelectField;
+  const effectiveOnSelectEstablishment = viewerHandlers.onSelectEstablishment;
   const tab = getNode('sidebar-establishment-viewer-tab');
   const select = getNode('establishment-viewer-select');
   const fieldSelect = getNode('establishment-viewer-field-select');
@@ -206,14 +238,17 @@ export function initEstablishmentViewerPanel({ onSelectField, onSelectEstablishm
     setSidebarView('establishment_viewer');
     try {
       await ensureFarmOptionsLoaded();
-      if (!store.estViewerSelectedEstablishmentId) {
-        const preferredId = await resolveInitialEstablishmentId();
+      let preferredId = store.estViewerSelectedEstablishmentId || null;
+      if (!preferredId) {
+        preferredId = await resolveInitialEstablishmentId();
         setStore({ estViewerSelectedEstablishmentId: preferredId });
+        await effectiveOnSelectEstablishment?.(preferredId);
       }
-      renderEstablishmentViewer({ onSelectField });
-      await loadFieldsForEstablishment(store.estViewerSelectedEstablishmentId);
-      renderEstablishmentViewer({ onSelectField });
-      await onSelectEstablishment?.(store.estViewerSelectedEstablishmentId);
+      renderEstablishmentViewer({ onSelectField: effectiveOnSelectField });
+      if (!store.estViewerFields.length && preferredId) {
+        await loadFieldsForEstablishment(preferredId);
+      }
+      renderEstablishmentViewer({ onSelectField: effectiveOnSelectField });
     } catch (error) {
       console.warn('No se pudo inicializar el visor de establecimiento:', error);
       setStatus(`No se pudo abrir el visor: ${error?.message || error}`, 'error');
@@ -224,26 +259,38 @@ export function initEstablishmentViewerPanel({ onSelectField, onSelectEstablishm
 
   select?.addEventListener('change', async (event) => {
     const nextId = event.target.value || null;
+    if (nextId === (store.estViewerSelectedEstablishmentId || null) && (store.estViewerFields || []).length) {
+      renderEstablishmentViewer({ onSelectField: effectiveOnSelectField });
+      return;
+    }
     setStore({ estViewerSelectedEstablishmentId: nextId, estViewerSelectedFieldId: null, estViewerFieldDetail: null });
+    await effectiveOnSelectEstablishment?.(nextId);
     await loadFieldsForEstablishment(nextId);
-    await onSelectEstablishment?.(nextId);
-    renderEstablishmentViewer({ onSelectField });
+    renderEstablishmentViewer({ onSelectField: effectiveOnSelectField });
   });
 
   fieldSelect?.addEventListener('change', async (event) => {
     const fieldId = event.target.value || null;
     const field = (store.estViewerFields || []).find((item) => item.id === fieldId) || null;
     setStore({ estViewerSelectedFieldId: fieldId });
-    renderEstablishmentViewer({ onSelectField });
-    if (field) await onSelectField?.(field, { source: 'select' });
+    renderEstablishmentViewer({ onSelectField: effectiveOnSelectField });
+    if (field) await effectiveOnSelectField?.(field, { source: 'select' });
   });
 
   refreshButton?.addEventListener('click', async () => {
     try {
+      const preserveFieldId = store.estViewerSelectedFieldId || null;
       await ensureFarmOptionsLoaded();
-      await loadFieldsForEstablishment(store.estViewerSelectedEstablishmentId);
-      await onSelectEstablishment?.(store.estViewerSelectedEstablishmentId);
-      renderEstablishmentViewer({ onSelectField });
+      await effectiveOnSelectEstablishment?.(store.estViewerSelectedEstablishmentId);
+      const items = await loadFieldsForEstablishment(store.estViewerSelectedEstablishmentId);
+      if (preserveFieldId) {
+        const field = (items || []).find((item) => item.id === preserveFieldId) || null;
+        if (field) {
+          setStore({ estViewerSelectedFieldId: preserveFieldId });
+          await effectiveOnSelectField?.(field, { source: 'refresh' });
+        }
+      }
+      renderEstablishmentViewer({ onSelectField: effectiveOnSelectField });
     } catch (error) {
       console.warn('No se pudo refrescar el visor de establecimiento:', error);
       setStatus(`No se pudo refrescar: ${error?.message || error}`, 'error');
@@ -253,5 +300,5 @@ export function initEstablishmentViewerPanel({ onSelectField, onSelectEstablishm
   window.addEventListener('agroclimax:open-establishment-viewer', openViewer);
 
   syncSidebarView();
-  renderEstablishmentViewer({ onSelectField });
+  renderEstablishmentViewer({ onSelectField: effectiveOnSelectField });
 }

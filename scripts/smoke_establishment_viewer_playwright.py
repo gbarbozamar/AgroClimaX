@@ -76,7 +76,7 @@ def _write_json(path: Path, payload: Any) -> None:
 
 
 async def _attach_loggers(page: Page, *, out_dir: Path) -> dict[str, Any]:
-    run_log: dict[str, Any] = {"console": [], "page_errors": [], "requests_failed": []}
+    run_log: dict[str, Any] = {"console": [], "page_errors": [], "requests_failed": [], "responses": []}
 
     def on_console(msg) -> None:
         try:
@@ -103,9 +103,24 @@ async def _attach_loggers(page: Page, *, out_dir: Path) -> dict[str, Any]:
         except Exception:
             pass
 
+    def on_response(resp) -> None:
+        try:
+            url = resp.url
+            if any(token in url for token in ("/api/v1/campos", "/api/v1/establecimientos", "/api/v1/timeline/frames")):
+                run_log["responses"].append(
+                    {
+                        "url": url,
+                        "status": resp.status,
+                        "ok": resp.ok,
+                    }
+                )
+        except Exception:
+            pass
+
     page.on("console", on_console)
     page.on("pageerror", on_page_error)
     page.on("requestfailed", on_request_failed)
+    page.on("response", on_response)
 
     _write_json(out_dir / "run_env.json", {"python": sys.version, "cwd": str(Path.cwd())})
     return run_log
@@ -194,15 +209,16 @@ async def _wait_for_establishments(page: Page, *, cfg: RunConfig) -> None:
 
 
 async def _wait_for_fields(page: Page, *, cfg: RunConfig) -> None:
-    # Either we have at least one field, or the panel is explicitly empty.
     await page.wait_for_function(
         """
-        () => {
+        async () => {
           const list = document.getElementById('establishment-viewer-fields-list');
           if (!list) return false;
+          const stateMod = await import('/static/src/state.js');
+          if (stateMod.store.estViewerLoading) return false;
           if (list.querySelector('[data-est-viewer-field-id]')) return true;
           const empty = list.querySelector('.fields-empty');
-          return !!empty;
+          return !!empty && Number((stateMod.store.estViewerFields || []).length || 0) === 0;
         }
         """,
         timeout=cfg.timeout_ms,
@@ -252,13 +268,22 @@ async def _ensure_establishment_with_fields(page: Page, *, cfg: RunConfig) -> No
 
 
 async def _select_first_field(page: Page, *, cfg: RunConfig) -> str:
+    await page.wait_for_function(
+        """
+        async () => {
+          const stateMod = await import('/static/src/state.js');
+          return !stateMod.store.estViewerLoading && document.querySelectorAll('[data-est-viewer-field-id]').length > 0;
+        }
+        """,
+        timeout=cfg.timeout_ms,
+    )
     btn = page.locator("[data-est-viewer-field-id]").first
     if await btn.count() == 0:
         raise RuntimeError("No fields available in Establishment Viewer (fields list is empty).")
     field_id = await btn.get_attribute("data-est-viewer-field-id")
     if not field_id:
         raise RuntimeError("First field button missing data-est-viewer-field-id.")
-    await btn.click(timeout=cfg.timeout_ms)
+    await page.locator(f'[data-est-viewer-field-id="{field_id}"]').click(timeout=cfg.timeout_ms)
     await page.wait_for_function(
         """
         async (fieldId) => {
