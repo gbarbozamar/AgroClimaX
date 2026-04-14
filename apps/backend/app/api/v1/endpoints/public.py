@@ -34,6 +34,7 @@ class PreloadRequest(BaseModel):
     height: int = Field(default=768, ge=128, le=4096)
     temporal_layers: list[str] = Field(default_factory=list)
     official_layers: list[str] = Field(default_factory=list)
+    preload_profile: str | None = None
     scope_type: str | None = None
     scope_ref: str | None = None
     timeline_scope: str = "nacional"
@@ -150,6 +151,7 @@ async def preload_startup(payload: PreloadRequest):
         height=payload.height,
         temporal_layers=payload.temporal_layers,
         official_layers=payload.official_layers,
+        preload_profile=payload.preload_profile,
         scope_type=payload.scope_type,
         scope_ref=payload.scope_ref,
         timeline_scope=payload.timeline_scope,
@@ -169,6 +171,7 @@ async def preload_viewport(payload: PreloadRequest):
         height=payload.height,
         temporal_layers=payload.temporal_layers,
         official_layers=payload.official_layers,
+        preload_profile=payload.preload_profile,
         scope_type=payload.scope_type,
         scope_ref=payload.scope_ref,
         timeline_scope=payload.timeline_scope,
@@ -192,6 +195,7 @@ async def preload_timeline_window(payload: TimelineWindowPreloadRequest):
         timeline_scope=payload.timeline_scope,
         timeline_unit_id=payload.timeline_unit_id,
         timeline_department=payload.timeline_department,
+        preload_profile=payload.preload_profile,
         date_from=payload.date_from,
         date_to=payload.date_to,
         history_days=payload.history_days,

@@ -224,6 +224,39 @@ class ApiContractTests(unittest.TestCase):
             viewport_zoom=None,
         )
 
+    def test_v1_temporal_tile_contract_forwards_viewport_context(self):
+        with patch(
+            "app.api.v1.endpoints.public.fetch_tile_png",
+            new=AsyncMock(return_value=b"timeline-png"),
+        ) as fetch_tile:
+            with TestClient(app) as client:
+                response = client.get(
+                    "/api/v1/tiles/ndmi/7/45/63.png"
+                    "?display_date=2026-04-03&source_date=2026-04-01&frame_role=primary&frame_signature=frame-ndmi-20260403"
+                    "&scope=unidad&unit_id=unit-1&scope_type=field&scope_ref=field:1"
+                    "&viewport_bbox=-56,-32,-55,-31&viewport_zoom=11"
+                )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "image/png")
+        self.assertEqual(response.content, b"timeline-png")
+        fetch_tile.assert_awaited_once_with(
+            "ndmi",
+            7,
+            45,
+            63,
+            target_date=date(2026, 4, 3),
+            requested_source_date=date(2026, 4, 1),
+            frame_role="primary",
+            frame_signature="frame-ndmi-20260403",
+            scope="unidad",
+            unit_id="unit-1",
+            department=None,
+            scope_type="field",
+            scope_ref="field:1",
+            viewport_bbox="-56,-32,-55,-31",
+            viewport_zoom=11,
+        )
+
     def test_v1_capas_departamentos_contract(self):
         payload = {
             "type": "FeatureCollection",

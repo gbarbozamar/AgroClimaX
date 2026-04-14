@@ -8,6 +8,36 @@ function fixed(value, digits = 1, suffix = '') {
   return `${Number(value).toFixed(digits)}${suffix}`;
 }
 
+function resolveRoot(root) {
+  if (!root) return document;
+  return root;
+}
+
+function getNode(root, roleOrId) {
+  const resolvedRoot = resolveRoot(root);
+  if (!roleOrId) return null;
+
+  if (resolvedRoot && typeof resolvedRoot.getElementById === 'function') {
+    return resolvedRoot.getElementById(roleOrId) || resolvedRoot.querySelector?.(`[data-role="${roleOrId}"]`) || null;
+  }
+  if (resolvedRoot && typeof resolvedRoot.querySelector === 'function') {
+    return resolvedRoot.querySelector(`[data-role="${roleOrId}"]`) || resolvedRoot.querySelector(`#${roleOrId}`);
+  }
+  return null;
+}
+
+function setText(root, roleOrId, value) {
+  const node = getNode(root, roleOrId);
+  if (!node) return;
+  node.textContent = value ?? '';
+}
+
+function setStyle(root, roleOrId, key, value) {
+  const node = getNode(root, roleOrId);
+  if (!node) return;
+  node.style[key] = value;
+}
+
 const METRIC_METADATA = {
   humidity_s1: {
     valueId: 'kpi-humedad',
@@ -103,9 +133,9 @@ function buildTooltipHtml(metadata) {
   `;
 }
 
-function applyMetricMetadata() {
+function applyMetricMetadata(root = document) {
   Object.entries(METRIC_METADATA).forEach(([key, metadata]) => {
-    const valueNode = document.getElementById(metadata.valueId);
+    const valueNode = getNode(root, metadata.valueId);
     const card = valueNode?.closest('.kpi-card');
     if (!card) return;
 
@@ -180,8 +210,52 @@ function formatMetricValue(key, value) {
   }
 }
 
+const VIEWER_METRIC_IDS = {
+  humidity_s1: 'viewer-kpi-humedad',
+  ndmi_s2: 'viewer-kpi-ndmi',
+  spi_30d: 'viewer-kpi-spi',
+  area_alerta: 'viewer-kpi-area',
+  risk_score: 'viewer-kpi-risk',
+  confidence: 'viewer-kpi-confidence',
+  persistence_days: 'viewer-kpi-dias',
+};
+
+export function clearEstablishmentViewerDashboard(message = 'Selecciona un campo para ver sus metricas.') {
+  const statusNode = document.getElementById('establishment-viewer-kpi-status');
+  if (statusNode) statusNode.textContent = message;
+  Object.entries(VIEWER_METRIC_IDS).forEach(([metricKey, nodeId]) => {
+    const valueNode = document.getElementById(nodeId);
+    if (valueNode) valueNode.textContent = formatMetricValue(metricKey, null);
+  });
+}
+
+export function renderEstablishmentViewerDashboard(model) {
+  if (!model) {
+    clearEstablishmentViewerDashboard();
+    return;
+  }
+  const statusNode = document.getElementById('establishment-viewer-kpi-status');
+  if (statusNode) {
+    statusNode.textContent = `${model.scopeLabel || 'Campo'} · ${model.title || model.state || 'Sin estado'} · modo ${model.dataMode || 'N/D'}`;
+  }
+  const metricValues = {
+    humidity_s1: model.humidity,
+    ndmi_s2: model.ndmi,
+    spi_30d: model.spi,
+    area_alerta: model.affectedPct,
+    risk_score: model.riskScore,
+    confidence: model.confidenceScore,
+    persistence_days: model.daysInState,
+  };
+  Object.entries(VIEWER_METRIC_IDS).forEach(([metricKey, nodeId]) => {
+    const valueNode = document.getElementById(nodeId);
+    if (!valueNode) return;
+    valueNode.textContent = formatMetricValue(metricKey, metricValues[metricKey]);
+  });
+}
+
 export function populateDepartmentSelect(units, selected = 'nacional') {
-  const select = document.getElementById('department-select');
+  const select = getNode(document, 'department-select');
   if (!select) return;
   select.innerHTML = '<option value="nacional">Uruguay (nacional)</option>';
   units.forEach((unit) => {
@@ -281,62 +355,68 @@ export function normalizeState(data, context = {}) {
   };
 }
 
-export function renderLoading(message = 'Cargando tablero...') {
-  const banner = document.getElementById('alerta-banner');
+export function renderLoading(message = 'Cargando tablero...', root = document) {
+  const banner = getNode(root, 'alerta-banner');
+  if (!banner) return;
   banner.innerHTML = `<div class="banner-dot" style="background:#4a90d9;animation:pulse 1s infinite"></div><strong style="color:#4a90d9">${message}</strong>`;
   banner.style.background = '#4a90d922';
   banner.style.borderBottom = '1px solid #4a90d944';
 }
 
-export function renderError(message) {
-  const banner = document.getElementById('alerta-banner');
+export function renderError(message, root = document) {
+  const banner = getNode(root, 'alerta-banner');
+  if (!banner) return;
   banner.innerHTML = `<span style="color:#e74c3c">${message}</span>`;
   banner.style.background = '#e74c3c22';
   banner.style.borderBottom = '1px solid #e74c3c44';
 }
 
-export function renderDashboard(model) {
-  applyMetricMetadata();
-  const banner = document.getElementById('alerta-banner');
-  banner.style.background = `${model.color}22`;
-  banner.style.borderBottom = `1px solid ${model.color}55`;
-  banner.innerHTML = `<div class="banner-dot" style="background:${model.color}"></div><strong>${model.title}</strong> - ${model.explanation}<span style="margin-left:auto;color:var(--text-muted);font-size:0.78rem">${model.scopeLabel}</span>`;
+export function renderDashboard(model, root = document) {
+  applyMetricMetadata(root);
+  const banner = getNode(root, 'alerta-banner');
+  if (banner) {
+    banner.style.background = `${model.color}22`;
+    banner.style.borderBottom = `1px solid ${model.color}55`;
+    banner.innerHTML = `<div class="banner-dot" style="background:${model.color}"></div><strong>${model.title}</strong> - ${model.explanation}<span style="margin-left:auto;color:var(--text-muted);font-size:0.78rem">${model.scopeLabel}</span>`;
+  }
 
-  document.getElementById('scope-badge-value').textContent = model.scopeLabel;
-  document.getElementById('alerta-nivel-text').textContent = `• ${model.title}`;
-  document.getElementById('alerta-tipo-badge').textContent = `${model.scope || 'unidad'} | ${model.dataMode}`;
-  document.getElementById('alerta-descripcion').textContent = model.explanation;
-  document.getElementById('alerta-accion').textContent = model.action;
-  document.getElementById('alerta-extra').textContent = model.extra;
-  document.getElementById('last-update').textContent = `Actualizado: ${new Date().toLocaleString()} | Fuente API ${model.scope === 'unidad' ? 'legacy/custom' : 'v1'}`;
+  setText(root, 'scope-badge-value', model.scopeLabel);
+  setText(root, 'alerta-nivel-text', `• ${model.title}`);
+  setText(root, 'alerta-tipo-badge', `${model.scope || 'unidad'} | ${model.dataMode}`);
+  setText(root, 'alerta-descripcion', model.explanation);
+  setText(root, 'alerta-accion', model.action);
+  setText(root, 'alerta-extra', model.extra);
+  setText(root, 'last-update', `Actualizado: ${new Date().toLocaleString()} | Fuente API ${model.scope === 'unidad' ? 'legacy/custom' : 'v1'}`);
 
-  document.getElementById('kpi-humedad').textContent = formatMetricValue('humidity_s1', model.humidity);
-  document.getElementById('kpi-ndmi').textContent = formatMetricValue('ndmi_s2', model.ndmi);
-  document.getElementById('kpi-spi').textContent = formatMetricValue('spi_30d', model.spi);
-  document.getElementById('kpi-area').textContent = formatMetricValue('area_alerta', model.affectedPct);
-  document.getElementById('kpi-risk').textContent = formatMetricValue('risk_score', model.riskScore);
-  document.getElementById('kpi-confidence').textContent = formatMetricValue('confidence', model.confidenceScore);
-  document.getElementById('kpi-dias').textContent = formatMetricValue('persistence_days', model.daysInState);
+  setText(root, 'kpi-humedad', formatMetricValue('humidity_s1', model.humidity));
+  setText(root, 'kpi-ndmi', formatMetricValue('ndmi_s2', model.ndmi));
+  setText(root, 'kpi-spi', formatMetricValue('spi_30d', model.spi));
+  setText(root, 'kpi-area', formatMetricValue('area_alerta', model.affectedPct));
+  setText(root, 'kpi-risk', formatMetricValue('risk_score', model.riskScore));
+  setText(root, 'kpi-confidence', formatMetricValue('confidence', model.confidenceScore));
+  setText(root, 'kpi-dias', formatMetricValue('persistence_days', model.daysInState));
 
-  document.getElementById('hum-s1-pct').textContent = formatMetricValue('humidity_s1', model.humidity);
-  document.getElementById('hum-ndmi-pct').textContent = formatMetricValue('ndmi_s2', model.ndmi);
-  document.getElementById('hum-s1-bar').style.width = `${Math.max(0, Math.min(100, model.humidity || 0))}%`;
-  document.getElementById('hum-ndmi-bar').style.width = `${Math.max(0, Math.min(100, ((model.ndmi ?? -0.5) + 0.5) * 100))}%`;
+  setText(root, 'hum-s1-pct', formatMetricValue('humidity_s1', model.humidity));
+  setText(root, 'hum-ndmi-pct', formatMetricValue('ndmi_s2', model.ndmi));
+  setStyle(root, 'hum-s1-bar', 'width', `${Math.max(0, Math.min(100, model.humidity || 0))}%`);
+  setStyle(root, 'hum-ndmi-bar', 'width', `${Math.max(0, Math.min(100, ((model.ndmi ?? -0.5) + 0.5) * 100))}%`);
 
-  document.getElementById('spi-big').textContent = formatMetricValue('spi_30d', model.spi);
-  document.getElementById('spi-cat').textContent = model.spi === null ? 'Sin datos' : (model.spi < -1.5 ? 'Seco severo' : model.spi < -1 ? 'Seco' : model.spi < 1 ? 'Normal' : 'Humedo');
-  const spiMarker = document.getElementById('spi-marker');
-  const spiPosition = model.spi === null ? 50 : Math.max(0, Math.min(100, ((model.spi + 3) / 6) * 100));
-  spiMarker.style.left = `${spiPosition}%`;
+  setText(root, 'spi-big', formatMetricValue('spi_30d', model.spi));
+  setText(root, 'spi-cat', model.spi === null ? 'Sin datos' : (model.spi < -1.5 ? 'Seco severo' : model.spi < -1 ? 'Seco' : model.spi < 1 ? 'Normal' : 'Humedo'));
+  const spiMarker = getNode(root, 'spi-marker');
+  if (spiMarker) {
+    const spiPosition = model.spi === null ? 50 : Math.max(0, Math.min(100, ((model.spi + 3) / 6) * 100));
+    spiMarker.style.left = `${spiPosition}%`;
+  }
 
-  document.getElementById('indicador-calibracion').textContent = model.calibrationRef;
-  document.getElementById('indicador-suelo').textContent = model.technical.soil;
-  document.getElementById('indicador-forecast').textContent = model.technical.forecast;
-  document.getElementById('indicador-mode').textContent = model.technical.mode;
+  setText(root, 'indicador-calibracion', model.calibrationRef);
+  setText(root, 'indicador-suelo', model.technical?.soil || '');
+  setText(root, 'indicador-forecast', model.technical?.forecast || '');
+  setText(root, 'indicador-mode', model.technical?.mode || '');
 }
 
-export function renderDrivers(model) {
-  const container = document.getElementById('drivers-list');
+export function renderDrivers(model, root = document) {
+  const container = getNode(root, 'drivers-list');
   if (!container) return;
   if (!model.drivers.length) {
     container.innerHTML = '<div style="color:var(--text-muted)">Sin drivers disponibles para esta vista.</div>';
@@ -354,8 +434,8 @@ function toCompass(degrees) {
   return directions[index];
 }
 
-export function renderWeatherCards(model, selectionLabel = 'Seleccion actual') {
-  const selectionNode = document.getElementById('weather-filter-label');
+export function renderWeatherCards(model, selectionLabel = 'Seleccion actual', root = document) {
+  const selectionNode = getNode(root, 'weather-filter-label');
   if (selectionNode) selectionNode.textContent = selectionLabel;
 
   const forecast = model?.forecast || [];
@@ -394,17 +474,17 @@ export function renderWeatherCards(model, selectionLabel = 'Seleccion actual') {
 
   cards.forEach((card, index) => {
     const n = index + 1;
-    const titleNode = document.getElementById(`weather-card-title-${n}`);
-    const valueNode = document.getElementById(`weather-card-value-${n}`);
-    const subNode = document.getElementById(`weather-card-sub-${n}`);
+    const titleNode = getNode(root, `weather-card-title-${n}`);
+    const valueNode = getNode(root, `weather-card-value-${n}`);
+    const subNode = getNode(root, `weather-card-sub-${n}`);
     if (titleNode) titleNode.textContent = card.title;
     if (valueNode) valueNode.textContent = card.value;
     if (subNode) subNode.textContent = card.sub;
   });
 }
 
-export function renderForecast(model) {
-  const container = document.getElementById('forecast-list');
+export function renderForecast(model, root = document) {
+  const container = getNode(root, 'forecast-list');
   if (!container) return;
   if (!model.forecast.length) {
     container.innerHTML = '<div style="color:var(--text-muted)">Sin forecast disponible.</div>';
@@ -416,9 +496,10 @@ export function renderForecast(model) {
     .join('');
 }
 
-export function renderHistory(model) {
+export function renderHistory(model, root = document) {
   const history = model.alertHistory || [];
-  const alertsContainer = document.getElementById('alertas-recientes');
+  const alertsContainer = getNode(root, 'alertas-recientes');
+  if (!alertsContainer) return;
   if (!history.length) {
     alertsContainer.innerHTML = '<div style="color:var(--text-muted);font-size:0.8rem">Sin historial reciente.</div>';
     return;
@@ -429,10 +510,12 @@ export function renderHistory(model) {
     .join('');
 }
 
-export function renderChart(model, chartRef) {
+export function renderChart(model, chartRef, root = document) {
   if (!window.Chart) return chartRef;
   const history = model.chartSeries || [];
-  const ctx = document.getElementById('chart-humedad').getContext('2d');
+  const canvas = getNode(root, 'chart-humedad');
+  if (!canvas?.getContext) return chartRef;
+  const ctx = canvas.getContext('2d');
   if (chartRef) chartRef.destroy();
 
   return new window.Chart(ctx, {

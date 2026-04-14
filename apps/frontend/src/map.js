@@ -343,6 +343,7 @@ function bucketizedTemporalContextZoom(rawZoom, scopeType = 'nacional') {
 
 function currentTemporalScopeBounds(descriptor = currentViewportPreloadDescriptor()) {
   if (!store.map || !descriptor) return null;
+  const viewerFieldId = store.viewerMode ? (store.estViewerSelectedFieldId || store.estViewerFieldDetail?.id || null) : null;
   if (descriptor.scope_type === 'nacional') {
     return store.departmentsLayer?.getBounds?.()
       || window.L.latLngBounds(
@@ -360,8 +361,9 @@ function currentTemporalScopeBounds(descriptor = currentViewportPreloadDescripto
       || store.hexLookup?.[unitId]?.getBounds?.()
       || null;
   }
-  if (descriptor.scope_type === 'field' && store.selectedFieldId) {
-    return store.farmFieldsLookup?.[store.selectedFieldId]?.getBounds?.() || null;
+  if (descriptor.scope_type === 'field' && (viewerFieldId || store.selectedFieldId)) {
+    const activeFieldId = viewerFieldId || store.selectedFieldId;
+    return store.farmFieldsLookup?.[activeFieldId]?.getBounds?.() || null;
   }
   if (descriptor.scope_type === 'paddock' && store.selectedPaddockId) {
     return store.farmPaddocksLookup?.[store.selectedPaddockId]?.getBounds?.() || null;
@@ -389,6 +391,28 @@ function currentSelectedDepartmentValue() {
 }
 
 function currentViewportPreloadDescriptor() {
+  const viewerActive = store.viewerMode || store.sidebarView === 'establishment_viewer';
+  const viewerField = store.viewerMode
+    ? (store.estViewerFieldDetail || (store.estViewerFields || []).find((item) => item.id === store.estViewerSelectedFieldId) || null)
+    : null;
+  if (viewerField?.aoi_unit_id) {
+    return {
+      scope_type: 'field',
+      scope_ref: viewerField.aoi_unit_id,
+      timeline_scope: 'unidad',
+      timeline_unit_id: viewerField.aoi_unit_id,
+      timeline_department: viewerField.department || null,
+    };
+  }
+  if (viewerActive) {
+    return {
+      scope_type: 'viewport',
+      scope_ref: 'viewer',
+      timeline_scope: 'nacional',
+      timeline_unit_id: null,
+      timeline_department: null,
+    };
+  }
   const forceFieldScope = store.sidebarView === 'establishment_viewer';
   if (!forceFieldScope && store.selectedPaddockId && store.selectedFieldDetail) {
     const paddock = (store.selectedFieldDetail.paddocks || []).find((item) => item.id === store.selectedPaddockId);
@@ -492,22 +516,23 @@ async function maybeStartViewportPreload(activeTemporalIds) {
   if (store.preloadViewportSignature === signature) return;
   setStore({ preloadViewportSignature: signature });
   try {
-    const payload = await startViewportPreload({
-      bbox: viewport.bbox,
-      zoom: viewport.zoom,
-      width: Math.max(256, Math.round(container?.clientWidth || 1024)),
-      height: Math.max(256, Math.round(container?.clientHeight || 640)),
-      temporal_layers: activeTemporalIds,
-      official_layers: officialIds,
-      ...descriptor,
-      target_date: todayIsoDate(),
-      history_days: 30,
-    });
-    if (payload?.run_key) {
-      window.dispatchEvent(new CustomEvent('agroclimax:viewport-preload-started', { detail: payload }));
-    }
-  } catch (error) {
-    console.warn('No se pudo iniciar la precarga residual del viewport:', error);
+      const payload = await startViewportPreload({
+        bbox: viewport.bbox,
+        zoom: viewport.zoom,
+        width: Math.max(256, Math.round(container?.clientWidth || 1024)),
+        height: Math.max(256, Math.round(container?.clientHeight || 640)),
+        temporal_layers: activeTemporalIds,
+        official_layers: officialIds,
+        ...descriptor,
+        target_date: todayIsoDate(),
+        history_days: 30,
+        preload_profile: store.viewerMode ? 'field_viewer' : undefined,
+      });
+      if (payload?.run_key) {
+        window.dispatchEvent(new CustomEvent('agroclimax:viewport-preload-started', { detail: payload }));
+      }
+    } catch (error) {
+      console.warn('No se pudo iniciar la precarga residual del viewport:', error);
   }
 }
 
@@ -1536,25 +1561,26 @@ async function maybeWarmTimelineWindow(anchorDate, { force = false } = {}) {
   const mapNode = document.getElementById('map');
   const descriptor = currentViewportPreloadDescriptor();
   try {
-    await startTimelineWindowPreload({
-      bbox: viewport.bbox,
-      zoom: viewport.zoom,
-      width: Math.max(256, Math.round(mapNode?.clientWidth || 1024)),
-      height: Math.max(256, Math.round(mapNode?.clientHeight || 640)),
-      temporal_layers: activeTemporalIds,
-      scope_type: descriptor.scope_type,
-      scope_ref: descriptor.scope_ref,
-      timeline_scope: descriptor.timeline_scope,
-      timeline_unit_id: descriptor.timeline_unit_id,
-      timeline_department: descriptor.timeline_department,
-      date_from: dateFrom,
-      date_to: dateTo,
-      history_days: 30,
-    });
-  } catch (error) {
-    console.warn('No se pudo lanzar la precarga adelantada de la timeline:', error);
+      await startTimelineWindowPreload({
+        bbox: viewport.bbox,
+        zoom: viewport.zoom,
+        width: Math.max(256, Math.round(mapNode?.clientWidth || 1024)),
+        height: Math.max(256, Math.round(mapNode?.clientHeight || 640)),
+        temporal_layers: activeTemporalIds,
+        scope_type: descriptor.scope_type,
+        scope_ref: descriptor.scope_ref,
+        timeline_scope: descriptor.timeline_scope,
+        timeline_unit_id: descriptor.timeline_unit_id,
+        timeline_department: descriptor.timeline_department,
+        date_from: dateFrom,
+        date_to: dateTo,
+        history_days: 30,
+        preload_profile: store.viewerMode ? 'field_viewer' : undefined,
+      });
+    } catch (error) {
+      console.warn('No se pudo lanzar la precarga adelantada de la timeline:', error);
+    }
   }
-}
 
 function isWarmFrame(dayPayload, targetDate, activeTemporalIds) {
   const playableLayerIds = activeTemporalIds.filter((layerId) => layerFrameIsAvailable(dayPayload?.layers?.[layerId]));
@@ -2574,10 +2600,11 @@ export function setFarmGuideOnMap(feature, { fitBounds = false } = {}) {
   if (fitBounds) fitGeojsonBounds(feature, 15);
 }
 
-export function setFarmFieldsOnMap(featureCollection, onFieldSelect, selectedFieldId = null) {
+export function setFarmFieldsOnMap(featureCollection, onFieldSelect, selectedFieldId = null, options = {}) {
   if (!store.map) return;
   clearFarmFieldsLayer();
   clearFarmFieldLabelsLayer();
+  const selectionTarget = typeof options?.selectionTarget === 'string' ? options.selectionTarget : 'default';
   const lookup = {};
   const labelLayer = window.L.layerGroup();
   const layer = window.L.geoJSON(featureCollection, {
@@ -2597,25 +2624,28 @@ export function setFarmFieldsOnMap(featureCollection, onFieldSelect, selectedFie
       }).forEach((item) => labelLayer.addLayer(item));
       featureLayer.on('click', (event) => {
         if (stopEditorLayerClick(event)) return;
-        highlightFarmField(props.field_id);
+        highlightFarmField(props.field_id, { selectionTarget });
         if (onFieldSelect) onFieldSelect(props);
       });
     },
   }).addTo(store.map);
   labelLayer.addTo(store.map);
-  setStore({
+  const nextState = {
     farmFieldsLayer: layer,
     farmFieldsLookup: lookup,
     farmFieldLabelsLayer: labelLayer,
-    selectedFieldId,
-  });
+  };
+  if (selectionTarget === 'viewer') nextState.estViewerSelectedFieldId = selectedFieldId;
+  else if (selectionTarget !== 'none') nextState.selectedFieldId = selectedFieldId;
+  setStore(nextState);
   refreshFarmPrivateOverlays();
 }
 
-export function setFarmPaddocksOnMap(featureCollection, onPaddockSelect, selectedPaddockId = null) {
+export function setFarmPaddocksOnMap(featureCollection, onPaddockSelect, selectedPaddockId = null, options = {}) {
   if (!store.map) return;
   clearFarmPaddocksLayer();
   clearFarmPaddockLabelsLayer();
+  const selectionTarget = typeof options?.selectionTarget === 'string' ? options.selectionTarget : 'default';
   const lookup = {};
   const labelLayer = window.L.layerGroup();
   const layer = window.L.geoJSON(featureCollection, {
@@ -2635,18 +2665,19 @@ export function setFarmPaddocksOnMap(featureCollection, onPaddockSelect, selecte
       }).forEach((item) => labelLayer.addLayer(item));
       featureLayer.on('click', (event) => {
         if (stopEditorLayerClick(event)) return;
-        highlightFarmPaddock(props.paddock_id);
+        highlightFarmPaddock(props.paddock_id, { selectionTarget });
         if (onPaddockSelect) onPaddockSelect(props);
       });
     },
   }).addTo(store.map);
   labelLayer.addTo(store.map);
-  setStore({
+  const nextState = {
     farmPaddocksLayer: layer,
     farmPaddocksLookup: lookup,
     farmPaddockLabelsLayer: labelLayer,
-    selectedPaddockId,
-  });
+  };
+  if (selectionTarget !== 'none' && selectionTarget !== 'viewer') nextState.selectedPaddockId = selectedPaddockId;
+  setStore(nextState);
   refreshFarmPrivateOverlays();
 }
 
@@ -2656,19 +2687,35 @@ function normalizeHighlightOptions(optionsOrFitBounds, defaultMaxZoom) {
       fitBounds: Boolean(optionsOrFitBounds.fitBounds),
       openPopup: Boolean(optionsOrFitBounds.openPopup),
       maxZoom: Number.isFinite(Number(optionsOrFitBounds.maxZoom)) ? Number(optionsOrFitBounds.maxZoom) : defaultMaxZoom,
+      selectionTarget: typeof optionsOrFitBounds.selectionTarget === 'string' ? optionsOrFitBounds.selectionTarget : 'default',
     };
   }
   return {
     fitBounds: Boolean(optionsOrFitBounds),
     openPopup: false,
     maxZoom: defaultMaxZoom,
+    selectionTarget: 'default',
   };
+}
+
+function applyFarmFieldSelection(fieldId, selectionTarget = 'default') {
+  if (selectionTarget === 'viewer') {
+    setStore({ estViewerSelectedFieldId: fieldId });
+    return;
+  }
+  if (selectionTarget === 'none') return;
+  setStore({ selectedFieldId: fieldId });
+}
+
+function applyFarmPaddockSelection(paddockId, selectionTarget = 'default') {
+  if (selectionTarget === 'none' || selectionTarget === 'viewer') return;
+  setStore({ selectedPaddockId: paddockId });
 }
 
 export function highlightFarmField(fieldId, optionsOrFitBounds = false) {
   if (!store.farmFieldsLookup || !Object.keys(store.farmFieldsLookup).length) return;
   const options = normalizeHighlightOptions(optionsOrFitBounds, 15);
-  setStore({ selectedFieldId: fieldId });
+  applyFarmFieldSelection(fieldId, options.selectionTarget);
   Object.entries(store.farmFieldsLookup).forEach(([id, layer]) => {
     layer.setStyle(farmFieldStyle(id === fieldId));
   });
@@ -2682,7 +2729,7 @@ export function highlightFarmField(fieldId, optionsOrFitBounds = false) {
 export function highlightFarmPaddock(paddockId, optionsOrFitBounds = false) {
   if (!store.farmPaddocksLookup || !Object.keys(store.farmPaddocksLookup).length) return;
   const options = normalizeHighlightOptions(optionsOrFitBounds, 16);
-  setStore({ selectedPaddockId: paddockId });
+  applyFarmPaddockSelection(paddockId, options.selectionTarget);
   Object.entries(store.farmPaddocksLookup).forEach(([id, layer]) => {
     layer.setStyle(farmPaddockStyle(id === paddockId));
   });

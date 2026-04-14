@@ -13,6 +13,18 @@ os.environ["DATABASE_SYNC_URL"] = f"sqlite:///{TEST_DB.as_posix()}"
 os.environ["APP_ENV"] = "testing"
 os.environ["AUTH_BYPASS_FOR_TESTS"] = "true"
 
+# Ensure rasterio uses its bundled PROJ database, even if the developer machine has a different
+# PROJ installation (for example PostGIS portable installs) leaking through environment variables.
+try:
+    _rasterio_spec = importlib.util.find_spec("rasterio")
+    if _rasterio_spec and _rasterio_spec.origin:
+        _rasterio_pkg = Path(_rasterio_spec.origin).parent
+        _proj_data = _rasterio_pkg / "proj_data"
+        if _proj_data.exists():
+            os.environ["PROJ_LIB"] = str(_proj_data)
+except Exception:
+    pass
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TILESERVER_PATH = REPO_ROOT / "agroclimax-tiles" / "server_app.py"
 

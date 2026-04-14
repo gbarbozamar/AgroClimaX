@@ -975,6 +975,7 @@ async def _create_and_schedule_run(
     height: int,
     temporal_layers: list[str] | None,
     official_layers: list[str] | None,
+    preload_profile: str | None = None,
     scope_type: str | None,
     scope_ref: str | None,
     timeline_scope: str,
@@ -990,6 +991,9 @@ async def _create_and_schedule_run(
     resolved_target_date = target_date or date.today()
     resolved_temporal_layers = _normalize_temporal_layers(temporal_layers)
     resolved_official_layers = _normalize_official_layers(official_layers)
+    profile = str(preload_profile or "").strip().lower()
+    if profile in {"field_viewer", "viewer"}:
+        resolved_official_layers = []
     resolved_date_to = date_to or resolved_target_date
     resolved_date_from = date_from or (resolved_target_date - timedelta(days=settings.preload_neighbor_days))
     run_signature = _preload_run_signature(
@@ -1036,6 +1040,7 @@ async def _create_and_schedule_run(
                 stage="queued",
                 details={
                     "critical_ready": False,
+                    "preload_profile": profile or None,
                     "temporal_layers": [TEMPORAL_LAYER_CONFIGS[layer]["public_id"] for layer in resolved_temporal_layers],
                     "official_layers": resolved_official_layers,
                     "bbox": bbox,
@@ -1053,12 +1058,13 @@ async def _create_and_schedule_run(
             "status": "busy",
             "stage": "queued",
             "critical_ready": False,
-            "details": {
-                "critical_ready": False,
-                "reason": "database_locked",
-                "temporal_layers": [TEMPORAL_LAYER_CONFIGS[layer]["public_id"] for layer in resolved_temporal_layers],
-                "official_layers": resolved_official_layers,
-                "bbox": bbox,
+              "details": {
+                  "critical_ready": False,
+                  "preload_profile": profile or None,
+                  "reason": "database_locked",
+                  "temporal_layers": [TEMPORAL_LAYER_CONFIGS[layer]["public_id"] for layer in resolved_temporal_layers],
+                  "official_layers": resolved_official_layers,
+                  "bbox": bbox,
                 "zoom": zoom,
                 "run_signature": run_signature,
                 "active_stage": "queued",
@@ -1103,6 +1109,7 @@ async def start_startup_preload(
     height: int,
     temporal_layers: list[str] | None,
     official_layers: list[str] | None,
+    preload_profile: str | None = None,
     scope_type: str | None,
     scope_ref: str | None,
     timeline_scope: str,
@@ -1119,6 +1126,7 @@ async def start_startup_preload(
         height=height,
         temporal_layers=temporal_layers,
         official_layers=official_layers,
+        preload_profile=preload_profile,
         scope_type=scope_type,
         scope_ref=scope_ref,
         timeline_scope=timeline_scope,
@@ -1137,6 +1145,7 @@ async def start_viewport_preload(
     height: int,
     temporal_layers: list[str] | None,
     official_layers: list[str] | None,
+    preload_profile: str | None = None,
     scope_type: str | None,
     scope_ref: str | None,
     timeline_scope: str,
@@ -1153,6 +1162,7 @@ async def start_viewport_preload(
         height=height,
         temporal_layers=temporal_layers,
         official_layers=official_layers,
+        preload_profile=preload_profile,
         scope_type=scope_type,
         scope_ref=scope_ref,
         timeline_scope=timeline_scope,
@@ -1175,6 +1185,7 @@ async def start_timeline_window_preload(
     timeline_scope: str,
     timeline_unit_id: str | None,
     timeline_department: str | None,
+    preload_profile: str | None = None,
     date_from: date,
     date_to: date,
     history_days: int = 30,
@@ -1187,6 +1198,7 @@ async def start_timeline_window_preload(
         height=height,
         temporal_layers=temporal_layers,
         official_layers=[],
+        preload_profile=preload_profile,
         scope_type=scope_type,
         scope_ref=scope_ref,
         timeline_scope=timeline_scope,

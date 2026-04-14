@@ -1332,6 +1332,60 @@
       margin-bottom: 12px;
     }
 
+    .viewer-toolbar {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: end;
+      margin-bottom: 12px;
+    }
+
+    .viewer-kpi-status {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+    }
+
+    .viewer-kpi-bar {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .viewer-kpi-bar .kpi-card {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+
+    .viewer-summary-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      color: var(--text);
+      font-size: 0.8rem;
+    }
+
+    .viewer-summary-grid > div {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 10px 12px;
+      background: rgba(17, 23, 35, 0.55);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+
+    .viewer-summary-grid strong {
+      font-size: 0.68rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+
+    .viewer-summary-wide {
+      grid-column: 1 / -1;
+    }
+
     .fields-grid {
       display: grid;
       gap: 10px;
@@ -2449,6 +2503,11 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
 
+      .viewer-kpi-bar,
+      .viewer-summary-grid {
+        grid-template-columns: 1fr;
+      }
+
       .overview-grid {
         width: calc(100% - 20px);
       }
@@ -2959,14 +3018,77 @@
       <div class="panel-section">
         <div class="panel-title">Visor de Establecimiento</div>
         <div class="settings-card">
-          <div class="settings-status" id="establishment-viewer-status">En construccion. Este visor sera de lectura y no modifica campos/potreros.</div>
+          <div class="settings-status" id="establishment-viewer-status">Selecciona un establecimiento y luego un campo.</div>
+          <div class="viewer-toolbar" style="margin-top:12px">
+            <label class="settings-field">
+              <span class="settings-field-label">Establecimiento</span>
+              <select class="settings-input" id="establishment-viewer-select"></select>
+            </label>
+            <button class="settings-btn" id="establishment-viewer-refresh-btn" type="button">Recargar</button>
+          </div>
+          <label class="settings-field">
+            <span class="settings-field-label">Campo</span>
+            <select class="settings-input" id="establishment-viewer-field-select"></select>
+          </label>
+          <div class="fields-note">El mapa y la timeline inferior se acotan al campo seleccionado. Este visor es solo lectura.</div>
         </div>
       </div>
 
       <div class="panel-section">
-        <div class="panel-title">Alcance</div>
-        <div class="settings-card" style="color:var(--text-muted);font-size:0.84rem;line-height:1.45">
-          Este panel se usa para explorar un establecimiento con foco operativo, sin tocar la logica del mapa ni las metricas actuales.
+        <div class="panel-title">Metricas del campo</div>
+        <div class="settings-card">
+          <div class="viewer-kpi-status" id="establishment-viewer-kpi-status">Selecciona un campo para ver sus metricas.</div>
+          <div class="viewer-kpi-bar">
+            <div class="kpi-card">
+              <div class="kpi-label">Humedad Suelo (S1)</div>
+              <div class="kpi-value" id="viewer-kpi-humedad">-</div>
+              <div class="kpi-sub">Sentinel-1 SAR</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-label">NDMI Vegetacion (S2)</div>
+              <div class="kpi-value" id="viewer-kpi-ndmi">-</div>
+              <div class="kpi-sub">Sentinel-2</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-label">SPI-30 (ERA5)</div>
+              <div class="kpi-value" id="viewer-kpi-spi">-</div>
+              <div class="kpi-sub">Indice estandarizado</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-label">Area en Alerta</div>
+              <div class="kpi-value" id="viewer-kpi-area">-</div>
+              <div class="kpi-sub">% del AOI</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-label">Risk Score</div>
+              <div class="kpi-value" id="viewer-kpi-risk">-</div>
+              <div class="kpi-sub">Motor compuesto</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-label">Confianza</div>
+              <div class="kpi-value" id="viewer-kpi-confidence">-</div>
+              <div class="kpi-sub">Calidad de dato</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-label">Persistencia</div>
+              <div class="kpi-value" id="viewer-kpi-dias">-</div>
+              <div class="kpi-sub">Dias en el estado</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-title">Contexto operativo</div>
+        <div class="settings-card" id="establishment-viewer-summary">
+          <div class="fields-empty">Selecciona un campo para ver su AOI, metricas y timeline.</div>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-title">Campos del establecimiento</div>
+        <div class="settings-card">
+          <div class="fields-list" id="establishment-viewer-fields-list"></div>
         </div>
       </div>
     </div><!-- /sidebar-establishment-viewer-view -->
@@ -3104,7 +3226,7 @@
   </div>
 </footer>
 
-    <script type="module" src="/static/src/app.js?v=20260414-6"></script>
+<script type="module" src="/static/src/app.js?v=20260414-7"></script>
 <script type="text/plain" data-legacy="disabled">
 // â”€â”€ API REAL â€” Copernicus CDSE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // API_BASE: en producciÃ³n usa URL relativa (FastAPI sirve el frontend).

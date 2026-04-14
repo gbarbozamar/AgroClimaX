@@ -1,17 +1,34 @@
-import { API_BASE, API_V1, downloadJsonFile, fetchCustomState, fetchDepartmentLayers, fetchHexagonsGeojson, fetchHistory, fetchMapOverlayCatalog, fetchPreloadStatus, fetchProductiveTemplate, fetchProductiveUnits, fetchProductiveUnitsGeojson, fetchScopeState, fetchSectionsGeojson, fetchTimelineContext, fetchUnits, fetchWeatherForecast, startStartupPreload, uploadProductiveUnitsFile } from './api.js';
+import { API_BASE, API_V1, downloadJsonFile, fetchCustomState, fetchDepartmentLayers, fetchField, fetchFieldsGeojson, fetchHexagonsGeojson, fetchHistory, fetchMapOverlayCatalog, fetchPaddocksGeojson, fetchPreloadStatus, fetchProductiveTemplate, fetchProductiveUnits, fetchProductiveUnitsGeojson, fetchScopeState, fetchSectionsGeojson, fetchTimelineContext, fetchUnits, fetchWeatherForecast, startStartupPreload, uploadProductiveUnitsFile } from './api.js';
 import { initAuth } from './auth.js';
-import { clearDepartmentLayer, clearHexLayer, clearProductiveLayer, clearSectionsLayer, highlightDepartment, highlightHex, highlightProductive, highlightSection, initMap, isLayerActive, refreshFarmPrivateOverlays, requestTimelineManifestRefresh, setAvailableOverlays, setHexesOnMap, setDepartmentsOnMap, setMapLayerChangeHandler, setProductivesOnMap, setSectionsOnMap, updateFocus } from './map.js';
+import { clearDepartmentLayer, clearHexLayer, clearProductiveLayer, clearSectionsLayer, fitGeojsonBounds, highlightDepartment, highlightFarmField, highlightHex, highlightProductive, highlightSection, initMap, isLayerActive, refreshFarmPrivateOverlays, requestTimelineManifestRefresh, setAvailableOverlays, setFarmFieldsOnMap, setFarmPaddocksOnMap, setHexesOnMap, setDepartmentsOnMap, setMapLayerChangeHandler, setProductivesOnMap, setSectionsOnMap, updateFocus } from './map.js';
 import { initFieldsPanel } from './fields.js';
-import { initEstablishmentViewerPanel } from './establishment-viewer.js';
+import { initEstablishmentViewerPanel, renderEstablishmentViewer } from './establishment-viewer.js';
 import { initProfilePanel, refreshProfilePanel } from './profile.js';
-import { normalizeState, populateDepartmentSelect, renderChart, renderDashboard, renderDrivers, renderError, renderForecast, renderHistory, renderLoading, renderWeatherCards } from './render.js';
-import { initSettingsPanel } from './settings.js';
+import { clearEstablishmentViewerDashboard, normalizeState, populateDepartmentSelect, renderChart, renderDashboard, renderDrivers, renderError, renderEstablishmentViewerDashboard, renderForecast, renderHistory, renderLoading, renderWeatherCards } from './render.js';
+import { initSettingsPanel, setSidebarView } from './settings.js';
 import { setStore, store } from './state.js';
 
 setStore({ apiBase: API_BASE, apiV1: API_V1 });
+const URL_PARAMS = new URLSearchParams(window.location.search);
+function parseViewerBootstrapConfig() {
+  const rawViewer = String(URL_PARAMS.get('viewer') || '').trim().toLowerCase();
+  const explicit = rawViewer && !['0', 'false', 'off', 'no'].includes(rawViewer);
+  const fieldId = (URL_PARAMS.get('viewer_field_id') || URL_PARAMS.get('field_id') || URL_PARAMS.get('field') || '').trim() || null;
+  const paddockId = (URL_PARAMS.get('viewer_paddock_id') || URL_PARAMS.get('paddock_id') || URL_PARAMS.get('paddock') || '').trim() || null;
+  const unitId = (URL_PARAMS.get('viewer_unit_id') || URL_PARAMS.get('unit_id') || URL_PARAMS.get('unit') || '').trim() || null;
+  const enabled = Boolean(explicit || fieldId || unitId);
+  return {
+    enabled,
+    fieldId,
+    paddockId,
+    unitId,
+  };
+}
+
 const TIMELINE_CONTEXT_CACHE = new Map();
 let timelineContextRequestSeq = 0;
 let dashboardRequestSeq = 0;
+let establishmentViewerMapRequestSeq = 0;
 const FRONTEND_PRELOAD_STAGES = {
   auth: { label: 'Sesion', detail: 'Validando acceso y tokens de la sesion.' },
   map: { label: 'Mapa base', detail: 'Inicializando viewport y controles.' },
@@ -306,6 +323,32 @@ function currentViewportPreloadPayload() {
   };
 }
 
+function emptyFeatureCollection() {
+  return { type: 'FeatureCollection', features: [] };
+}
+
+async function refreshEstablishmentViewerMap(establishmentId, selectedFieldId = null) {
+  const requestSeq = ++establishmentViewerMapRequestSeq;
+  const fieldsGeojson = establishmentId
+    ? await fetchFieldsGeojson(establishmentId)
+    : emptyFeatureCollection();
+  if (requestSeq !== establishmentViewerMapRequestSeq) return false;
+  setFarmFieldsOnMap(fieldsGeojson, async (props) => {
+    if (!props?.field_id) return;
+    await selectEstablishmentViewerField(props.field_id, { fitBounds: false, source: 'map' });
+  }, selectedFieldId, { selectionTarget: 'viewer' });
+  if (!selectedFieldId) {
+    setFarmPaddocksOnMap(emptyFeatureCollection(), null, null, { selectionTarget: 'none' });
+    refreshFarmPrivateOverlays();
+    return true;
+  }
+  const paddocksGeojson = await fetchPaddocksGeojson(selectedFieldId);
+  if (requestSeq !== establishmentViewerMapRequestSeq) return false;
+  setFarmPaddocksOnMap(paddocksGeojson, null, null, { selectionTarget: 'none' });
+  refreshFarmPrivateOverlays();
+  return true;
+}
+
 async function pollPreloadRun(runKey, { timeoutMs = 0, stopOnCritical = false, shouldContinue = null, signal = null } = {}) {
   const startedAt = Date.now();
   let latest = null;
@@ -448,7 +491,36 @@ function selectedPaddockUnitMeta() {
   };
 }
 
+function selectedEstablishmentViewerFieldUnitMeta() {
+  const field = store.estViewerFieldDetail
+    || (store.estViewerFields || []).find((item) => item.id === store.estViewerSelectedFieldId)
+    || null;
+  if (!field) return null;
+  return {
+    unit_id: field.aoi_unit_id || null,
+    unit_name: field.name || 'Campo',
+    name: field.name || 'Campo',
+    centroid_lat: field.centroid_lat ?? null,
+    centroid_lon: field.centroid_lon ?? null,
+    department: field.department || null,
+    selection_kind: 'field',
+    source_field_id: field.id,
+  };
+}
+
 function currentFarmSelectionDescriptor() {
+  if (store.viewerMode) {
+    const viewerFieldMeta = selectedEstablishmentViewerFieldUnitMeta();
+    if (!viewerFieldMeta) return null;
+    return {
+      scope: 'unidad',
+      unitId: viewerFieldMeta.unit_id,
+      unitMeta: viewerFieldMeta,
+      supported: Boolean(viewerFieldMeta.unit_id),
+      selectionKind: 'field',
+    };
+  }
+
   const paddockMeta = selectedPaddockUnitMeta();
   if (paddockMeta) {
     return {
@@ -478,6 +550,9 @@ function currentSelectionDescriptor() {
   if (store.customGeojson) return { scope: 'custom', supported: false };
   const farmSelection = currentFarmSelectionDescriptor();
   if (farmSelection) return farmSelection;
+  if (store.viewerMode) {
+    return { scope: 'viewer', supported: false };
+  }
   if (store.selectedProductiveId) {
     return {
       scope: 'unidad',
@@ -561,6 +636,9 @@ function buildTimelineModel(contextPayload, descriptor) {
 
 function applyDashboardModel(model, { renderForecastPanel = true, renderWeather = true } = {}) {
   renderDashboard(model);
+  if (store.viewerMode && store.estViewerSelectedFieldId) {
+    renderEstablishmentViewerDashboard(model);
+  }
   renderDrivers(model);
   renderHistory(model);
   setStore({
@@ -1014,13 +1092,19 @@ async function loadSelection(scope, department = null, unitId = null) {
     if (scope === 'custom' && store.customGeojson) {
       data = await fetchCustomState(store.customGeojson);
       history = { datos: [] };
-    } else {
-      unit = store.units.find((item) => item.department === department || item.id === unitId) || selectedSectionProps(unitId) || selectedProductiveProps(unitId) || selectedHexProps(unitId) || null;
-      if (isHistoricalTimelineDate()) {
-        const rendered = await refreshDashboardFromTimelineDate(store.timelineDate, { silent: false, requestSeq });
-        if (rendered) {
-          if (unitId && isLayerActive('judicial')) highlightSection(unitId, false);
-          if (unitId && isLayerActive('productiva')) highlightProductive(unitId, false);
+      } else {
+        unit = store.units.find((item) => item.department === department || item.id === unitId) || selectedSectionProps(unitId) || selectedProductiveProps(unitId) || selectedHexProps(unitId) || null;
+        if (!unit && unitId) {
+          const paddockMeta = selectedPaddockUnitMeta();
+          const fieldMeta = selectedFieldUnitMeta();
+          if (paddockMeta?.unit_id === unitId) unit = paddockMeta;
+          else if (fieldMeta?.unit_id === unitId) unit = fieldMeta;
+        }
+        if (isHistoricalTimelineDate()) {
+          const rendered = await refreshDashboardFromTimelineDate(store.timelineDate, { silent: false, requestSeq });
+          if (rendered) {
+            if (unitId && isLayerActive('judicial')) highlightSection(unitId, false);
+            if (unitId && isLayerActive('productiva')) highlightProductive(unitId, false);
           if (unitId && isLayerActive('hex')) highlightHex(unitId, false);
           if (department && !isLayerActive('judicial')) highlightDepartment(department, false);
           return;
@@ -1107,6 +1191,18 @@ async function handleHexSelect(hex) {
 }
 
 async function refreshCurrentSelection() {
+  if (store.viewerMode) {
+    if (store.estViewerSelectedFieldId) {
+      if (isHistoricalTimelineDate()) {
+        await refreshDashboardFromTimelineDate(store.timelineDate, { silent: true });
+      } else {
+        await refreshEstablishmentViewerDashboardCurrent();
+      }
+    } else {
+      clearEstablishmentViewerDashboard();
+    }
+    return;
+  }
   if (store.customGeojson) {
     await loadSelection('custom');
     return;
@@ -1145,6 +1241,69 @@ async function refreshCurrentSelection() {
   await loadSelection('nacional');
 }
 
+async function refreshEstablishmentViewerDashboardCurrent() {
+  if (!store.viewerMode || !store.estViewerSelectedFieldId) {
+    clearEstablishmentViewerDashboard();
+    return false;
+  }
+  const descriptor = currentSelectionDescriptor();
+  const fieldMeta = selectedEstablishmentViewerFieldUnitMeta();
+  if (!descriptor?.supported || !fieldMeta?.unit_id) {
+    clearEstablishmentViewerDashboard('El campo seleccionado no tiene AOI operativo.');
+    return false;
+  }
+  const data = await fetchScopeState(descriptor.scope, descriptor.department || null, descriptor.unitId || null);
+  const history = await fetchHistory(descriptor.scope, descriptor.department || null, descriptor.unitId || null, 30);
+  const model = normalizeState(data, {
+    history: historyContextFromV1(history),
+    unitLat: fieldMeta.centroid_lat ?? null,
+    unitLon: fieldMeta.centroid_lon ?? null,
+    scopeLabel: fieldMeta.unit_name || fieldMeta.name || 'Campo',
+  });
+  renderEstablishmentViewerDashboard(model);
+  return true;
+}
+
+async function selectEstablishmentViewerField(fieldOrId, { fitBounds = true } = {}) {
+  const fieldId = typeof fieldOrId === 'string' ? fieldOrId : fieldOrId?.id;
+  if (!fieldId) {
+    setStore({
+      estViewerSelectedFieldId: null,
+      estViewerFieldDetail: null,
+      establishmentViewerInitialFitFieldId: null,
+    });
+    renderEstablishmentViewer();
+    clearEstablishmentViewerDashboard();
+    await refreshEstablishmentViewerMap(store.estViewerSelectedEstablishmentId, null);
+    requestTimelineManifestRefresh({ preserveDate: false });
+    return false;
+  }
+
+  const detail = typeof fieldOrId === 'object' && fieldOrId?.field_geometry_geojson
+    ? await fetchField(fieldId)
+    : await fetchField(fieldId);
+
+  setStore({
+    estViewerSelectedFieldId: detail.id,
+    estViewerFieldDetail: detail,
+  });
+  renderEstablishmentViewer();
+  await refreshEstablishmentViewerMap(detail.establishment_id || store.estViewerSelectedEstablishmentId, detail.id);
+  highlightFarmField(detail.id, { fitBounds: false, openPopup: false, selectionTarget: 'viewer' });
+  const shouldFit = fitBounds && store.establishmentViewerInitialFitFieldId !== detail.id;
+  if (shouldFit && detail.field_geometry_geojson) {
+    fitGeojsonBounds(detail.field_geometry_geojson, 15);
+    setStore({ establishmentViewerInitialFitFieldId: detail.id });
+  }
+  requestTimelineManifestRefresh({ preserveDate: false });
+  if (isHistoricalTimelineDate()) {
+    await refreshDashboardFromTimelineDate(store.timelineDate, { silent: true });
+  } else {
+    await refreshEstablishmentViewerDashboardCurrent();
+  }
+  return true;
+}
+
 async function refreshCurrentLayer() {
   const department = currentDepartmentFilter();
   if (isLayerActive('judicial')) await loadSectionsLayer(department);
@@ -1166,7 +1325,7 @@ async function refreshCurrentLayer() {
   syncWeatherFilterOptions();
 }
 
-async function handleTimelineDateChange(event) {
+  async function handleTimelineDateChange(event) {
   const targetDate = event?.detail?.date || store.timelineDate || todayIsoDate();
   const enabled = Boolean(event?.detail?.enabled);
   if (!enabled || !isHistoricalTimelineDate(targetDate)) {
@@ -1174,15 +1333,40 @@ async function handleTimelineDateChange(event) {
     await refreshCurrentSelection();
     return;
   }
-  await refreshDashboardFromTimelineDate(targetDate, { silent: true });
-}
+    await refreshDashboardFromTimelineDate(targetDate, { silent: true });
+  }
 
-async function bootstrap() {
-  initHeaderCollapseToggle();
-  setStore({
-    preloadVisible: true,
-    preloadMiniVisible: false,
-    preloadRunKey: null,
+  async function applyViewerBootstrapSelection(viewerCfg) {
+    if (!viewerCfg?.enabled) return false;
+    if (viewerCfg.fieldId) {
+      try {
+        const detail = await fetchField(viewerCfg.fieldId);
+        setStore({
+          estViewerSelectedEstablishmentId: detail.establishment_id || null,
+          estViewerSelectedFieldId: detail.id,
+          estViewerFieldDetail: detail,
+          establishmentViewerInitialFitFieldId: null,
+        });
+        await refreshEstablishmentViewerMap(detail.establishment_id || null, detail.id);
+        setSidebarView('establishment_viewer');
+        await selectEstablishmentViewerField(detail.id, { fitBounds: true });
+        return true;
+      } catch (error) {
+        console.warn('No se pudo aplicar la seleccion inicial del viewer:', error);
+        return false;
+      }
+    }
+    return false;
+  }
+
+  async function bootstrap() {
+    const viewerCfg = parseViewerBootstrapConfig();
+    setStore({ viewerMode: Boolean(viewerCfg.enabled) });
+    initHeaderCollapseToggle();
+    setStore({
+      preloadVisible: true,
+      preloadMiniVisible: false,
+      preloadRunKey: null,
     preloadStatus: null,
     preloadCriticalReady: false,
   });
@@ -1218,6 +1402,23 @@ async function bootstrap() {
     renderPreloadUi();
     continuePreloadMonitoring(payload.run_key);
   });
+  window.addEventListener('agroclimax:sidebar-view-changed', async (event) => {
+    const previousView = event?.detail?.previousView || null;
+    const nextView = event?.detail?.nextView || null;
+    if (previousView === nextView) return;
+    if (nextView === 'establishment_viewer') {
+      if (store.estViewerSelectedFieldId) {
+        requestTimelineManifestRefresh({ preserveDate: false });
+        await refreshCurrentSelection();
+      }
+      return;
+    }
+    if (previousView === 'establishment_viewer') {
+      requestTimelineManifestRefresh({ preserveDate: false });
+      await refreshCurrentSelection();
+      await refreshCurrentLayer();
+    }
+  });
 
   setFrontendPreloadStage('map', 'running');
   await initMap(async (geojson) => {
@@ -1226,7 +1427,7 @@ async function bootstrap() {
   }, handleDepartmentSelect, handleSectionSelect);
   setFrontendPreloadStage('map', 'done', 'Viewport y controles inicializados.');
   setMapLayerChangeHandler(async () => {
-    const preserveViewport = Boolean(store.selectedFieldId || store.selectedPaddockId);
+    const preserveViewport = Boolean(store.selectedFieldId || store.selectedPaddockId || store.estViewerSelectedFieldId);
     const preservedCenter = preserveViewport && store.map ? store.map.getCenter() : null;
     const preservedZoom = preserveViewport && store.map ? store.map.getZoom() : null;
     await refreshCurrentLayer();
@@ -1251,7 +1452,23 @@ async function bootstrap() {
     onRefreshSelection: refreshCurrentSelection,
     onRefreshLayers: refreshCurrentLayer,
   });
-  initEstablishmentViewerPanel();
+  initEstablishmentViewerPanel({
+    onSelectEstablishment: async (establishmentId) => {
+      setStore({
+        estViewerSelectedEstablishmentId: establishmentId || null,
+        estViewerSelectedFieldId: null,
+        estViewerFieldDetail: null,
+        establishmentViewerInitialFitFieldId: null,
+      });
+      renderEstablishmentViewer();
+      clearEstablishmentViewerDashboard();
+      await refreshEstablishmentViewerMap(establishmentId || null, null);
+    },
+    onSelectField: async (field) => {
+      if (!field?.id) return;
+      await selectEstablishmentViewerField(field.id, { fitBounds: true });
+    },
+  });
   await initFieldsPanel();
   initProfilePanel();
 
@@ -1285,49 +1502,54 @@ async function bootstrap() {
     await refreshWeatherCards();
   });
 
-  setFrontendPreloadStage('selection', 'running');
-  await loadUnitsSafe();
-  const initialDepartmentLayerPromise = loadDepartmentLayer(null);
-  setStore({
-    preloadCriticalReady: true,
-    preloadMiniVisible: false,
-  });
-  releasePreloadOverlay();
-  await loadSelection('nacional');
-  setFrontendPreloadStage('selection', 'done', 'Contexto inicial y capas base listas.');
-  await initialDepartmentLayerPromise;
-
-  requestTimelineManifestRefresh({ preserveDate: false });
-
-  const preloadSelection = selectionPreloadPayload();
-  const preloadViewport = currentViewportPreloadPayload();
-  let startupPreloadRunKey = null;
-  startStartupPreload({
-    ...preloadViewport,
-    temporal_layers: (store.activeLayers || []).filter((layerId) => ['alerta', 'rgb', 'ndvi', 'ndmi', 'ndwi', 'savi', 'sar', 'lst'].includes(layerId)),
-    official_layers: (store.availableOverlays || []).filter((item) => item.recommended).map((item) => item.id),
-    ...preloadSelection,
-    target_date: todayIsoDate(),
-    history_days: 30,
-  }).then((preloadResponse) => {
-    startupPreloadRunKey = preloadResponse?.run_key || null;
-    stopPreloadMonitoring();
+    setFrontendPreloadStage('selection', 'running');
+    await loadUnitsSafe();
+    const initialDepartmentLayerPromise = loadDepartmentLayer(null);
     setStore({
-      preloadRunKey: startupPreloadRunKey,
-      preloadStatus: preloadResponse || null,
-      preloadMiniVisible: Boolean(startupPreloadRunKey),
+      preloadCriticalReady: true,
+      preloadMiniVisible: false,
     });
-    renderPreloadUi();
-    if (startupPreloadRunKey) {
-      continuePreloadMonitoring(startupPreloadRunKey);
+    releasePreloadOverlay();
+    const appliedViewerSelection = await applyViewerBootstrapSelection(viewerCfg);
+    if (!appliedViewerSelection) {
+      await loadSelection('nacional');
     }
-  }).catch((error) => {
-    console.warn('No se pudo iniciar la precarga de startup:', error);
-  });
+    setFrontendPreloadStage('selection', 'done', 'Contexto inicial y capas base listas.');
+    await initialDepartmentLayerPromise;
 
-  syncWeatherFilterOptions();
-  await refreshWeatherCards();
-  await refreshProductiveImportSummary(null);
+    requestTimelineManifestRefresh({ preserveDate: false });
+
+    if (!viewerCfg.enabled) {
+      const preloadSelection = selectionPreloadPayload();
+      const preloadViewport = currentViewportPreloadPayload();
+      let startupPreloadRunKey = null;
+      startStartupPreload({
+        ...preloadViewport,
+        temporal_layers: (store.activeLayers || []).filter((layerId) => ['alerta', 'rgb', 'ndvi', 'ndmi', 'ndwi', 'savi', 'sar', 'lst'].includes(layerId)),
+        official_layers: (store.availableOverlays || []).filter((item) => item.recommended).map((item) => item.id),
+        ...preloadSelection,
+        target_date: todayIsoDate(),
+        history_days: 30,
+      }).then((preloadResponse) => {
+        startupPreloadRunKey = preloadResponse?.run_key || null;
+        stopPreloadMonitoring();
+        setStore({
+          preloadRunKey: startupPreloadRunKey,
+          preloadStatus: preloadResponse || null,
+          preloadMiniVisible: Boolean(startupPreloadRunKey),
+        });
+        renderPreloadUi();
+        if (startupPreloadRunKey) {
+          continuePreloadMonitoring(startupPreloadRunKey);
+        }
+      }).catch((error) => {
+        console.warn('No se pudo iniciar la precarga de startup:', error);
+      });
+    }
+
+    syncWeatherFilterOptions();
+    await refreshWeatherCards();
+    await refreshProductiveImportSummary(null);
   wireProductiveImportControls();
   await refreshProfilePanel();
   setProductiveImportStatus('Subi un .geojson o .zip shapefile para activar la capa Predios.', 'muted');

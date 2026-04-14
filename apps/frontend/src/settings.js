@@ -90,6 +90,7 @@ export function syncSidebarView() {
   const allowedViews = new Set(['monitor', 'fields', 'establishment_viewer', 'settings', 'profile']);
   const requestedView = store.sidebarView || 'monitor';
   const activeView = allowedViews.has(requestedView) ? requestedView : 'monitor';
+  setStore({ viewerMode: activeView === 'establishment_viewer' });
   monitorView?.classList.toggle('hidden', activeView !== 'monitor');
   settingsView?.classList.toggle('hidden', activeView !== 'settings');
   profileView?.classList.toggle('hidden', activeView !== 'profile');
@@ -103,8 +104,12 @@ export function syncSidebarView() {
 }
 
 export function setSidebarView(view) {
+  const previousView = store.sidebarView || 'monitor';
   setStore({ sidebarView: view });
   syncSidebarView();
+  window.dispatchEvent(new CustomEvent('agroclimax:sidebar-view-changed', {
+    detail: { previousView, nextView: store.sidebarView || view },
+  }));
 }
 
 function renderCoverageOptions() {
