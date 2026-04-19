@@ -237,7 +237,7 @@ async def upsert_latest_state_cache(
         "observed_at": observed_at,
         "payload": payload,
         "payload_hash": payload_hash,
-        "updated_at": datetime.utcnow(),
+        "updated_at": datetime.now(timezone.utc),
     }
     insert_stmt = _build_insert(session, LatestStateCache)
     if insert_stmt is not None:
@@ -251,7 +251,7 @@ async def upsert_latest_state_cache(
                     "observed_at": observed_at,
                     "payload": payload,
                     "payload_hash": payload_hash,
-                    "updated_at": datetime.utcnow(),
+                    "updated_at": datetime.now(timezone.utc),
                 },
             )
         )
@@ -291,7 +291,7 @@ async def upsert_historical_state_cache(
         "observed_at": observed_at,
         "payload": payload,
         "payload_hash": payload_hash,
-        "updated_at": datetime.utcnow(),
+        "updated_at": datetime.now(timezone.utc),
     }
     insert_stmt = _build_insert(session, HistoricalStateCache)
     if insert_stmt is not None:
@@ -304,7 +304,7 @@ async def upsert_historical_state_cache(
                     "department": department,
                     "payload": payload,
                     "payload_hash": payload_hash,
-                    "updated_at": datetime.utcnow(),
+                    "updated_at": datetime.now(timezone.utc),
                 },
             )
         )
@@ -367,7 +367,7 @@ async def upsert_index_snapshot(session: AsyncSession, unit: AOIUnit, payload: d
         "raw_metrics": raw,
         "forecast": payload.get("forecast") or [],
         "drivers": payload.get("drivers") or [],
-        "updated_at": datetime.utcnow(),
+        "updated_at": datetime.now(timezone.utc),
     }
     insert_stmt = _build_insert(session, UnitIndexSnapshot)
     if insert_stmt is not None:
@@ -448,7 +448,7 @@ async def upsert_layer_snapshots(session: AsyncSession, unit: AOIUnit, payload: 
             "availability_score": availability_score,
             "summary_stats": summary_stats,
             "metadata_extra": metadata_extra,
-            "updated_at": datetime.utcnow(),
+            "updated_at": datetime.now(timezone.utc),
         }
         insert_stmt = _build_insert(session, SatelliteLayerSnapshot)
         if insert_stmt is not None:
@@ -513,7 +513,7 @@ async def upsert_spatial_layer_feature(session: AsyncSession, unit: AOIUnit, pay
         "centroid_lat": unit.centroid_lat,
         "centroid_lon": unit.centroid_lon,
         "properties": properties,
-        "updated_at": datetime.utcnow(),
+        "updated_at": datetime.now(timezone.utc),
     }
     insert_stmt = _build_insert(session, SpatialLayerFeature)
     if insert_stmt is not None:

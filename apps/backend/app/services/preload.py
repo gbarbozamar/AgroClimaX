@@ -379,11 +379,11 @@ async def _execute_preload_run(
         date_from + timedelta(days=offset) for offset in range((date_to - date_from).days + 1)
     ]
     zoom_levels = _zoom_levels(zoom)
-    critical_tile_tasks = sum(len(_tile_coords_for_bbox(bbox, level)) * len(target_dates) * len(temporal_layers) for level in [zoom_levels[0]])
+    critical_tile_tasks = len(_tile_coords_for_bbox(bbox, zoom_levels[0])) * len(target_dates) * len(temporal_layers)
     overlay_tasks = len(official_layers) if settings.preload_enabled else 0
     progress_total = 1 + len(target_dates) + critical_tile_tasks + overlay_tasks
     if len(zoom_levels) > 1:
-        progress_total += sum(len(_tile_coords_for_bbox(bbox, zoom_levels[1])) * len(target_dates) * len(temporal_layers))
+        progress_total += len(_tile_coords_for_bbox(bbox, zoom_levels[1])) * len(target_dates) * len(temporal_layers)
 
     details = _build_initial_details(
         temporal_layers=temporal_layers,

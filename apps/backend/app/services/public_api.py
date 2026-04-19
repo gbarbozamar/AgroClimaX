@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import math
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -151,6 +152,19 @@ TRANSPARENT_PNG = (
     b"\x00\x00\x00\x0bIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00"
     b"\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
 )
+
+logger = logging.getLogger(__name__)
+
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+_MIN_VALID_TILE_BYTES = 1024
+
+
+def _is_valid_tile_png(data: bytes | None) -> bool:
+    """PNG tile sanity check: signature + size above the transparent-fallback threshold."""
+    if not data or len(data) < _MIN_VALID_TILE_BYTES:
+        return False
+    return data[:8] == _PNG_SIGNATURE
+
 
 TILE_MIN_ZOOM = 7
 TILE_MAX_ZOOM = 17
@@ -542,13 +556,28 @@ async def fetch_tile_png(
 
     cache_path = TILE_CACHE_DIR / f"{resolved_layer}_{source_date.isoformat()}_{z}_{x}_{y}.png"
     if cache_path.exists():
-        return cache_path.read_bytes()
+        cached_bytes = cache_path.read_bytes()
+        if _is_valid_tile_png(cached_bytes):
+            return cached_bytes
+        logger.warning(
+            "Discarding invalid disk tile cache layer=%s z=%s x=%s y=%s size=%d",
+            resolved_layer, z, x, y, len(cached_bytes),
+        )
+        try:
+            cache_path.unlink()
+        except OSError:
+            pass
 
     tile_bucket_key = _tile_bucket_key(resolved_layer, z, x, y, target_date=source_date)
     bucket_cached = await storage_get_bytes(tile_bucket_key)
-    if bucket_cached:
+    if bucket_cached and _is_valid_tile_png(bucket_cached[0]):
         cache_path.write_bytes(bucket_cached[0])
         return bucket_cached[0]
+    if bucket_cached:
+        logger.warning(
+            "Discarding invalid bucket tile cache layer=%s z=%s x=%s y=%s size=%d",
+            resolved_layer, z, x, y, len(bucket_cached[0]),
+        )
 
     if legacy_get_token is None or not settings.copernicus_enabled:
         return TRANSPARENT_PNG
@@ -604,10 +633,20 @@ async def fetch_tile_png(
             )
         )
         if response.status_code == 200 and "image" in response.headers.get("content-type", ""):
-            cache_path.write_bytes(response.content)
-            await storage_put_bytes(tile_bucket_key, response.content, content_type="image/png")
-            return response.content
-    except Exception:
+            if _is_valid_tile_png(response.content):
+                cache_path.write_bytes(response.content)
+                await storage_put_bytes(tile_bucket_key, response.content, content_type="image/png")
+                return response.content
+            logger.warning(
+                "Rejecting suspicious Copernicus tile layer=%s z=%s x=%s y=%s size=%d status=%s",
+                resolved_layer, z, x, y, len(response.content), response.status_code,
+            )
+            return TRANSPARENT_PNG
+    except Exception as exc:
+        logger.warning(
+            "fetch_tile_png exception layer=%s z=%s x=%s y=%s exc=%s",
+            resolved_layer, z, x, y, type(exc).__name__,
+        )
         return TRANSPARENT_PNG
 
     return TRANSPARENT_PNG
@@ -918,7 +957,7 @@ async def _read_coneat_cache_db(cache_key: str, default_content_type: str) -> tu
         if row is None:
             return None
         if row.expires_at:
-            now = datetime.now(row.expires_at.tzinfo) if row.expires_at.tzinfo else datetime.utcnow()
+            now = datetime.now(row.expires_at.tzinfo) if row.expires_at.tzinfo else datetime.now(timezone.utc)
             if row.expires_at < now:
                 await session.delete(row)
                 await session.commit()
@@ -949,7 +988,7 @@ async def _write_coneat_cache_db(
                 content_type=content_type,
                 content=content,
                 content_hash=hashlib.sha1(content).hexdigest(),
-                expires_at=datetime.utcnow() + timedelta(hours=settings.coneat_cache_ttl_hours),
+                expires_at=datetime.now(timezone.utc) + timedelta(hours=settings.coneat_cache_ttl_hours),
                 metadata_extra={"params": normalized},
             )
             session.add(row)
@@ -958,7 +997,7 @@ async def _write_coneat_cache_db(
             row.content_type = content_type
             row.content = content
             row.content_hash = hashlib.sha1(content).hexdigest()
-            row.expires_at = datetime.utcnow() + timedelta(hours=settings.coneat_cache_ttl_hours)
+            row.expires_at = datetime.now(timezone.utc) + timedelta(hours=settings.coneat_cache_ttl_hours)
             row.metadata_extra = {"params": normalized}
         await session.commit()
 
@@ -1231,7 +1270,7 @@ async def _read_official_overlay_cache_db(
         if row is None:
             return None
         if row.expires_at:
-            now = datetime.now(row.expires_at.tzinfo) if row.expires_at.tzinfo else datetime.utcnow()
+            now = datetime.now(row.expires_at.tzinfo) if row.expires_at.tzinfo else datetime.now(timezone.utc)
             if row.expires_at < now:
                 await session.delete(row)
                 await session.commit()
@@ -1263,7 +1302,7 @@ async def _write_official_overlay_cache_db(
                 content_type=content_type,
                 content=content,
                 content_hash=hashlib.sha1(content).hexdigest(),
-                expires_at=datetime.utcnow() + timedelta(hours=settings.coneat_cache_ttl_hours),
+                expires_at=datetime.now(timezone.utc) + timedelta(hours=settings.coneat_cache_ttl_hours),
                 metadata_extra={"params": params, "overlay_id": overlay_id},
             )
             session.add(row)
@@ -1272,7 +1311,7 @@ async def _write_official_overlay_cache_db(
             row.content_type = content_type
             row.content = content
             row.content_hash = hashlib.sha1(content).hexdigest()
-            row.expires_at = datetime.utcnow() + timedelta(hours=settings.coneat_cache_ttl_hours)
+            row.expires_at = datetime.now(timezone.utc) + timedelta(hours=settings.coneat_cache_ttl_hours)
             row.metadata_extra = {"params": params, "overlay_id": overlay_id}
         await session.commit()
 

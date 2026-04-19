@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,5 +26,5 @@ async def create_measurement(
     x_field_api_key: str | None = Header(None),
 ):
     _validate_api_key(x_field_api_key)
-    payload.setdefault("observed_at", datetime.utcnow().isoformat())
+    payload.setdefault("observed_at", datetime.now(timezone.utc).isoformat())
     return await ingest_ground_truth_measurement(db, payload)

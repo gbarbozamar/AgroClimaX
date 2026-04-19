@@ -130,10 +130,14 @@ class ConeatProxyTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(day_payload["warm_available"])
 
     async def test_temporal_tile_uses_resolved_timeline_source_window(self):
+        # Must be >= 1 KB with a valid PNG signature so fetch_tile_png caches it
+        # instead of rejecting it as a suspicious placeholder.
+        _valid_png = b"\x89PNG\r\n\x1a\n" + b"\xAA" * 2048
+
         class _FakeResponse:
             status_code = 200
             headers = {"content-type": "image/png"}
-            content = b"png"
+            content = _valid_png
 
         captured: dict[str, object] = {}
 
@@ -157,7 +161,7 @@ class ConeatProxyTests(unittest.IsolatedAsyncioTestCase):
                                         frame_role="primary",
                                     )
 
-        self.assertEqual(content, b"png")
+        self.assertEqual(content, _valid_png)
         payload = captured["payload"]
         time_range = payload["input"]["data"][0]["dataFilter"]["timeRange"]
         self.assertEqual(time_range["from"], "2025-12-20T00:00:00Z")
