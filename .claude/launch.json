@@ -6,6 +6,12 @@
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "http.server", "3100", "--directory", "apps/frontend"],
       "port": 3100
+    },
+    {
+      "name": "agroclimax-backend",
+      "runtimeExecutable": "C:\\Users\\barbo\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe",
+      "runtimeArgs": ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8001", "--app-dir", "apps/backend"],
+      "port": 8001
     }
   ]
 }

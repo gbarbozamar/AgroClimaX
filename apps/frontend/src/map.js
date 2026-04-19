@@ -1,5 +1,5 @@
-import { API_BASE, API_V1, fetchTimelineFrames, startTimelineWindowPreload, startViewportPreload } from './api.js?v=20260404-8';
-import { store, setStore } from './state.js?v=20260404-8';
+import { API_BASE, API_V1, fetchNotificationEvents, fetchTimelineFrames, startTimelineWindowPreload, startViewportPreload } from './api.js?v=20260419-1';
+import { store, setStore } from './state.js?v=20260419-1';
 
 const CONEAT_MIN_VISIBLE_ZOOM = 11;
 const INITIAL_VIEW = { center: [-32.8, -56.0], zoom: 7 };
@@ -953,6 +953,81 @@ function renderTimelineControls() {
   else if (store.timelineBuffering) statusLabel.textContent = 'Buffering...';
   else if (!enabled) statusLabel.textContent = 'Sin capas temporales activas';
   else statusLabel.textContent = 'Lista';
+  renderTimelineEventDots();
+}
+
+function currentTimelineEventScope() {
+  const department = store.selectedDepartment || null;
+  const unitId = store.selectedUnitId || store.selectedProductiveId || store.selectedSectionId || store.selectedHexId || null;
+  return { department, unitId };
+}
+
+function timelineEventsCacheKey(scope) {
+  return `${scope.department || 'nacional'}::${scope.unitId || 'all'}`;
+}
+
+export async function ensureTimelineEventsLoaded() {
+  const scope = currentTimelineEventScope();
+  const key = timelineEventsCacheKey(scope);
+  if (store.timelineEventsKey === key && Array.isArray(store.timelineEvents) && store.timelineEvents.length) return store.timelineEvents;
+  if (store.timelineEventsLoading) return store.timelineEvents || [];
+  setStore({ timelineEventsLoading: true });
+  try {
+    const payload = await fetchNotificationEvents({ department: scope.department, unitId: scope.unitId, limit: 100 });
+    const events = Array.isArray(payload?.datos) ? payload.datos : [];
+    setStore({ timelineEvents: events, timelineEventsKey: key, timelineEventsLoading: false });
+    renderTimelineEventDots();
+    return events;
+  } catch (error) {
+    console.warn('No se pudieron cargar eventos de timeline:', error);
+    setStore({ timelineEvents: [], timelineEventsKey: key, timelineEventsLoading: false });
+    return [];
+  }
+}
+
+function renderTimelineEventDots() {
+  const controls = document.querySelector('.map-timeline-controls');
+  const slider = document.getElementById('map-timeline-slider');
+  if (!controls || !slider) return;
+  let track = controls.querySelector('.timeline-events-track');
+  if (!track) {
+    track = document.createElement('div');
+    track.className = 'timeline-events-track';
+    // Insertar justo despues del slider
+    slider.insertAdjacentElement('afterend', track);
+  }
+  const events = Array.isArray(store.timelineEvents) ? store.timelineEvents : [];
+  if (!events.length) { track.innerHTML = ''; return; }
+  const startIdx = 0;
+  const endIdx = TIMELINE_WINDOW_DAYS - 1;
+  const start = parseIsoDate(startTimelineDate());
+  if (!start) { track.innerHTML = ''; return; }
+  const fragments = events.slice(0, 60).map((evt) => {
+    const rawDate = evt?.alert_event?.fecha || evt?.created_at || evt?.observed_at;
+    if (!rawDate) return '';
+    const when = new Date(rawDate);
+    if (Number.isNaN(when.getTime())) return '';
+    const dayDiff = Math.round((when.getTime() - start.getTime()) / 86400000);
+    if (dayDiff < startIdx || dayDiff > endIdx) return '';
+    const pct = (dayDiff / endIdx) * 100;
+    const severity = evt?.state || evt?.alert_event?.nivel_nombre || evt?.nivel_nombre || 'Normal';
+    const title = evt?.title || evt?.alert_event?.descripcion || evt?.body || severity;
+    const dateStr = when.toISOString().slice(0, 10);
+    return `<span class="timeline-event" style="left:${pct.toFixed(2)}%" data-severity="${escapeInlineLabel(severity)}" data-date="${dateStr}" title="${escapeInlineLabel(`${dateStr} — ${title}`)}"><span class="timeline-event-tooltip">${escapeInlineLabel(`${dateStr} · ${severity}`)}</span></span>`;
+  }).join('');
+  track.innerHTML = fragments;
+  // Click handler: saltar a la fecha
+  track.querySelectorAll('.timeline-event').forEach((dot) => {
+    dot.addEventListener('click', () => {
+      const targetDate = dot.dataset.date;
+      if (!targetDate) return;
+      if (typeof store.onTimelineDateChange === 'function') {
+        store.onTimelineDateChange({ date: targetDate, enabled: true });
+      }
+      setStore({ timelineDate: targetDate, timelineEnabled: true });
+      renderTimelineControls();
+    });
+  });
 }
 
 function clearTimelinePlayback() {
@@ -2180,10 +2255,10 @@ function departmentStyle(props, selected = false) {
   const color = departmentColor(props);
   return {
     color: selected ? '#7dc7ff' : color,
-    weight: selected ? 3 : 1.5,
-    opacity: selected ? 1 : Math.max(0.55, opacity),
+    weight: selected ? 3 : 2,
+    opacity: selected ? 1 : Math.max(0.75, opacity),
     fillColor: color,
-    fillOpacity: selected ? Math.min(0.45, opacity * 0.45) : Math.min(0.22, opacity * 0.22),
+    fillOpacity: selected ? Math.min(0.55, opacity * 0.6) : Math.min(0.4, opacity * 0.45),
   };
 }
 

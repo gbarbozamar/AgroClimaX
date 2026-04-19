@@ -1,4 +1,4 @@
-import { store } from './state.js?v=20260404-8';
+import { store } from './state.js?v=20260419-1';
 
 const params = new URLSearchParams(window.location.search);
 const isHttpOrigin = window.location.protocol === 'http:' || window.location.protocol === 'https:';
@@ -211,6 +211,14 @@ export async function startTimelineWindowPreload(payload = {}) {
 export async function fetchPreloadStatus(runKey) {
   const url = new URL(`${API_V1}/preload/status`, window.location.origin);
   url.searchParams.set('run_key', runKey);
+  return fetchJson(url.toString().replace(window.location.origin, ''));
+}
+
+export async function fetchNotificationEvents({ unitId = null, department = null, limit = 50 } = {}) {
+  const url = new URL(`${API_V1}/notificaciones/eventos`, window.location.origin);
+  if (unitId) url.searchParams.set('unit_id', unitId);
+  if (department) url.searchParams.set('department', department);
+  if (limit) url.searchParams.set('limit', String(limit));
   return fetchJson(url.toString().replace(window.location.origin, ''));
 }
 

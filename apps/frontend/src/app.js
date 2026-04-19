@@ -1,11 +1,12 @@
-import { API_BASE, API_V1, downloadJsonFile, fetchCustomState, fetchDepartmentLayers, fetchHexagonsGeojson, fetchHistory, fetchMapOverlayCatalog, fetchPreloadStatus, fetchProductiveTemplate, fetchProductiveUnits, fetchProductiveUnitsGeojson, fetchScopeState, fetchSectionsGeojson, fetchTimelineContext, fetchUnits, fetchWeatherForecast, startStartupPreload, uploadProductiveUnitsFile } from './api.js?v=20260404-8';
-import { initAuth } from './auth.js?v=20260329-7';
-import { clearDepartmentLayer, clearHexLayer, clearProductiveLayer, clearSectionsLayer, highlightDepartment, highlightHex, highlightProductive, highlightSection, initMap, isLayerActive, refreshFarmPrivateOverlays, setAvailableOverlays, setHexesOnMap, setDepartmentsOnMap, setMapLayerChangeHandler, setProductivesOnMap, setSectionsOnMap, updateFocus } from './map.js?v=20260404-8';
-import { initFieldsPanel } from './fields.js?v=20260404-8';
-import { initProfilePanel, refreshProfilePanel } from './profile.js?v=20260403-2';
-import { normalizeState, populateDepartmentSelect, renderChart, renderDashboard, renderDrivers, renderError, renderForecast, renderHistory, renderLoading, renderWeatherCards } from './render.js?v=20260327-15';
-import { initSettingsPanel } from './settings.js?v=20260331-1';
-import { setStore, store } from './state.js?v=20260404-8';
+import { API_BASE, API_V1, downloadJsonFile, fetchCustomState, fetchDepartmentLayers, fetchHexagonsGeojson, fetchHistory, fetchMapOverlayCatalog, fetchPreloadStatus, fetchProductiveTemplate, fetchProductiveUnits, fetchProductiveUnitsGeojson, fetchScopeState, fetchSectionsGeojson, fetchTimelineContext, fetchUnits, fetchWeatherForecast, startStartupPreload, uploadProductiveUnitsFile } from './api.js?v=20260419-1';
+import { initAuth } from './auth.js?v=20260419-1';
+import { clearDepartmentLayer, clearHexLayer, clearProductiveLayer, clearSectionsLayer, ensureTimelineEventsLoaded, highlightDepartment, highlightHex, highlightProductive, highlightSection, initMap, isLayerActive, refreshFarmPrivateOverlays, setAvailableOverlays, setHexesOnMap, setDepartmentsOnMap, setMapLayerChangeHandler, setProductivesOnMap, setSectionsOnMap, updateFocus } from './map.js?v=20260419-1';
+import { initFieldsPanel } from './fields.js?v=20260419-1';
+import { initSidebar, syncSidebar } from './sidebar.js?v=20260419-1';
+import { initProfilePanel, refreshProfilePanel } from './profile.js?v=20260419-1';
+import { normalizeState, populateDepartmentSelect, renderChart, renderDashboard, renderDrivers, renderError, renderForecast, renderHistory, renderLoading, renderWeatherCards } from './render.js?v=20260419-1';
+import { initSettingsPanel } from './settings.js?v=20260419-1';
+import { setStore, store } from './state.js?v=20260419-1';
 
 setStore({ apiBase: API_BASE, apiV1: API_V1 });
 const TIMELINE_CONTEXT_CACHE = new Map();
@@ -289,11 +290,13 @@ function continuePreloadMonitoring(runKey) {
     try {
       const latest = await pollPreloadRun(runKey, { timeoutMs: 45000, stopOnCritical: false });
       if (latest?.status === 'success' || latest?.status === 'failed') {
-        setStore({ preloadMiniVisible: false });
+        setStore({ preloadMiniVisible: false, preloadRunKey: null });
         renderPreloadUi();
       }
     } catch (error) {
       console.warn('No se pudo completar el monitoreo de precarga:', error);
+      setStore({ preloadMiniVisible: false, preloadRunKey: null });
+      renderPreloadUi();
     }
   })();
 }
@@ -303,6 +306,7 @@ function releasePreloadOverlay() {
   setStore({
     preloadVisible: false,
     preloadMiniVisible: stillRunning,
+    preloadRunKey: stillRunning ? store.preloadRunKey : null,
   });
   renderPreloadUi();
 }
@@ -470,6 +474,7 @@ function applyDashboardModel(model, { renderForecastPanel = true, renderWeather 
   renderDashboard(model);
   renderDrivers(model);
   renderHistory(model);
+  syncSidebar();
   setStore({
     chart: renderChart(model, store.chart),
     currentModel: model,
@@ -1110,7 +1115,9 @@ async function bootstrap() {
       store.map.setView(preservedCenter, preservedZoom, { animate: false });
       refreshFarmPrivateOverlays();
     }
+    syncSidebar();
   });
+  initSidebar();
 
   setFrontendPreloadStage('catalog', 'running');
   try {
@@ -1196,6 +1203,7 @@ async function bootstrap() {
   initProfilePanel();
   await refreshProfilePanel();
   setProductiveImportStatus('Subi un .geojson o .zip shapefile para activar la capa Predios.', 'muted');
+  ensureTimelineEventsLoaded().catch(() => undefined);
 }
 
 document.addEventListener('DOMContentLoaded', bootstrap);
