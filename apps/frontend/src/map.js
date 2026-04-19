@@ -1,5 +1,5 @@
-import { API_BASE, API_V1, fetchNotificationEvents, fetchTimelineFrames, startTimelineWindowPreload, startViewportPreload } from './api.js?v=20260419-1';
-import { store, setStore } from './state.js?v=20260419-1';
+import { API_BASE, API_V1, fetchNotificationEvents, fetchTimelineFrames, startTimelineWindowPreload, startViewportPreload } from './api.js?v=20260419-2';
+import { store, setStore } from './state.js?v=20260419-2';
 
 const CONEAT_MIN_VISIBLE_ZOOM = 11;
 const INITIAL_VIEW = { center: [-32.8, -56.0], zoom: 7 };
@@ -2697,7 +2697,12 @@ export function highlightHex(hexId, fitBounds = false) {
 
 export function updateFocus(model) {
   if (!store.map) return;
-  const preserveFarmViewport = Boolean(store.selectedFieldId || store.selectedPaddockId);
+  // Preserve viewport whenever the user is working on a farm (establecimiento, field or paddock).
+  // A fresh establishment may have no field/paddock yet but the padrón was already zoomed in by
+  // setFarmGuideOnMap — we must not undo that zoom from a downstream loadSelection call.
+  const preserveFarmViewport = Boolean(
+    store.selectedEstablishmentId || store.selectedFieldId || store.selectedPaddockId || store.selectedPadronSearch
+  );
   if (store.focusMarker) store.map.removeLayer(store.focusMarker);
   if (model.unitLat && model.unitLon) {
     store.focusMarker = window.L.marker([model.unitLat, model.unitLon]).addTo(store.map);

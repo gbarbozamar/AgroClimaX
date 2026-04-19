@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
+import logging
 import secrets
 from typing import Any
 from urllib.parse import urlencode
@@ -20,8 +22,10 @@ from app.models.auth import AppUser, AuthSession
 from app.services.profile import get_profile_status
 
 
+logger = logging.getLogger(__name__)
 SAFE_HTTP_METHODS = {"GET", "HEAD", "OPTIONS"}
 _DISCOVERY_CACHE: dict[str, Any] | None = None
+_DISCOVERY_LOCK: asyncio.Lock = asyncio.Lock()
 GOOGLE_HTTP_TIMEOUT_SECONDS = 8
 
 
@@ -125,11 +129,15 @@ async def get_google_discovery_document() -> dict[str, Any]:
     global _DISCOVERY_CACHE
     if _DISCOVERY_CACHE is not None:
         return _DISCOVERY_CACHE
-    async with httpx.AsyncClient(timeout=GOOGLE_HTTP_TIMEOUT_SECONDS) as client:
-        response = await client.get(settings.google_discovery_url)
-        response.raise_for_status()
-    _DISCOVERY_CACHE = response.json()
-    return _DISCOVERY_CACHE
+    async with _DISCOVERY_LOCK:
+        # Re-check after acquiring the lock to avoid a stampede of parallel fetches.
+        if _DISCOVERY_CACHE is not None:
+            return _DISCOVERY_CACHE
+        async with httpx.AsyncClient(timeout=GOOGLE_HTTP_TIMEOUT_SECONDS) as client:
+            response = await client.get(settings.google_discovery_url)
+            response.raise_for_status()
+        _DISCOVERY_CACHE = response.json()
+        return _DISCOVERY_CACHE
 
 
 async def build_google_login_redirect(request: Request, next_path: str | None = None) -> RedirectResponse:
@@ -139,6 +147,7 @@ async def build_google_login_redirect(request: Request, next_path: str | None = 
     try:
         discovery = await get_google_discovery_document()
     except Exception:
+        logger.exception("Google OIDC discovery document unavailable")
         return RedirectResponse(
             url=f"{settings.auth_login_success_redirect}?auth_error=google_discovery_unavailable",
             status_code=302,
@@ -295,6 +304,7 @@ async def resolve_google_callback(
         user = await _upsert_google_user(db, profile)
         session, raw_token = await create_auth_session(db, request, user)
     except Exception:
+        logger.exception("Google OAuth callback failed while completing the login handshake")
         return RedirectResponse(url=f"{settings.auth_login_success_redirect}?auth_error=google_login_failed", status_code=302)
 
     response = RedirectResponse(url=pending.get("next") or settings.auth_login_success_redirect, status_code=302)

@@ -5,8 +5,8 @@
  * agrupados por categoria, con shortcuts a Alertas, Campos, Timeline y Perfil.
  * Reusa la logica existente via window.toggleMapLayer / store.activeLayers.
  */
-import { store, setStore } from './state.js?v=20260419-1';
-import { profilePageUrl } from './api.js?v=20260419-1';
+import { store, setStore } from './state.js?v=20260419-2';
+import { profilePageUrl } from './api.js?v=20260419-2';
 
 const COLLAPSE_STORAGE_KEY = 'agroclimax.sidebarCollapsed';
 
