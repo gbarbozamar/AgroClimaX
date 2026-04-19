@@ -10,7 +10,8 @@
     {
       "name": "agroclimax-backend",
       "runtimeExecutable": "C:\\Users\\barbo\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe",
-      "runtimeArgs": ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8001", "--app-dir", "apps/backend"],
+      "runtimeArgs": ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8001"],
+      "cwd": "apps/backend",
       "port": 8001
     }
   ]
