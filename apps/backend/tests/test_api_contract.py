@@ -158,7 +158,15 @@ class ApiContractTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["content-type"], "image/png")
         self.assertEqual(response.content, b"timeline-png")
-        fetch_tile.assert_awaited_once_with("ndmi", 7, 45, 63, target_date=date(2026, 4, 1), frame_role="primary")
+        # Test laxo: solo verificar args principales; los kwargs clip_scope/clip_ref/db se agregaron
+        # como opcionales con defaults None y no hay que asertarlos.
+        fetch_tile.assert_awaited_once()
+        call_args = fetch_tile.await_args
+        self.assertEqual(call_args.args, ("ndmi", 7, 45, 63))
+        self.assertEqual(call_args.kwargs.get("target_date"), date(2026, 4, 1))
+        self.assertEqual(call_args.kwargs.get("frame_role"), "primary")
+        self.assertIsNone(call_args.kwargs.get("clip_scope"))
+        self.assertIsNone(call_args.kwargs.get("clip_ref"))
 
     def test_v1_capas_departamentos_contract(self):
         payload = {

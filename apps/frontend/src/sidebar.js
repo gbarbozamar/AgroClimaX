@@ -9,9 +9,10 @@
  * Reusa toda la lógica ya existente (window.toggleMapLayer, store.activeLayers,
  * window.startDrawing, profilePageUrl) sin duplicar estado.
  */
-import { store, setStore } from './state.js?v=20260420-3';
-import { profilePageUrl } from './api.js?v=20260420-3';
-import { diagnostics } from './diagnostics.js?v=20260420-3';
+import { store, setStore } from './state.js?v=20260420-4';
+import { profilePageUrl } from './api.js?v=20260420-4';
+import { diagnostics } from './diagnostics.js?v=20260420-4';
+import { currentScopeLabel, resetToNacional } from './scopeController.js?v=20260420-4';
 
 const COLLAPSE_STORAGE_KEY = 'agroclimax.sidebarCollapsed';
 const ACTIVE_SECTION_KEY = 'agroclimax.sidebarActive';
@@ -394,6 +395,26 @@ function renderActiveSection() {
   asideRef.querySelectorAll('.sb-rail-btn[data-section]').forEach((btn) => {
     btn.classList.toggle('is-active', btn.dataset.section === section.id);
   });
+  renderScopeFooter();
+}
+
+function renderScopeFooter() {
+  if (!asideRef) return;
+  const foot = asideRef.querySelector('[data-sb-foot]');
+  if (!foot) return;
+  const scope = store.clipScope || 'nacional';
+  const label = currentScopeLabel();
+  const isNacional = scope === 'nacional';
+  foot.innerHTML = `
+    <div class="sb-scope-chip" data-scope="${escapeHtml(scope)}">
+      <span class="sb-scope-dot"></span>
+      <span class="sb-scope-label">Clip: ${escapeHtml(label)}</span>
+      ${isNacional ? '' : '<button type="button" class="sb-scope-reset" data-sb-action="reset-scope" title="Ampliar a Uruguay">↺</button>'}
+    </div>
+  `;
+  foot.querySelector('[data-sb-action="reset-scope"]')?.addEventListener('click', () => {
+    resetToNacional().catch(() => { /* noop */ });
+  });
 }
 
 function setActiveSection(id) {
@@ -434,6 +455,8 @@ function wireRail() {
 
 export function syncSidebar() {
   if (!asideRef) return;
+  // El chip de scope se actualiza siempre (es barato y refleja cambios de scope)
+  renderScopeFooter();
   // Re-render solo la sección activa si es dinámica
   const section = SECTIONS.find((s) => s.id === activeSectionId);
   if (section?.dynamic) {

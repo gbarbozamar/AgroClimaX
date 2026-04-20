@@ -100,6 +100,11 @@ export const store = {
   authCsrfToken: null,
   authSession: null,
   authReady: false,
+  // Clipping multi-nivel
+  clipScope: 'nacional',
+  clipRef: null,
+  clipMaskLayer: null,
+  scopeGeometryCache: new Map(),
 };
 
 export function setStore(patch) {

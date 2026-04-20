@@ -537,10 +537,38 @@ async def fetch_tile_png(
     *,
     target_date: date | None = None,
     frame_role: str | None = None,
+    clip_scope: str | None = None,
+    clip_ref: str | None = None,
+    db: "AsyncSession | None" = None,
+    user_id: str | None = None,
 ) -> bytes:
     resolved_layer = resolve_temporal_layer_id(layer)
     if resolved_layer not in EVALSCRIPTS or z < TILE_MIN_ZOOM or z > TILE_MAX_ZOOM:
         return TRANSPARENT_PNG
+
+    # Resolver scope geometry ANTES del cache para poder hacer early-exit.
+    clip_geom = None
+    clip_suffix = ""
+    if clip_scope:
+        from app.services import aoi_tile_clip
+        if db is None:
+            logger.warning("clip_scope=%s pero no se pasó db session; ignorando", clip_scope)
+        else:
+            try:
+                clip_geom = await aoi_tile_clip.resolve_scope_geometry(
+                    db, clip_scope, clip_ref, user_id=user_id
+                )
+                clip_suffix = f"__clip-{clip_scope}-{clip_ref or 'all'}"
+                # Early exit: tile disjunto del scope -> transparente sin cachear.
+                if not aoi_tile_clip.tile_intersects(z, x, y, clip_geom):
+                    return TRANSPARENT_PNG
+            except aoi_tile_clip.ScopeAuthError:
+                logger.warning("ScopeAuthError on field scope ref=%s", clip_ref)
+                return TRANSPARENT_PNG
+            except aoi_tile_clip.ScopeNotFoundError as exc:
+                logger.warning("Scope not found: %s", exc)
+                clip_geom = None
+                clip_suffix = ""
 
     effective_date = _effective_source_date(target_date)
     source_metadata = await _resolve_timeline_source_metadata(resolved_layer, effective_date)
@@ -554,7 +582,7 @@ async def fetch_tile_png(
     except Exception:
         source_date = effective_date
 
-    cache_path = TILE_CACHE_DIR / f"{resolved_layer}_{source_date.isoformat()}_{z}_{x}_{y}.png"
+    cache_path = TILE_CACHE_DIR / f"{resolved_layer}_{source_date.isoformat()}_{z}_{x}_{y}{clip_suffix}.png"
     if cache_path.exists():
         cached_bytes = cache_path.read_bytes()
         if _is_valid_tile_png(cached_bytes):
@@ -634,9 +662,23 @@ async def fetch_tile_png(
         )
         if response.status_code == 200 and "image" in response.headers.get("content-type", ""):
             if _is_valid_tile_png(response.content):
-                cache_path.write_bytes(response.content)
-                await storage_put_bytes(tile_bucket_key, response.content, content_type="image/png")
-                return response.content
+                final_bytes = response.content
+                # Clip raster si scope activo y tile parcial (no fully contained).
+                if clip_geom is not None:
+                    from app.services import aoi_tile_clip
+                    if not aoi_tile_clip.tile_fully_contained(z, x, y, clip_geom):
+                        try:
+                            final_bytes = aoi_tile_clip.clip_png_tile_to_aoi(
+                                response.content, z, x, y, clip_geom
+                            )
+                        except Exception as exc:
+                            logger.warning(
+                                "clip_png_tile_to_aoi fallo layer=%s z=%s x=%s y=%s exc=%s",
+                                resolved_layer, z, x, y, exc,
+                            )
+                cache_path.write_bytes(final_bytes)
+                await storage_put_bytes(tile_bucket_key, final_bytes, content_type="image/png")
+                return final_bytes
             logger.warning(
                 "Rejecting suspicious Copernicus tile layer=%s z=%s x=%s y=%s size=%d status=%s",
                 resolved_layer, z, x, y, len(response.content), response.status_code,

@@ -1,5 +1,5 @@
-import { API_BASE, API_V1, fetchNotificationEvents, fetchTimelineFrames, startTimelineWindowPreload, startViewportPreload } from './api.js?v=20260420-3';
-import { store, setStore } from './state.js?v=20260420-3';
+import { API_BASE, API_V1, fetchNotificationEvents, fetchTimelineFrames, startTimelineWindowPreload, startViewportPreload } from './api.js?v=20260420-4';
+import { store, setStore } from './state.js?v=20260420-4';
 
 const CONEAT_MIN_VISIBLE_ZOOM = 11;
 const INITIAL_VIEW = { center: [-32.8, -56.0], zoom: 7 };
@@ -496,8 +496,35 @@ function buildAnalyticTileUrl(layerName, sourceDate = store.timelineDate || toda
   const params = new URLSearchParams();
   if (sourceDate) params.set('source_date', sourceDate);
   if (frameRole) params.set('frame_role', frameRole);
+  // Si el usuario tiene un scope activo (depto/seccion/field), le pasamos al backend
+  // para que haga early-exit/clip raster. Nacional no se envia porque es el default.
+  const scope = store.clipScope;
+  const ref = store.clipRef;
+  if (scope && scope !== 'nacional' && scope !== 'field') {
+    params.set('clip_scope', scope);
+    if (ref) params.set('clip_ref', ref);
+  }
   const query = params.toString();
   return `${API_BASE}/tiles/${layerName}/{z}/{x}/{y}.png${query ? `?${query}` : ''}`;
+}
+
+/**
+ * Redibuja todas las capas analíticas activas con la URL actual de tiles.
+ * Se llama tras un cambio de scope para que los tiles se re-pidan con
+ * los nuevos query params clip_scope/clip_ref.
+ */
+export function redrawAllAnalyticLayers() {
+  const instances = store.layerInstances || {};
+  Object.entries(instances).forEach(([layerId, instance]) => {
+    const def = instance?.definition;
+    if (!def?.tileLayerName) return;
+    const primaryUrl = buildAnalyticTileUrl(def.tileLayerName, store.timelineDate || todayIsoDate(), 'primary');
+    try { instance.primaryLayer?.setUrl?.(primaryUrl, false); } catch (_) { /* noop */ }
+    if (instance.secondaryLayer) {
+      const secondaryUrl = buildAnalyticTileUrl(def.tileLayerName, store.timelineDate || todayIsoDate(), 'secondary');
+      try { instance.secondaryLayer.setUrl(secondaryUrl, false); } catch (_) { /* noop */ }
+    }
+  });
 }
 
 function groupDefinitionsByCategory() {
@@ -2418,6 +2445,10 @@ export async function initMap(onPolygonDraw, onDepartmentSelect, onSectionSelect
     minZoom: URUGUAY_MIN_ZOOM,
     maxZoom: URUGUAY_MAX_ZOOM,
   }).setView(INITIAL_VIEW.center, INITIAL_VIEW.zoom);
+  // Pane de la máscara de clipping (entre OSM=200 y satellitePane=380)
+  map.createPane('clipMaskPane');
+  map.getPane('clipMaskPane').style.zIndex = 375;
+  map.getPane('clipMaskPane').style.pointerEvents = 'none';
   map.createPane('satellitePane');
   map.getPane('satellitePane').style.zIndex = 380;
   map.createPane('officialOverlayPane');

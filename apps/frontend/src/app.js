@@ -1,13 +1,15 @@
-import { API_BASE, API_V1, downloadJsonFile, fetchCustomState, fetchDepartmentLayers, fetchHexagonsGeojson, fetchHistory, fetchMapOverlayCatalog, fetchPreloadStatus, fetchProductiveTemplate, fetchProductiveUnits, fetchProductiveUnitsGeojson, fetchScopeState, fetchSectionsGeojson, fetchTimelineContext, fetchUnits, fetchWeatherForecast, startStartupPreload, uploadProductiveUnitsFile } from './api.js?v=20260420-3';
-import { initAuth } from './auth.js?v=20260420-3';
-import { clearDepartmentLayer, clearHexLayer, clearProductiveLayer, clearSectionsLayer, ensureTimelineEventsLoaded, highlightDepartment, highlightHex, highlightProductive, highlightSection, initMap, isLayerActive, refreshFarmPrivateOverlays, setAvailableOverlays, setHexesOnMap, setDepartmentsOnMap, setMapLayerChangeHandler, setProductivesOnMap, setSectionsOnMap, updateFocus } from './map.js?v=20260420-3';
-import { initFieldsPanel } from './fields.js?v=20260420-3';
-import { initSidebar, syncSidebar } from './sidebar.js?v=20260420-3';
-import { diagnostics, initDiagnostics } from './diagnostics.js?v=20260420-3';
-import { initProfilePanel, refreshProfilePanel } from './profile.js?v=20260420-3';
-import { normalizeState, populateDepartmentSelect, renderChart, renderDashboard, renderDrivers, renderError, renderForecast, renderHistory, renderLoading, renderWeatherCards } from './render.js?v=20260420-3';
-import { initSettingsPanel } from './settings.js?v=20260420-3';
-import { setStore, store } from './state.js?v=20260420-3';
+import { API_BASE, API_V1, downloadJsonFile, fetchCustomState, fetchDepartmentLayers, fetchHexagonsGeojson, fetchHistory, fetchMapOverlayCatalog, fetchPreloadStatus, fetchProductiveTemplate, fetchProductiveUnits, fetchProductiveUnitsGeojson, fetchScopeState, fetchSectionsGeojson, fetchTimelineContext, fetchUnits, fetchWeatherForecast, startStartupPreload, uploadProductiveUnitsFile } from './api.js?v=20260420-4';
+import { initAuth } from './auth.js?v=20260420-4';
+import { clearDepartmentLayer, clearHexLayer, clearProductiveLayer, clearSectionsLayer, ensureTimelineEventsLoaded, highlightDepartment, highlightHex, highlightProductive, highlightSection, initMap, isLayerActive, refreshFarmPrivateOverlays, setAvailableOverlays, setHexesOnMap, setDepartmentsOnMap, setMapLayerChangeHandler, setProductivesOnMap, setSectionsOnMap, updateFocus } from './map.js?v=20260420-4';
+import { initFieldsPanel } from './fields.js?v=20260420-4';
+import { initSidebar, syncSidebar } from './sidebar.js?v=20260420-4';
+import { diagnostics, initDiagnostics } from './diagnostics.js?v=20260420-4';
+import { setScope, resetToNacional } from './scopeController.js?v=20260420-4';
+import { redrawAllAnalyticLayers } from './map.js?v=20260420-4';
+import { initProfilePanel, refreshProfilePanel } from './profile.js?v=20260420-4';
+import { normalizeState, populateDepartmentSelect, renderChart, renderDashboard, renderDrivers, renderError, renderForecast, renderHistory, renderLoading, renderWeatherCards } from './render.js?v=20260420-4';
+import { initSettingsPanel } from './settings.js?v=20260420-4';
+import { setStore, store } from './state.js?v=20260420-4';
 
 setStore({ apiBase: API_BASE, apiV1: API_V1 });
 const TIMELINE_CONTEXT_CACHE = new Map();
@@ -971,6 +973,8 @@ function handleDepartmentSelect(department) {
   document.getElementById('btn-limpiar').style.display = 'none';
   refreshProductiveImportSummary(department);
   loadSelection('departamento', department, null);
+  // Cambiar scope de clipping al departamento (re-renderiza máscara + tile URLs)
+  setScope('departamento', department).catch((err) => diagnostics.log('warn', `setScope err: ${err.message}`));
   if (isLayerActive('judicial')) {
     loadSectionsLayer(department);
     return;
@@ -985,6 +989,8 @@ function handleDepartmentSelect(department) {
 function handleSectionSelect(section) {
   setStore({ customGeojson: null, selectedSectionId: section.unit_id, selectedProductiveId: null, selectedHexId: null });
   loadSelection('unidad', null, section.unit_id);
+  // Scope = sección policial
+  setScope('seccion', section.unit_id).catch((err) => diagnostics.log('warn', `setScope seccion err: ${err.message}`));
 }
 
 function handleProductiveSelect(unit) {
@@ -1192,6 +1198,10 @@ async function bootstrap() {
   await loadSelection('nacional');
   await unitsPromise;
   await departmentsPromise;
+  // Exponer redraw global para que scopeController pueda refrescar tiles sin import circular
+  window.redrawAllAnalyticLayers = redrawAllAnalyticLayers;
+  // Aplicar scope inicial: máscara Uruguay completa por default
+  setScope('nacional', null, { redrawTiles: false }).catch((err) => diagnostics.log('warn', `setScope inicial: ${err.message}`));
   setFrontendPreloadStage('selection', 'done', 'Contexto inicial y capas base listas.');
 
   if (startupPreloadRunKey) {

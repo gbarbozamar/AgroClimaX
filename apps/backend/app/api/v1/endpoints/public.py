@@ -201,6 +201,24 @@ async def tiles(
     y: int,
     source_date: date | None = Query(None),
     frame_role: str | None = Query(None),
+    clip_scope: str | None = Query(None),
+    clip_ref: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
 ):
-    image = await fetch_tile_png(layer, z, x, y, target_date=source_date, frame_role=frame_role)
+    """
+    Si `clip_scope` está presente, el tile se recorta al polígono resuelto.
+    Tiles disjuntos de la geometría devuelven transparente sin pegar a
+    Copernicus ni cachear (early exit). Scope `field` está expuesto por
+    endpoint protegido separado si hace falta — aquí se rechaza.
+    """
+    if clip_scope == "field":
+        return Response(content=TRANSPARENT_PNG, media_type="image/png", status_code=403)
+    image = await fetch_tile_png(
+        layer, z, x, y,
+        target_date=source_date,
+        frame_role=frame_role,
+        clip_scope=clip_scope,
+        clip_ref=clip_ref,
+        db=db,
+    )
     return Response(content=image or TRANSPARENT_PNG, media_type="image/png", headers={"Cache-Control": "max-age=7200"})

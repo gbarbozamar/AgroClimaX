@@ -2503,6 +2503,14 @@
     .sb-content-body::-webkit-scrollbar { width: 6px; }
     .sb-content-body::-webkit-scrollbar-thumb { background: rgba(74, 144, 217, 0.28); border-radius: 3px; }
     .sb-content-foot { padding: 8px 14px; color: #5e7088; font-size: 0.66rem; border-top: 1px solid rgba(74, 144, 217, 0.08); }
+    .sb-scope-chip { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+    .sb-scope-dot { width: 8px; height: 8px; border-radius: 50%; background: #2ecc71; flex: 0 0 auto; }
+    .sb-scope-chip[data-scope="departamento"] .sb-scope-dot { background: #4a90d9; }
+    .sb-scope-chip[data-scope="seccion"] .sb-scope-dot { background: #f1c40f; }
+    .sb-scope-chip[data-scope="field"] .sb-scope-dot { background: #e67e22; }
+    .sb-scope-label { flex: 1; color: #a9c2e0; font-size: 0.7rem; letter-spacing: 0.02em; }
+    .sb-scope-reset { appearance: none; border: 1px solid rgba(74,144,217,0.32); background: transparent; color: #8cb8e6; width: 22px; height: 22px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; line-height: 1; }
+    .sb-scope-reset:hover { background: rgba(74,144,217,0.14); }
 
     /* ── Tarjetas genéricas ─────────────────────────────────────── */
     .sb-card {
@@ -3294,7 +3302,7 @@
   </div>
 </footer>
 
-  <script type="module" src="/static/src/app.js?v=20260420-3"></script>
+  <script type="module" src="/static/src/app.js?v=20260420-4"></script>
 <script type="text/plain" data-legacy="disabled">
 // â”€â”€ API REAL â€” Copernicus CDSE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // API_BASE: en producciÃ³n usa URL relativa (FastAPI sirve el frontend).
