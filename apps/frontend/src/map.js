@@ -1,8 +1,14 @@
-import { API_BASE, API_V1, fetchNotificationEvents, fetchTimelineFrames, startTimelineWindowPreload, startViewportPreload } from './api.js?v=20260420-2';
-import { store, setStore } from './state.js?v=20260420-2';
+import { API_BASE, API_V1, fetchNotificationEvents, fetchTimelineFrames, startTimelineWindowPreload, startViewportPreload } from './api.js?v=20260420-3';
+import { store, setStore } from './state.js?v=20260420-3';
 
 const CONEAT_MIN_VISIBLE_ZOOM = 11;
 const INITIAL_VIEW = { center: [-32.8, -56.0], zoom: 7 };
+// Bbox Uruguay continental con ~10 km de padding en cada lado para que el pan
+// no se sienta bloqueado en la frontera. Fuera de este rectángulo Leaflet no
+// pide tiles — evita cargar pampa argentina, Brasil y océano Atlántico.
+const URUGUAY_BOUNDS = [[-35.20, -58.60], [-29.90, -53.00]];
+const URUGUAY_MIN_ZOOM = 6;
+const URUGUAY_MAX_ZOOM = 17;
 const TRANSPARENT_TILE_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP4DwQACfsD/Ql8Z9sAAAAASUVORK5CYII=';
 const BUILTIN_LAYER_DEFS = [
   {
@@ -591,6 +597,8 @@ function createTemporalLeafletLayer(definition, frameRole) {
     className: `analytic-layer analytic-${definition.id}`,
     updateWhenIdle: false,
     keepBuffer: 1,
+    bounds: URUGUAY_BOUNDS,
+    noWrap: true,
   });
 }
 
@@ -2398,7 +2406,18 @@ function applyHexOpacity() {
 }
 
 export async function initMap(onPolygonDraw, onDepartmentSelect, onSectionSelect) {
-  const map = window.L.map('map', { zoomControl: true, doubleClickZoom: false }).setView(INITIAL_VIEW.center, INITIAL_VIEW.zoom);
+  // Confinamos el mapa a Uruguay: maxBounds + viscosidad 1.0 rebota si el usuario
+  // intenta pan fuera; minZoom=6 evita zoom-out al globo entero. Este gate
+  // reduce ~4-5x la cantidad de tiles pedidos por frame (antes incluía pampa
+  // argentina, sur de Brasil y océano Atlántico sin datos útiles).
+  const map = window.L.map('map', {
+    zoomControl: true,
+    doubleClickZoom: false,
+    maxBounds: URUGUAY_BOUNDS,
+    maxBoundsViscosity: 1.0,
+    minZoom: URUGUAY_MIN_ZOOM,
+    maxZoom: URUGUAY_MAX_ZOOM,
+  }).setView(INITIAL_VIEW.center, INITIAL_VIEW.zoom);
   map.createPane('satellitePane');
   map.getPane('satellitePane').style.zIndex = 380;
   map.createPane('officialOverlayPane');
@@ -2416,6 +2435,8 @@ export async function initMap(onPolygonDraw, onDepartmentSelect, onSectionSelect
   const baseTileLayer = window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© OpenStreetMap',
     opacity: 0.75,
+    bounds: URUGUAY_BOUNDS,
+    noWrap: true,
   }).addTo(map);
 
   if (map.pm) {

@@ -9,9 +9,9 @@
  * Reusa toda la lógica ya existente (window.toggleMapLayer, store.activeLayers,
  * window.startDrawing, profilePageUrl) sin duplicar estado.
  */
-import { store, setStore } from './state.js?v=20260420-2';
-import { profilePageUrl } from './api.js?v=20260420-2';
-import { diagnostics } from './diagnostics.js?v=20260420-2';
+import { store, setStore } from './state.js?v=20260420-3';
+import { profilePageUrl } from './api.js?v=20260420-3';
+import { diagnostics } from './diagnostics.js?v=20260420-3';
 
 const COLLAPSE_STORAGE_KEY = 'agroclimax.sidebarCollapsed';
 const ACTIVE_SECTION_KEY = 'agroclimax.sidebarActive';
