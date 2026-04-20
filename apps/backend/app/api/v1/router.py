@@ -5,6 +5,7 @@ from app.api.v1.endpoints import (
     alertas,
     auth,
     campos,
+    client_diagnostics,
     ground_truth,
     hexagonos,
     legacy,
@@ -24,6 +25,7 @@ api_router = APIRouter()
 protected_router = APIRouter(dependencies=[Depends(require_authenticated_request)])
 
 api_router.include_router(auth.router)
+api_router.include_router(client_diagnostics.router)
 api_router.include_router(alert_subscriptions.public_router)
 protected_router.include_router(alertas.router)
 protected_router.include_router(alert_subscriptions.router)

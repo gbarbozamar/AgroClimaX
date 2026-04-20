@@ -406,11 +406,12 @@ export function renderWeatherCards(model, selectionLabel = 'Seleccion actual') {
 export function renderForecast(model) {
   const container = document.getElementById('forecast-list');
   if (!container) return;
-  if (!model.forecast.length) {
+  const forecast = Array.isArray(model?.forecast) ? model.forecast : [];
+  if (!forecast.length) {
     container.innerHTML = '<div style="color:var(--text-muted)">Sin forecast disponible.</div>';
     return;
   }
-  container.innerHTML = model.forecast
+  container.innerHTML = forecast
     .slice(0, 7)
     .map((day) => `<div style="display:grid;grid-template-columns:82px 1fr auto;gap:10px;align-items:center;padding:8px 10px;border-radius:10px;background:rgba(17,23,35,0.55);border:1px solid var(--border)"><strong>${day.date.slice(5)}</strong><span style="color:var(--text-muted)">Lluvia ${fixed(day.precip_mm, 1, ' mm')} | ET0 ${fixed(day.et0_mm, 1, ' mm')}</span><span style="color:${(day.expected_risk || 0) >= 60 ? '#e74c3c' : (day.expected_risk || 0) >= 40 ? '#e67e22' : '#2ecc71'}">${fixed(day.expected_risk, 0)}</span></div>`)
     .join('');

@@ -11,7 +11,7 @@ import {
   saveField,
   savePaddock,
   searchPadron,
-} from './api.js?v=20260420-1';
+} from './api.js?v=20260420-2';
 import {
   clearFarmGeometryEditor,
   fitGeojsonBounds,
@@ -21,9 +21,9 @@ import {
   setFarmGuideOnMap,
   setFarmPaddocksOnMap,
   startFarmGeometryEditor,
-} from './map.js?v=20260420-1';
-import { setSidebarView } from './settings.js?v=20260420-1';
-import { setStore, store } from './state.js?v=20260420-1';
+} from './map.js?v=20260420-2';
+import { setSidebarView } from './settings.js?v=20260420-2';
+import { setStore, store } from './state.js?v=20260420-2';
 
 function getNode(id) {
   return document.getElementById(id);

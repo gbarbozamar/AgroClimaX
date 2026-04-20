@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.models.alerta import AlertaEvento
 from app.services.notifications import notification_service
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/notificaciones", tags=["notificaciones"])
 
 
@@ -29,20 +32,29 @@ class SubscriberRequest(BaseModel):
 
 @router.post("/test")
 async def notificacion_test(payload: dict, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(AlertaEvento).order_by(desc(AlertaEvento.fecha)).limit(1))
-    latest = result.scalar_one_or_none()
+    try:
+        result = await db.execute(select(AlertaEvento).order_by(desc(AlertaEvento.fecha)).limit(1))
+        latest = result.scalar_one_or_none()
+    except Exception as exc:
+        logger.exception("notificacion_test: error buscando ultimo AlertaEvento")
+        raise HTTPException(status_code=500, detail=f"DB error resolviendo el ultimo evento: {exc}") from exc
+
     channels = payload.get("channels", ["dashboard", "email", "sms", "whatsapp"])
     recipients = payload.get("recipients", {"default": "dashboard"})
     body = payload.get("body", "AgroClimaX: prueba de cadena de alertas con score, forecast y confidence.")
     title = payload.get("title", "AgroClimaX - prueba de notificacion")
-    results = await notification_service.dispatch(
-        db,
-        alert_event_id=latest.id if latest else None,
-        channels=channels,
-        recipients=recipients,
-        payload={"title": title, "body": body},
-        reason="api_test",
-    )
+    try:
+        results = await notification_service.dispatch(
+            db,
+            alert_event_id=latest.id if latest else None,
+            channels=channels,
+            recipients=recipients,
+            payload={"title": title, "body": body},
+            reason="api_test",
+        )
+    except Exception as exc:
+        logger.exception("notificacion_test: dispatch fallo")
+        raise HTTPException(status_code=502, detail=f"Dispatch fallo: {exc}") from exc
     return {"total": len(results), "results": results}
 
 
@@ -64,7 +76,19 @@ async def listar_suscriptores(
 
 @router.post("/suscriptores")
 async def guardar_suscriptor(payload: SubscriberRequest, db: AsyncSession = Depends(get_db)):
-    return await notification_service.upsert_subscriber(db, payload.model_dump())
+    try:
+        return await notification_service.upsert_subscriber(db, payload.model_dump())
+    except ValueError as exc:
+        logger.warning("guardar_suscriptor: payload invalido: %s", exc)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except IntegrityError as exc:
+        await db.rollback()
+        logger.warning("guardar_suscriptor: integrity error: %s", exc)
+        raise HTTPException(status_code=409, detail="Conflicto guardando suscriptor (duplicado o FK invalida)") from exc
+    except Exception as exc:
+        await db.rollback()
+        logger.exception("guardar_suscriptor: error inesperado")
+        raise HTTPException(status_code=500, detail=f"Error guardando suscriptor: {exc}") from exc
 
 
 @router.delete("/suscriptores/{subscriber_id}")

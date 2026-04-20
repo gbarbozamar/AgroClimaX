@@ -1,12 +1,13 @@
-import { API_BASE, API_V1, downloadJsonFile, fetchCustomState, fetchDepartmentLayers, fetchHexagonsGeojson, fetchHistory, fetchMapOverlayCatalog, fetchPreloadStatus, fetchProductiveTemplate, fetchProductiveUnits, fetchProductiveUnitsGeojson, fetchScopeState, fetchSectionsGeojson, fetchTimelineContext, fetchUnits, fetchWeatherForecast, startStartupPreload, uploadProductiveUnitsFile } from './api.js?v=20260420-1';
-import { initAuth } from './auth.js?v=20260420-1';
-import { clearDepartmentLayer, clearHexLayer, clearProductiveLayer, clearSectionsLayer, ensureTimelineEventsLoaded, highlightDepartment, highlightHex, highlightProductive, highlightSection, initMap, isLayerActive, refreshFarmPrivateOverlays, setAvailableOverlays, setHexesOnMap, setDepartmentsOnMap, setMapLayerChangeHandler, setProductivesOnMap, setSectionsOnMap, updateFocus } from './map.js?v=20260420-1';
-import { initFieldsPanel } from './fields.js?v=20260420-1';
-import { initSidebar, syncSidebar } from './sidebar.js?v=20260420-1';
-import { initProfilePanel, refreshProfilePanel } from './profile.js?v=20260420-1';
-import { normalizeState, populateDepartmentSelect, renderChart, renderDashboard, renderDrivers, renderError, renderForecast, renderHistory, renderLoading, renderWeatherCards } from './render.js?v=20260420-1';
-import { initSettingsPanel } from './settings.js?v=20260420-1';
-import { setStore, store } from './state.js?v=20260420-1';
+import { API_BASE, API_V1, downloadJsonFile, fetchCustomState, fetchDepartmentLayers, fetchHexagonsGeojson, fetchHistory, fetchMapOverlayCatalog, fetchPreloadStatus, fetchProductiveTemplate, fetchProductiveUnits, fetchProductiveUnitsGeojson, fetchScopeState, fetchSectionsGeojson, fetchTimelineContext, fetchUnits, fetchWeatherForecast, startStartupPreload, uploadProductiveUnitsFile } from './api.js?v=20260420-2';
+import { initAuth } from './auth.js?v=20260420-2';
+import { clearDepartmentLayer, clearHexLayer, clearProductiveLayer, clearSectionsLayer, ensureTimelineEventsLoaded, highlightDepartment, highlightHex, highlightProductive, highlightSection, initMap, isLayerActive, refreshFarmPrivateOverlays, setAvailableOverlays, setHexesOnMap, setDepartmentsOnMap, setMapLayerChangeHandler, setProductivesOnMap, setSectionsOnMap, updateFocus } from './map.js?v=20260420-2';
+import { initFieldsPanel } from './fields.js?v=20260420-2';
+import { initSidebar, syncSidebar } from './sidebar.js?v=20260420-2';
+import { diagnostics, initDiagnostics } from './diagnostics.js?v=20260420-2';
+import { initProfilePanel, refreshProfilePanel } from './profile.js?v=20260420-2';
+import { normalizeState, populateDepartmentSelect, renderChart, renderDashboard, renderDrivers, renderError, renderForecast, renderHistory, renderLoading, renderWeatherCards } from './render.js?v=20260420-2';
+import { initSettingsPanel } from './settings.js?v=20260420-2';
+import { setStore, store } from './state.js?v=20260420-2';
 
 setStore({ apiBase: API_BASE, apiV1: API_V1 });
 const TIMELINE_CONTEXT_CACHE = new Map();
@@ -1068,6 +1069,8 @@ async function handleTimelineDateChange(event) {
 }
 
 async function bootstrap() {
+  initDiagnostics();
+  diagnostics.track('bootstrap_start');
   initHeaderCollapseToggle();
   setStore({
     preloadVisible: true,

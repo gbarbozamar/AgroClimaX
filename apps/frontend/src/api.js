@@ -1,4 +1,5 @@
-import { store } from './state.js?v=20260420-1';
+import { store } from './state.js?v=20260420-2';
+import { recordFetch } from './diagnostics.js?v=20260420-2';
 
 const params = new URLSearchParams(window.location.search);
 const isHttpOrigin = window.location.protocol === 'http:' || window.location.protocol === 'https:';
@@ -25,12 +26,25 @@ async function fetchJson(url, options = {}) {
     headers.set('X-CSRF-Token', store.authCsrfToken);
   }
 
-  const response = await fetch(url, {
-    credentials: 'same-origin',
-    ...fetchOptions,
-    method,
-    headers,
-  });
+  const _startedAt = performance.now();
+  let response;
+  try {
+    response = await fetch(url, {
+      credentials: 'same-origin',
+      ...fetchOptions,
+      method,
+      headers,
+    });
+  } catch (networkErr) {
+    try {
+      recordFetch({
+        url, method, status: null, ok: false,
+        durationMs: performance.now() - _startedAt,
+        error: networkErr?.message || String(networkErr),
+      });
+    } catch (_) { /* noop */ }
+    throw networkErr;
+  }
   const raw = await response.text();
   let data;
   try {
@@ -38,6 +52,15 @@ async function fetchJson(url, options = {}) {
   } catch {
     data = { detail: raw || `HTTP ${response.status}` };
   }
+  try {
+    recordFetch({
+      url, method,
+      status: response.status,
+      ok: response.ok,
+      durationMs: performance.now() - _startedAt,
+      preview: response.ok ? undefined : data,
+    });
+  } catch (_) { /* noop */ }
   if (!response.ok) {
     let detail = data.detail || data.error || `HTTP ${response.status}`;
     if (Array.isArray(detail)) {
