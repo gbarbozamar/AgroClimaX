@@ -1,6 +1,6 @@
-import { fetchProfileMe, profilePageUrl, saveProfileMe } from './api.js?v=20260419-2';
-import { setStore, store } from './state.js?v=20260419-2';
-import { setSidebarView, syncSidebarView } from './settings.js?v=20260419-2';
+import { fetchProfileMe, profilePageUrl, saveProfileMe } from './api.js?v=20260419-4';
+import { setStore, store } from './state.js?v=20260419-4';
+import { setSidebarView, syncSidebarView } from './settings.js?v=20260419-4';
 
 function getNode(id) {
   return document.getElementById(id);

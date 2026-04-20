@@ -9,8 +9,8 @@ import {
   saveAlertSubscription,
   saveProfileMe,
   testAlertSubscription,
-} from './api.js?v=20260419-2';
-import { setStore } from './state.js?v=20260419-2';
+} from './api.js?v=20260419-4';
+import { setStore } from './state.js?v=20260419-4';
 
 const state = {
   authSession: null,

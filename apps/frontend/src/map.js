@@ -1,5 +1,5 @@
-import { API_BASE, API_V1, fetchNotificationEvents, fetchTimelineFrames, startTimelineWindowPreload, startViewportPreload } from './api.js?v=20260419-2';
-import { store, setStore } from './state.js?v=20260419-2';
+import { API_BASE, API_V1, fetchNotificationEvents, fetchTimelineFrames, startTimelineWindowPreload, startViewportPreload } from './api.js?v=20260419-4';
+import { store, setStore } from './state.js?v=20260419-4';
 
 const CONEAT_MIN_VISIBLE_ZOOM = 11;
 const INITIAL_VIEW = { center: [-32.8, -56.0], zoom: 7 };
@@ -196,7 +196,12 @@ function getActiveTemporalLayerIds() {
 }
 
 function todayIsoDate() {
-  return new Date().toISOString().slice(0, 10);
+  // Fecha local del navegador (ver app.js:todayIsoDate para la rationale).
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 function parseIsoDate(value) {

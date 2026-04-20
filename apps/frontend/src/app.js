@@ -1,12 +1,12 @@
-import { API_BASE, API_V1, downloadJsonFile, fetchCustomState, fetchDepartmentLayers, fetchHexagonsGeojson, fetchHistory, fetchMapOverlayCatalog, fetchPreloadStatus, fetchProductiveTemplate, fetchProductiveUnits, fetchProductiveUnitsGeojson, fetchScopeState, fetchSectionsGeojson, fetchTimelineContext, fetchUnits, fetchWeatherForecast, startStartupPreload, uploadProductiveUnitsFile } from './api.js?v=20260419-2';
-import { initAuth } from './auth.js?v=20260419-2';
-import { clearDepartmentLayer, clearHexLayer, clearProductiveLayer, clearSectionsLayer, ensureTimelineEventsLoaded, highlightDepartment, highlightHex, highlightProductive, highlightSection, initMap, isLayerActive, refreshFarmPrivateOverlays, setAvailableOverlays, setHexesOnMap, setDepartmentsOnMap, setMapLayerChangeHandler, setProductivesOnMap, setSectionsOnMap, updateFocus } from './map.js?v=20260419-2';
-import { initFieldsPanel } from './fields.js?v=20260419-2';
-import { initSidebar, syncSidebar } from './sidebar.js?v=20260419-2';
-import { initProfilePanel, refreshProfilePanel } from './profile.js?v=20260419-2';
-import { normalizeState, populateDepartmentSelect, renderChart, renderDashboard, renderDrivers, renderError, renderForecast, renderHistory, renderLoading, renderWeatherCards } from './render.js?v=20260419-2';
-import { initSettingsPanel } from './settings.js?v=20260419-2';
-import { setStore, store } from './state.js?v=20260419-2';
+import { API_BASE, API_V1, downloadJsonFile, fetchCustomState, fetchDepartmentLayers, fetchHexagonsGeojson, fetchHistory, fetchMapOverlayCatalog, fetchPreloadStatus, fetchProductiveTemplate, fetchProductiveUnits, fetchProductiveUnitsGeojson, fetchScopeState, fetchSectionsGeojson, fetchTimelineContext, fetchUnits, fetchWeatherForecast, startStartupPreload, uploadProductiveUnitsFile } from './api.js?v=20260419-4';
+import { initAuth } from './auth.js?v=20260419-4';
+import { clearDepartmentLayer, clearHexLayer, clearProductiveLayer, clearSectionsLayer, ensureTimelineEventsLoaded, highlightDepartment, highlightHex, highlightProductive, highlightSection, initMap, isLayerActive, refreshFarmPrivateOverlays, setAvailableOverlays, setHexesOnMap, setDepartmentsOnMap, setMapLayerChangeHandler, setProductivesOnMap, setSectionsOnMap, updateFocus } from './map.js?v=20260419-4';
+import { initFieldsPanel } from './fields.js?v=20260419-4';
+import { initSidebar, syncSidebar } from './sidebar.js?v=20260419-4';
+import { initProfilePanel, refreshProfilePanel } from './profile.js?v=20260419-4';
+import { normalizeState, populateDepartmentSelect, renderChart, renderDashboard, renderDrivers, renderError, renderForecast, renderHistory, renderLoading, renderWeatherCards } from './render.js?v=20260419-4';
+import { initSettingsPanel } from './settings.js?v=20260419-4';
+import { setStore, store } from './state.js?v=20260419-4';
 
 setStore({ apiBase: API_BASE, apiV1: API_V1 });
 const TIMELINE_CONTEXT_CACHE = new Map();
@@ -87,7 +87,15 @@ function historyContextFromV1(history) {
 }
 
 function todayIsoDate() {
-  return new Date().toISOString().slice(0, 10);
+  // Usamos la fecha LOCAL del navegador, no UTC. Si el usuario está en UY (UTC-3)
+  // a las 23:00 local, toISOString() ya reporta el día siguiente UTC — el backend
+  // devuelve timeline en fecha local, así que la comparación con UTC marcaba "hoy"
+  // como histórico y ocultaba weather-strip / forecast-panel.
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 function addDays(isoDate, days) {

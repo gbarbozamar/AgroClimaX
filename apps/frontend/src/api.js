@@ -1,4 +1,4 @@
-import { store } from './state.js?v=20260419-2';
+import { store } from './state.js?v=20260419-4';
 
 const params = new URLSearchParams(window.location.search);
 const isHttpOrigin = window.location.protocol === 'http:' || window.location.protocol === 'https:';

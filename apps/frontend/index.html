@@ -2562,31 +2562,15 @@
     }
     .sb-btn.primary:hover { filter: brightness(1.1); color: #0a0e16; }
 
-    /* Ajusta el main-grid para dejar espacio al sidebar */
-    body:not(.sidebar-collapsed) .main-grid,
-    body:not(.sidebar-collapsed) .timeline-dock,
-    body:not(.sidebar-collapsed) .dashboard-top-strip,
-    body:not(.sidebar-collapsed) #alerta-banner {
-      padding-left: 336px;
-      transition: padding-left 0.22s ease;
-    }
-    body.sidebar-collapsed .main-grid,
-    body.sidebar-collapsed .timeline-dock,
-    body.sidebar-collapsed .dashboard-top-strip,
-    body.sidebar-collapsed #alerta-banner {
-      padding-left: 88px;
-      transition: padding-left 0.22s ease;
-    }
+    /* Hacemos lugar al sidebar desplazando TODO el body una sola vez.
+       Padding-left individual en .main-grid / .kpi-bar / .dashboard-top-strip
+       se peleaba con los `width: calc(100% - 340px)` existentes y colapsaba el KPI bar a 397px. */
+    body { padding-left: 336px; transition: padding-left 0.22s ease; }
+    body.sidebar-collapsed { padding-left: 88px; }
     @media (max-width: 960px) {
       .app-sidebar { top: 72px; bottom: 16px; left: 8px; width: 280px; }
-      body:not(.sidebar-collapsed) .main-grid,
-      body:not(.sidebar-collapsed) .timeline-dock,
-      body:not(.sidebar-collapsed) .dashboard-top-strip,
-      body:not(.sidebar-collapsed) #alerta-banner { padding-left: 0; }
-      body.sidebar-collapsed .main-grid,
-      body.sidebar-collapsed .timeline-dock,
-      body.sidebar-collapsed .dashboard-top-strip,
-      body.sidebar-collapsed #alerta-banner { padding-left: 72px; }
+      body { padding-left: 0; }
+      body.sidebar-collapsed { padding-left: 72px; }
       body:not(.sidebar-collapsed) .app-sidebar {
         box-shadow: 0 24px 60px rgba(0, 0, 0, 0.7);
       }
@@ -3224,7 +3208,7 @@
   </div>
 </footer>
 
-  <script type="module" src="/static/src/app.js?v=20260419-2"></script>
+  <script type="module" src="/static/src/app.js?v=20260419-4"></script>
 <script type="text/plain" data-legacy="disabled">
 // â”€â”€ API REAL â€” Copernicus CDSE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // API_BASE: en producciÃ³n usa URL relativa (FastAPI sirve el frontend).
