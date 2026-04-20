@@ -6,8 +6,8 @@ import {
   resetGlobalSettings,
   saveCoverageSettings,
   saveGlobalSettings,
-} from './api.js?v=20260419-4';
-import { setStore, store } from './state.js?v=20260419-4';
+} from './api.js?v=20260420-1';
+import { setStore, store } from './state.js?v=20260420-1';
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value ?? {}));

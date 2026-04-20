@@ -11,7 +11,7 @@ import {
   saveField,
   savePaddock,
   searchPadron,
-} from './api.js?v=20260419-4';
+} from './api.js?v=20260420-1';
 import {
   clearFarmGeometryEditor,
   fitGeojsonBounds,
@@ -21,9 +21,9 @@ import {
   setFarmGuideOnMap,
   setFarmPaddocksOnMap,
   startFarmGeometryEditor,
-} from './map.js?v=20260419-4';
-import { setSidebarView } from './settings.js?v=20260419-4';
-import { setStore, store } from './state.js?v=20260419-4';
+} from './map.js?v=20260420-1';
+import { setSidebarView } from './settings.js?v=20260420-1';
+import { setStore, store } from './state.js?v=20260420-1';
 
 function getNode(id) {
   return document.getElementById(id);
@@ -437,6 +437,13 @@ async function selectField(fieldId) {
   }
 
   const detail = await fetchField(fieldId);
+  // Al entrar en edición de un field, limpiamos cualquier selección administrativa
+  // (sección policial / predio / hex / departamento en header) para que clicks
+  // sobre polígonos administrativos del mapa no saquen al usuario del campo.
+  const headerSel = document.getElementById('department-select');
+  if (headerSel && headerSel.value !== 'nacional') {
+    headerSel.value = 'nacional';
+  }
   setStore({
     selectedFieldId: detail.id,
     selectedEstablishmentId: detail.establishment_id,
@@ -444,6 +451,11 @@ async function selectField(fieldId) {
     selectedPaddockId: null,
     fieldDraftGeometry: detail.field_geometry_geojson,
     paddockDraftGeometry: null,
+    selectedDepartment: null,
+    selectedUnitId: null,
+    selectedSectionId: null,
+    selectedProductiveId: null,
+    selectedHexId: null,
   });
   setFarmGuideOnMap(detail.padron_geometry_geojson ? { type: 'Feature', geometry: detail.padron_geometry_geojson, properties: {} } : null);
   await refreshMapCollections();
@@ -637,6 +649,19 @@ async function handlePadronSearch() {
   setStore({ selectedPadronSearch: result });
   renderPadronResult();
   if (result.found && result.feature) {
+    // Entramos en contexto farm: desconfiguramos zoom/selección de país/departamento para que clicks
+    // accidentales en polígonos administrativos no saquen al usuario del padrón.
+    const headerSel = document.getElementById('department-select');
+    if (headerSel && headerSel.value !== 'nacional') {
+      headerSel.value = 'nacional';
+    }
+    setStore({
+      selectedDepartment: null,
+      selectedUnitId: null,
+      selectedSectionId: null,
+      selectedProductiveId: null,
+      selectedHexId: null,
+    });
     setFarmGuideOnMap(result.feature);
     if (!store.selectedFieldId) {
       setStore({ fieldDraftGeometry: result.feature.geometry });

@@ -1,5 +1,5 @@
-import { API_BASE, API_V1, fetchNotificationEvents, fetchTimelineFrames, startTimelineWindowPreload, startViewportPreload } from './api.js?v=20260419-4';
-import { store, setStore } from './state.js?v=20260419-4';
+import { API_BASE, API_V1, fetchNotificationEvents, fetchTimelineFrames, startTimelineWindowPreload, startViewportPreload } from './api.js?v=20260420-1';
+import { store, setStore } from './state.js?v=20260420-1';
 
 const CONEAT_MIN_VISIBLE_ZOOM = 11;
 const INITIAL_VIEW = { center: [-32.8, -56.0], zoom: 7 };
@@ -2563,6 +2563,21 @@ export function setUnitsOnMap(units, onDepartmentSelect) {
   setStore({ unitMarkers: markers });
 }
 
+/**
+ * True cuando el usuario está trabajando sobre una farm: establecimiento,
+ * field, paddock o búsqueda de padrón activa. En ese estado NO queremos
+ * que clicks sobre departamentos / secciones / hexágonos / predios hagan
+ * fitBounds — eso saca al usuario del zoom al padrón.
+ */
+function isFarmContextActive() {
+  return Boolean(
+    store.selectedEstablishmentId
+    || store.selectedFieldId
+    || store.selectedPaddockId
+    || store.selectedPadronSearch
+  );
+}
+
 export function setDepartmentsOnMap(featureCollection, onDepartmentSelect, selectedDepartment = null) {
   if (!store.map) return;
   clearDepartmentLayer();
@@ -2576,6 +2591,7 @@ export function setDepartmentsOnMap(featureCollection, onDepartmentSelect, selec
       featureLayer.bindPopup(departmentPopup(props));
       featureLayer.on('click', (event) => {
         if (stopEditorLayerClick(event)) return;
+        if (isFarmContextActive()) return;  // no sacar al usuario del zoom al padrón
         highlightDepartment(props.department, true);
         if (onDepartmentSelect) onDepartmentSelect(props.department);
       });
@@ -2597,6 +2613,7 @@ export function setSectionsOnMap(featureCollection, onSectionSelect, selectedSec
       featureLayer.bindPopup(sectionPopup(props));
       featureLayer.on('click', (event) => {
         if (stopEditorLayerClick(event)) return;
+        if (isFarmContextActive()) return;
         highlightSection(props.unit_id, true);
         if (onSectionSelect) onSectionSelect(props);
       });
@@ -2618,6 +2635,7 @@ export function setProductivesOnMap(featureCollection, onProductiveSelect, selec
       featureLayer.bindPopup(productivePopup(props));
       featureLayer.on('click', (event) => {
         if (stopEditorLayerClick(event)) return;
+        if (isFarmContextActive()) return;
         highlightProductive(props.unit_id, true);
         if (onProductiveSelect) onProductiveSelect(props);
       });
@@ -2639,6 +2657,7 @@ export function setHexesOnMap(featureCollection, onHexSelect, selectedHexId = nu
       featureLayer.bindPopup(hexPopup(props));
       featureLayer.on('click', (event) => {
         if (stopEditorLayerClick(event)) return;
+        if (isFarmContextActive()) return;
         highlightHex(props.unit_id, true);
         if (onHexSelect) onHexSelect(props);
       });
