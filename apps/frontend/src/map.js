@@ -2772,12 +2772,14 @@ export function highlightHex(hexId, fitBounds = false) {
   if (layer.openPopup) layer.openPopup();
 }
 
-export function updateFocus(model) {
+export function updateFocus(model, { preserveViewport = false } = {}) {
   if (!store.map) return;
   // Preserve viewport whenever the user is working on a farm (establecimiento, field or paddock).
   // A fresh establishment may have no field/paddock yet but the padrón was already zoomed in by
   // setFarmGuideOnMap — we must not undo that zoom from a downstream loadSelection call.
-  const preserveFarmViewport = Boolean(
+  // Or cuando el llamador pide explícitamente preserveViewport (ej. handleDepartmentSelect,
+  // handleSectionSelect — el usuario no quiere que clickear depto/sección le mueva el mapa).
+  const preserveFarmViewport = preserveViewport || Boolean(
     store.selectedEstablishmentId || store.selectedFieldId || store.selectedPaddockId || store.selectedPadronSearch
   );
   if (store.focusMarker) store.map.removeLayer(store.focusMarker);

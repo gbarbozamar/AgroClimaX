@@ -905,7 +905,7 @@ function wireProductiveImportControls() {
   });
 }
 
-async function loadSelection(scope, department = null, unitId = null) {
+async function loadSelection(scope, department = null, unitId = null, { preserveViewport = false } = {}) {
   const requestSeq = ++dashboardRequestSeq;
   renderLoading(scope === 'nacional' ? 'Cargando panorama nacional...' : `Cargando ${department || 'unidad'}...`);
   try {
@@ -955,7 +955,7 @@ async function loadSelection(scope, department = null, unitId = null) {
     });
     syncWeatherFilterOptions();
     await refreshWeatherCards();
-    updateFocus(model);
+    updateFocus(model, { preserveViewport });
     if (unitId && isLayerActive('judicial')) highlightSection(unitId, false);
     if (unitId && isLayerActive('productiva')) highlightProductive(unitId, false);
     if (unitId && isLayerActive('hex')) highlightHex(unitId, false);
@@ -968,19 +968,13 @@ async function loadSelection(scope, department = null, unitId = null) {
 function handleDepartmentSelect(department) {
   const select = document.getElementById('department-select');
   if (select) select.value = department;
-  // Preservar viewport: el usuario pidió que seleccionar depto no mueva el mapa.
-  const preservedCenter = store.map?.getCenter?.();
-  const preservedZoom = store.map?.getZoom?.();
   setStore({ customGeojson: null, selectedSectionId: null, selectedHexId: null });
   setStore({ selectedProductiveId: null });
   document.getElementById('btn-limpiar').style.display = 'none';
   refreshProductiveImportSummary(department);
-  const restoreView = () => {
-    if (preservedCenter != null && preservedZoom != null) {
-      try { store.map?.setView(preservedCenter, preservedZoom, { animate: false }); } catch (_) { /* noop */ }
-    }
-  };
-  loadSelection('departamento', department, null).finally(restoreView);
+  // El usuario pidió que seleccionar depto no mueva el mapa. Propagamos el flag
+  // a loadSelection -> updateFocus para que nunca haga setView/fitBounds.
+  loadSelection('departamento', department, null, { preserveViewport: true });
   // Cambiar scope de clipping al departamento (re-renderiza máscara + tile URLs)
   setScope('departamento', department).catch((err) => diagnostics.log('warn', `setScope err: ${err.message}`));
   if (isLayerActive('judicial')) {
@@ -995,16 +989,9 @@ function handleDepartmentSelect(department) {
 }
 
 function handleSectionSelect(section) {
-  // Preservar viewport en sección judicial también.
-  const preservedCenter = store.map?.getCenter?.();
-  const preservedZoom = store.map?.getZoom?.();
   setStore({ customGeojson: null, selectedSectionId: section.unit_id, selectedProductiveId: null, selectedHexId: null });
-  const restoreView = () => {
-    if (preservedCenter != null && preservedZoom != null) {
-      try { store.map?.setView(preservedCenter, preservedZoom, { animate: false }); } catch (_) { /* noop */ }
-    }
-  };
-  loadSelection('unidad', null, section.unit_id).finally(restoreView);
+  // Preservar viewport también en sección judicial.
+  loadSelection('unidad', null, section.unit_id, { preserveViewport: true });
   // Scope = sección policial
   setScope('seccion', section.unit_id).catch((err) => diagnostics.log('warn', `setScope seccion err: ${err.message}`));
 }

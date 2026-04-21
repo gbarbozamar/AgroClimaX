@@ -313,12 +313,21 @@ function renderFieldsList() {
     node.innerHTML = '<div class="fields-empty">Todavía no hay campos cargados para esta cuenta.</div>';
     return;
   }
-  node.innerHTML = items.map((item) => `
+  const clearButtonHtml = store.selectedFieldId
+    ? '<button class="fields-list-clear" type="button" data-role="deselect-field">✕ Salir del campo seleccionado (volver a nacional)</button>'
+    : '';
+  node.innerHTML = clearButtonHtml + items.map((item) => `
     <button class="fields-list-item ${item.id === store.selectedFieldId ? 'active' : ''}" type="button" data-field-id="${escapeHtml(item.id)}">
       <span class="fields-list-title">${escapeHtml(item.name)}</span>
       <span class="fields-list-copy">${escapeHtml(item.establishment_name || 'Sin establecimiento')} · ${escapeHtml(item.department || '-')} · ${escapeHtml(item.area_ha || '-')} ha</span>
     </button>
   `).join('');
+  const deselectBtn = node.querySelector('[data-role="deselect-field"]');
+  if (deselectBtn) {
+    deselectBtn.addEventListener('click', async () => {
+      await selectField(null);
+    });
+  }
   node.querySelectorAll('[data-field-id]').forEach((button) => {
     const item = items.find((entry) => entry.id === button.dataset.fieldId);
     if (item?.field_analytics) {
