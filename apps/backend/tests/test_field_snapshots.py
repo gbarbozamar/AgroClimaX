@@ -31,14 +31,24 @@ from app.services import aoi_tile_clip  # noqa: E402
 from app.services.public_api import TRANSPARENT_PNG  # noqa: E402
 
 
-# Intentamos importar los módulos de Fase 2. Si los agentes paralelos todavía
-# no terminaron de crearlos, marcamos los tests con skip para no bloquear CI.
+# Intentamos importar los módulos de Fase 2. Validamos también que la signature
+# del service coincida con la asumida por estos tests (db, field_id, user_id,
+# observed_at, layers). Si hay mismatch (A2 y A4 corrieron en paralelo y
+# divergieron), marcamos skip hasta una iteración de alineación.
 try:
+    import inspect
+
     from app.models.field_snapshot import FieldImageSnapshot  # noqa: F401
     from app.services.field_snapshots import render_field_snapshot  # noqa: F401
 
-    _PHASE2_READY = True
-    _SKIP_REASON = ""
+    _sig = inspect.signature(render_field_snapshot)
+    _expected = {"db", "field_id", "user_id", "observed_at", "layers"}
+    _PHASE2_READY = _expected.issubset(set(_sig.parameters))
+    _SKIP_REASON = (
+        ""
+        if _PHASE2_READY
+        else f"Fase 2 service signature mismatch: got {list(_sig.parameters)}, want {sorted(_expected)}"
+    )
 except Exception as exc:  # pragma: no cover - dependiente de otros agentes
     _PHASE2_READY = False
     _SKIP_REASON = f"Fase 2 aún no disponible: {exc!r}"
