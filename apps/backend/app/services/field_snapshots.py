@@ -119,16 +119,32 @@ async def render_field_snapshot(
     field_id: str,
     layer_key: str,
     observed_at: date,
+    user_id: str | None = None,
 ):
     """Render y persiste el PNG composite de un field para (layer, fecha).
 
     Retorna la fila FieldImageSnapshot upsertada, o None si no hay geometry,
     no hay tiles válidos (todos transparent/67b), o el import del modelo falla.
+
+    Si `user_id` es None, intenta derivar el owner del FarmField (para
+    workflows de backfill/pipeline donde no hay sesión HTTP).
     """
-    # 1. Geometría del field.
+    # 1. Geometría del field. Si el caller no pasó user_id, intentamos
+    # derivarlo del FarmField row para bypassear el ownership check.
+    resolved_user_id = user_id
+    if resolved_user_id is None:
+        try:
+            from app.models.farm import FarmField
+            row = (await db.execute(
+                select(FarmField.user_id).where(FarmField.id == field_id).limit(1)
+            )).first()
+            if row:
+                resolved_user_id = row[0]
+        except Exception:
+            pass
     try:
         geom = await resolve_scope_geometry(
-            db, "field", field_id, user_id=None
+            db, "field", field_id, user_id=resolved_user_id
         )
     except Exception as exc:
         logger.info(
@@ -174,7 +190,7 @@ async def render_field_snapshot(
                 clip_scope="field",
                 clip_ref=field_id,
                 db=db,
-                user_id=None,
+                user_id=resolved_user_id,
             )
             # Skip 67b transparent placeholders y cualquier dato inválido.
             if not png_bytes or len(png_bytes) <= 100:
