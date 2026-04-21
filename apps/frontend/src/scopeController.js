@@ -38,6 +38,13 @@ export async function setScope(scope, ref = null, { redrawTiles = true, force = 
   if (typeof window.syncSidebar === 'function') {
     try { window.syncSidebar(); } catch (_) { /* noop */ }
   }
+
+  // Evento global para consumers desacoplados (ej. fieldTimeline en Fase 3).
+  try {
+    window.dispatchEvent(new CustomEvent('agroclimax:scope-change', {
+      detail: { scope, ref, prev },
+    }));
+  } catch (_) { /* noop */ }
 }
 
 export function currentScopeLabel() {

@@ -29,6 +29,10 @@ export const store = {
   timelineContextLoading: false,
   timelineContextRequestSeq: 0,
   timelineForecastCollapsed: false,
+  // Fase 3 Field Mode: timeline propio del campo.
+  fieldTimelineFrames: [],
+  fieldTimelineSource: 'global',  // 'global' | 'field'
+  fieldTimelineDate: null,
   timelineEvents: [],
   timelineEventsLoading: false,
   timelineEventsKey: null,

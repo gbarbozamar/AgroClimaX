@@ -2,6 +2,7 @@ import { API_BASE, API_V1, downloadJsonFile, fetchCustomState, fetchDepartmentLa
 import { initAuth } from './auth.js?v=20260421-1';
 import { clearDepartmentLayer, clearHexLayer, clearProductiveLayer, clearSectionsLayer, ensureTimelineEventsLoaded, highlightDepartment, highlightHex, highlightProductive, highlightSection, initMap, isLayerActive, refreshFarmPrivateOverlays, setAvailableOverlays, setHexesOnMap, setDepartmentsOnMap, setMapLayerChangeHandler, setProductivesOnMap, setSectionsOnMap, updateFocus } from './map.js?v=20260421-1';
 import { initFieldsPanel } from './fields.js?v=20260421-1';
+import './fieldTimeline.js?v=20260421-1';  // Fase 3: activa listener scope-change
 import { initSidebar, syncSidebar } from './sidebar.js?v=20260421-1';
 import { diagnostics, initDiagnostics } from './diagnostics.js?v=20260421-1';
 import { setScope, resetToNacional } from './scopeController.js?v=20260421-1';
