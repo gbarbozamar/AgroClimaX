@@ -496,11 +496,12 @@ function buildAnalyticTileUrl(layerName, sourceDate = store.timelineDate || toda
   const params = new URLSearchParams();
   if (sourceDate) params.set('source_date', sourceDate);
   if (frameRole) params.set('frame_role', frameRole);
-  // Si el usuario tiene un scope activo (depto/seccion/field), le pasamos al backend
-  // para que haga early-exit/clip raster. Nacional no se envia porque es el default.
+  // Siempre mandamos el scope al backend (incluyendo nacional y field) para que
+  // haga early-exit/clip raster. Sin esto los tiles pintan enteros aunque el mask
+  // visual muestre el donut.
   const scope = store.clipScope;
   const ref = store.clipRef;
-  if (scope && scope !== 'nacional' && scope !== 'field') {
+  if (scope) {
     params.set('clip_scope', scope);
     if (ref) params.set('clip_ref', ref);
   }

@@ -968,11 +968,19 @@ async function loadSelection(scope, department = null, unitId = null) {
 function handleDepartmentSelect(department) {
   const select = document.getElementById('department-select');
   if (select) select.value = department;
+  // Preservar viewport: el usuario pidió que seleccionar depto no mueva el mapa.
+  const preservedCenter = store.map?.getCenter?.();
+  const preservedZoom = store.map?.getZoom?.();
   setStore({ customGeojson: null, selectedSectionId: null, selectedHexId: null });
   setStore({ selectedProductiveId: null });
   document.getElementById('btn-limpiar').style.display = 'none';
   refreshProductiveImportSummary(department);
-  loadSelection('departamento', department, null);
+  const restoreView = () => {
+    if (preservedCenter != null && preservedZoom != null) {
+      try { store.map?.setView(preservedCenter, preservedZoom, { animate: false }); } catch (_) { /* noop */ }
+    }
+  };
+  loadSelection('departamento', department, null).finally(restoreView);
   // Cambiar scope de clipping al departamento (re-renderiza máscara + tile URLs)
   setScope('departamento', department).catch((err) => diagnostics.log('warn', `setScope err: ${err.message}`));
   if (isLayerActive('judicial')) {
@@ -987,8 +995,16 @@ function handleDepartmentSelect(department) {
 }
 
 function handleSectionSelect(section) {
+  // Preservar viewport en sección judicial también.
+  const preservedCenter = store.map?.getCenter?.();
+  const preservedZoom = store.map?.getZoom?.();
   setStore({ customGeojson: null, selectedSectionId: section.unit_id, selectedProductiveId: null, selectedHexId: null });
-  loadSelection('unidad', null, section.unit_id);
+  const restoreView = () => {
+    if (preservedCenter != null && preservedZoom != null) {
+      try { store.map?.setView(preservedCenter, preservedZoom, { animate: false }); } catch (_) { /* noop */ }
+    }
+  };
+  loadSelection('unidad', null, section.unit_id).finally(restoreView);
   // Scope = sección policial
   setScope('seccion', section.unit_id).catch((err) => diagnostics.log('warn', `setScope seccion err: ${err.message}`));
 }
