@@ -396,7 +396,13 @@ class CamposEndpointTests(unittest.TestCase):
                 json={"name": "Potrero B", "geometry_geojson": PADDOCK_B_OVERLAP},
             )
         self.assertEqual(second.status_code, 422)
-        self.assertIn("no pueden solaparse", second.json()["detail"])
+        detail = second.json()["detail"]
+        # Con tolerancia: el mensaje puede ser el legacy ("no pueden solaparse" para
+        # contenimiento total) o el nuevo ("se solapa con 'Potrero A' en X m²").
+        self.assertTrue(
+            "no pueden solaparse" in detail or "se solapa con" in detail,
+            f"Unexpected overlap error: {detail!r}",
+        )
 
 
 if __name__ == "__main__":

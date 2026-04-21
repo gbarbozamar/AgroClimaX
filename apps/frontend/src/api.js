@@ -1,5 +1,5 @@
-import { store } from './state.js?v=20260420-4';
-import { recordFetch } from './diagnostics.js?v=20260420-4';
+import { store } from './state.js?v=20260420-6';
+import { recordFetch } from './diagnostics.js?v=20260420-6';
 
 const params = new URLSearchParams(window.location.search);
 const isHttpOrigin = window.location.protocol === 'http:' || window.location.protocol === 'https:';

@@ -7,9 +7,9 @@
  *   - Redibuja las capas analíticas con los nuevos query params
  *   - Trackea en diagnostics
  */
-import { store, setStore } from './state.js?v=20260420-4';
-import { diagnostics } from './diagnostics.js?v=20260420-4';
-import { applyClipMask } from './clipMask.js?v=20260420-4';
+import { store, setStore } from './state.js?v=20260420-6';
+import { diagnostics } from './diagnostics.js?v=20260420-6';
+import { applyClipMask } from './clipMask.js?v=20260420-6';
 
 const VALID_SCOPES = new Set(['nacional', 'departamento', 'seccion', 'field']);
 

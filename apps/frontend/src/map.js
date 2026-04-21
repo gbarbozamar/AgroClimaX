@@ -1,5 +1,5 @@
-import { API_BASE, API_V1, fetchNotificationEvents, fetchTimelineFrames, startTimelineWindowPreload, startViewportPreload } from './api.js?v=20260420-4';
-import { store, setStore } from './state.js?v=20260420-4';
+import { API_BASE, API_V1, fetchNotificationEvents, fetchTimelineFrames, startTimelineWindowPreload, startViewportPreload } from './api.js?v=20260420-6';
+import { store, setStore } from './state.js?v=20260420-6';
 
 const CONEAT_MIN_VISIBLE_ZOOM = 11;
 const INITIAL_VIEW = { center: [-32.8, -56.0], zoom: 7 };

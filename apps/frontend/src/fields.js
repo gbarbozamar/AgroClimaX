@@ -11,7 +11,7 @@ import {
   saveField,
   savePaddock,
   searchPadron,
-} from './api.js?v=20260420-4';
+} from './api.js?v=20260420-6';
 import {
   clearFarmGeometryEditor,
   fitGeojsonBounds,
@@ -21,9 +21,10 @@ import {
   setFarmGuideOnMap,
   setFarmPaddocksOnMap,
   startFarmGeometryEditor,
-} from './map.js?v=20260420-4';
-import { setSidebarView } from './settings.js?v=20260420-4';
-import { setStore, store } from './state.js?v=20260420-4';
+} from './map.js?v=20260420-6';
+import { setSidebarView } from './settings.js?v=20260420-6';
+import { setStore, store } from './state.js?v=20260420-6';
+import { diagnostics } from './diagnostics.js?v=20260420-6';
 
 function getNode(id) {
   return document.getElementById(id);
@@ -640,12 +641,29 @@ async function removePaddock() {
 async function handlePadronSearch() {
   const department = getNode('fields-department-select')?.value?.trim() || '';
   const padron = getNode('fields-padron-input')?.value?.trim() || '';
+  diagnostics.track('padron_search_click', { department, padron, hasDept: !!department, hasPadron: !!padron });
   if (!department || !padron) {
     setStatus('Selecciona departamento y completa el padrón para buscar.', 'error');
+    diagnostics.log('warn', 'padron_search_missing_input', { department, padron });
     return;
   }
   setStatus('Buscando padrón oficial...', 'info');
-  const result = await searchPadron(department, padron);
+  let result;
+  try {
+    result = await searchPadron(department, padron);
+  } catch (err) {
+    diagnostics.log('error', 'padron_search_api_error', { department, padron, error: err?.message, status: err?.status });
+    setStatus(`Error al buscar padrón: ${err?.message || err}`, 'error');
+    return;
+  }
+  diagnostics.track('padron_search_result', {
+    department, padron,
+    found: result?.found,
+    provider: result?.provider,
+    cached: result?.cached,
+    hasFeature: !!result?.feature,
+    areaHa: result?.area_ha,
+  });
   setStore({ selectedPadronSearch: result });
   renderPadronResult();
   if (result.found && result.feature) {
@@ -670,6 +688,7 @@ async function handlePadronSearch() {
     return;
   }
   setFarmGuideOnMap(null);
+  diagnostics.log('warn', 'padron_search_no_result', { department, padron, resultKeys: result ? Object.keys(result) : null });
   setStatus('No se encontró un padrón único para esa búsqueda.', 'error');
 }
 

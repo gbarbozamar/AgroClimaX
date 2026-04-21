@@ -6,8 +6,8 @@
  * con fill negro 55% alpha, queda todo fuera del scope oscurecido sin tapar
  * la zona activa.
  */
-import { store, setStore } from './state.js?v=20260420-4';
-import { diagnostics } from './diagnostics.js?v=20260420-4';
+import { store, setStore } from './state.js?v=20260420-6';
+import { diagnostics } from './diagnostics.js?v=20260420-6';
 
 const CLIP_MASK_PANE = 'clipMaskPane';
 const WORLD_RING = [[-85, -180], [-85, 180], [85, 180], [85, -180], [-85, -180]];

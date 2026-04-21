@@ -36,6 +36,11 @@ logger = logging.getLogger(__name__)
 PADRON_PROVIDER = "snig_padronario_rural"
 PADRON_SERVICE_URL = "https://web.snig.gub.uy/arcgisserver/rest/services/DGSA/LimitesAdministrativos/MapServer/0/query"
 PADDOCK_CONTAINMENT_TOLERANCE_METERS = 10.0
+# Tolerancia de solape entre potreros del mismo campo: solapes menores a esta
+# franja (en metros) son aceptados (dibujos imperfectos a mano alzada, ruido
+# del digitalizador). Se aplica erosionando el nuevo polígono por esta
+# distancia y recién ahí chequeando overlap.
+PADDOCK_OVERLAP_TOLERANCE_METERS = 15.0
 ANALYTICS_NUMERIC_FIELDS = (
     "risk_score",
     "confidence_score",
@@ -1247,8 +1252,25 @@ async def save_paddock(
         if item.name.strip().lower() == name.lower():
             raise ValueError("El nombre del potrero debe ser unico dentro del campo")
         existing_geometry = _geometry_shape(item.geometry_geojson, field_name="geometry_geojson")
-        if existing_geometry.overlaps(geometry) or existing_geometry.contains(geometry) or geometry.contains(existing_geometry):
+        if existing_geometry.contains(geometry) or geometry.contains(existing_geometry):
             raise ValueError("Los potreros del mismo campo no pueden solaparse")
+        # Overlap parcial: se tolera hasta PADDOCK_OVERLAP_TOLERANCE_METERS.
+        # Erosionamos el nuevo polígono por esa distancia en metros y recién ahí
+        # chequeamos si sigue solapando. Si el solape era menor a la tolerancia,
+        # el buffer negativo lo come y el check pasa.
+        if existing_geometry.overlaps(geometry):
+            projected_existing = _project_geometry_local_meters(existing_geometry, reference_lat=reference_lat)
+            projected_new = _project_geometry_local_meters(geometry, reference_lat=reference_lat)
+            eroded_new = projected_new.buffer(-PADDOCK_OVERLAP_TOLERANCE_METERS)
+            # Si el erosionado sigue solapando -> es overlap real, rechazamos.
+            if not eroded_new.is_empty and projected_existing.overlaps(eroded_new):
+                # Medir el solape real en metros para dar contexto al usuario
+                overlap_area_m2 = projected_existing.intersection(projected_new).area
+                raise ValueError(
+                    "El potrero se solapa con '{}' en {:.0f} m² (tolerancia operativa {:.0f} m).".format(
+                        item.name, overlap_area_m2, PADDOCK_OVERLAP_TOLERANCE_METERS,
+                    )
+                )
 
     if row is None:
         row = FarmPaddock(user_id=user.id, field_id=field_id)

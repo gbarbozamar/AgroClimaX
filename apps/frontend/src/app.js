@@ -1,15 +1,15 @@
-import { API_BASE, API_V1, downloadJsonFile, fetchCustomState, fetchDepartmentLayers, fetchHexagonsGeojson, fetchHistory, fetchMapOverlayCatalog, fetchPreloadStatus, fetchProductiveTemplate, fetchProductiveUnits, fetchProductiveUnitsGeojson, fetchScopeState, fetchSectionsGeojson, fetchTimelineContext, fetchUnits, fetchWeatherForecast, startStartupPreload, uploadProductiveUnitsFile } from './api.js?v=20260420-4';
-import { initAuth } from './auth.js?v=20260420-4';
-import { clearDepartmentLayer, clearHexLayer, clearProductiveLayer, clearSectionsLayer, ensureTimelineEventsLoaded, highlightDepartment, highlightHex, highlightProductive, highlightSection, initMap, isLayerActive, refreshFarmPrivateOverlays, setAvailableOverlays, setHexesOnMap, setDepartmentsOnMap, setMapLayerChangeHandler, setProductivesOnMap, setSectionsOnMap, updateFocus } from './map.js?v=20260420-4';
-import { initFieldsPanel } from './fields.js?v=20260420-4';
-import { initSidebar, syncSidebar } from './sidebar.js?v=20260420-4';
-import { diagnostics, initDiagnostics } from './diagnostics.js?v=20260420-4';
-import { setScope, resetToNacional } from './scopeController.js?v=20260420-4';
-import { redrawAllAnalyticLayers } from './map.js?v=20260420-4';
-import { initProfilePanel, refreshProfilePanel } from './profile.js?v=20260420-4';
-import { normalizeState, populateDepartmentSelect, renderChart, renderDashboard, renderDrivers, renderError, renderForecast, renderHistory, renderLoading, renderWeatherCards } from './render.js?v=20260420-4';
-import { initSettingsPanel } from './settings.js?v=20260420-4';
-import { setStore, store } from './state.js?v=20260420-4';
+import { API_BASE, API_V1, downloadJsonFile, fetchCustomState, fetchDepartmentLayers, fetchHexagonsGeojson, fetchHistory, fetchMapOverlayCatalog, fetchPreloadStatus, fetchProductiveTemplate, fetchProductiveUnits, fetchProductiveUnitsGeojson, fetchScopeState, fetchSectionsGeojson, fetchTimelineContext, fetchUnits, fetchWeatherForecast, startStartupPreload, uploadProductiveUnitsFile } from './api.js?v=20260420-6';
+import { initAuth } from './auth.js?v=20260420-6';
+import { clearDepartmentLayer, clearHexLayer, clearProductiveLayer, clearSectionsLayer, ensureTimelineEventsLoaded, highlightDepartment, highlightHex, highlightProductive, highlightSection, initMap, isLayerActive, refreshFarmPrivateOverlays, setAvailableOverlays, setHexesOnMap, setDepartmentsOnMap, setMapLayerChangeHandler, setProductivesOnMap, setSectionsOnMap, updateFocus } from './map.js?v=20260420-6';
+import { initFieldsPanel } from './fields.js?v=20260420-6';
+import { initSidebar, syncSidebar } from './sidebar.js?v=20260420-6';
+import { diagnostics, initDiagnostics } from './diagnostics.js?v=20260420-6';
+import { setScope, resetToNacional } from './scopeController.js?v=20260420-6';
+import { redrawAllAnalyticLayers } from './map.js?v=20260420-6';
+import { initProfilePanel, refreshProfilePanel } from './profile.js?v=20260420-6';
+import { normalizeState, populateDepartmentSelect, renderChart, renderDashboard, renderDrivers, renderError, renderForecast, renderHistory, renderLoading, renderWeatherCards } from './render.js?v=20260420-6';
+import { initSettingsPanel } from './settings.js?v=20260420-6';
+import { setStore, store } from './state.js?v=20260420-6';
 
 setStore({ apiBase: API_BASE, apiV1: API_V1 });
 const TIMELINE_CONTEXT_CACHE = new Map();
@@ -1123,7 +1123,26 @@ async function bootstrap() {
     await loadSelection('custom');
   }, handleDepartmentSelect, handleSectionSelect);
   setFrontendPreloadStage('map', 'done', 'Viewport y controles inicializados.');
-  setMapLayerChangeHandler(async () => {
+  setMapLayerChangeHandler(async (info = {}) => {
+    const { layerId, active } = info;
+    // Si el usuario DESACTIVA una capa administrativa y el clipScope actual
+    // estaba atado a esa capa (seccion -> judicial, etc), volvemos a nacional
+    // para que no quede el clip pegado tras deseleccionar.
+    if (active === false) {
+      const scope = store.clipScope;
+      const needsReset = (
+        (layerId === 'judicial' && scope === 'seccion') ||
+        (layerId === 'productiva' && (scope === 'productiva' || scope === 'unidad')) ||
+        (layerId === 'hex' && scope === 'hex')
+      );
+      if (needsReset) {
+        try {
+          await setScope('nacional', null, { force: true });
+        } catch (err) {
+          diagnostics.log('warn', `setScope reset on layer toggle off: ${err.message}`);
+        }
+      }
+    }
     const preserveViewport = Boolean(
       store.selectedEstablishmentId
       || store.selectedFieldId
