@@ -115,13 +115,16 @@ def tile_fully_contained(z: int, x: int, y: int, geom: BaseGeometry | None) -> b
 async def _resolve_country(session: AsyncSession) -> BaseGeometry:
     """Unión de los 19 departamentos de Uruguay, cacheada en memoria.
 
-    Aplicamos un buffer ~0.05° (~5.5 km) al resultado para cerrar los slivers
-    y recortes del este (Rocha / Treinta y Tres / Cerro Largo) donde los
-    polígonos departamentales están truncados respecto a la línea de costa
-    real. Con 0.01° el contorno aún dejaba un hueco visible sobre el Atlántico
-    y la frontera brasileña a zoom >= 9. 0.05° es visualmente casi
-    imperceptible a escala país pero elimina los gaps de clipping incluso a
-    zoom alto.
+    Aplicamos un buffer ~0.10° (~11 km) al resultado. Los polígonos
+    departamentales de la DB están truncados respecto a la línea de costa
+    real: el east_max queda en -53.18° mientras que Uruguay real alcanza
+    ~-53.08° (Barra del Chuy). Con buffer 0.05° todavía quedaban tiles en
+    Cerro Largo/TyT este y costa Rocha que Copernicus sí generaba (20-30KB)
+    pero el polígono clippeaba a transparente. 0.10° hace que el contorno
+    alcance la costa real y cierra todos los huecos visibles del este.
+    El donut visual del frontend usa el mismo geojson así que no hay
+    desincronización (no pinta en Brasil/Argentina porque el mask también
+    expandió).
     """
     global _COUNTRY_GEOM
     if _COUNTRY_GEOM is not None:
@@ -138,9 +141,10 @@ async def _resolve_country(session: AsyncSession) -> BaseGeometry:
         raise ScopeNotFoundError("No department geometries found to build country union")
     geoms = [shape(g) for g in geojsons]
     raw_union = unary_union(geoms)
-    # Buffer ~0.05° (~5.5 km) cierra slivers y gaps costeros sin expandir
-    # percepciblemente el contorno del país en overlays visuales.
-    _COUNTRY_GEOM = raw_union.buffer(0.05)
+    # Buffer ~0.10° (~11 km) alcanza la costa atlántica real (~-53.08°) y la
+    # frontera brasileña. Incluye un sobre-relleno mínimo que queda ocultado
+    # por el donut visual en frontend (usa la misma geometría).
+    _COUNTRY_GEOM = raw_union.buffer(0.10)
     logger.info(
         "country union computed from %d departments (raw bounds=%s, buffered bounds=%s)",
         len(geoms), raw_union.bounds, _COUNTRY_GEOM.bounds,
