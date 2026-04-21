@@ -100,6 +100,10 @@ export const store = {
   authCsrfToken: null,
   authSession: null,
   authReady: false,
+  // Bloqueo transitorio de cambios de viewport tras una selección admin (depto/sección).
+  // Mientras true, highlightDepartment/highlightSection/updateFocus/fitLayerBounds y demás
+  // caminos de preload/timeline NO deben ejecutar setView ni fitBounds.
+  preserveViewportTransient: false,
   // Clipping multi-nivel
   clipScope: 'nacional',
   clipRef: null,

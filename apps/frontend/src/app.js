@@ -714,7 +714,9 @@ async function refreshDashboardFromTimelineDate(targetDate = store.timelineDate,
     setStore({ timelineContext: contextPayload, timelineContextLoading: false });
     setTimelineForecastVisibility(true);
     await applyDashboardModel(model, { renderForecastPanel: false, renderWeather: false });
-    updateFocus(model);
+    // Durante una selección admin reciente no movemos el viewport, aunque el path
+    // de timeline histórico resuelva con delay (evita el doble zoom diferido).
+    updateFocus(model, { preserveViewport: Boolean(store.preserveViewportTransient) });
     await prefetchTimelineContextNeighbors(descriptor, targetDate);
     return true;
   } catch (error) {
@@ -965,9 +967,23 @@ async function loadSelection(scope, department = null, unitId = null, { preserve
   }
 }
 
+function armPreserveViewportTransient(durationMs = 20000) {
+  setStore({ preserveViewportTransient: true });
+  if (armPreserveViewportTransient._timer) {
+    window.clearTimeout(armPreserveViewportTransient._timer);
+  }
+  armPreserveViewportTransient._timer = window.setTimeout(() => {
+    setStore({ preserveViewportTransient: false });
+    armPreserveViewportTransient._timer = null;
+  }, durationMs);
+}
+
 function handleDepartmentSelect(department) {
   const select = document.getElementById('department-select');
   if (select) select.value = department;
+  // Bloqueo transitorio: tapa cualquier setView/fitBounds diferido
+  // (preload callbacks, timeline async, highlight tardío, etc.).
+  armPreserveViewportTransient();
   setStore({ customGeojson: null, selectedSectionId: null, selectedHexId: null });
   setStore({ selectedProductiveId: null });
   document.getElementById('btn-limpiar').style.display = 'none';
@@ -989,6 +1005,7 @@ function handleDepartmentSelect(department) {
 }
 
 function handleSectionSelect(section) {
+  armPreserveViewportTransient();
   setStore({ customGeojson: null, selectedSectionId: section.unit_id, selectedProductiveId: null, selectedHexId: null });
   // Preservar viewport también en sección judicial.
   loadSelection('unidad', null, section.unit_id, { preserveViewport: true });
