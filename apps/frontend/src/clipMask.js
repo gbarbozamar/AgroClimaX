@@ -6,8 +6,8 @@
  * con fill negro 55% alpha, queda todo fuera del scope oscurecido sin tapar
  * la zona activa.
  */
-import { store, setStore } from './state.js?v=20260420-6';
-import { diagnostics } from './diagnostics.js?v=20260420-6';
+import { store, setStore } from './state.js?v=20260421-1';
+import { diagnostics } from './diagnostics.js?v=20260421-1';
 
 const CLIP_MASK_PANE = 'clipMaskPane';
 const WORLD_RING = [[-85, -180], [-85, 180], [85, 180], [85, -180], [-85, -180]];
@@ -23,10 +23,13 @@ export function ensureClipMaskPane(map) {
 
 /** Fetch con cache del polígono del scope. */
 export async function fetchScopeGeometry(scope, ref) {
+  // Siempre enviamos credentials (session cookie) para que el backend pueda
+  // validar ownership en scope=field. Para scopes públicos no molesta.
+  const fetchOpts = { credentials: 'same-origin' };
   if (!scope || scope === 'nacional') {
     const cached = store.scopeGeometryCache?.get?.('nacional:null');
     if (cached) return cached;
-    const resp = await fetch('/api/v1/geojson/uruguay');
+    const resp = await fetch('/api/v1/geojson/uruguay', fetchOpts);
     if (!resp.ok) throw new Error(`Failed to fetch uruguay geojson: ${resp.status}`);
     const data = await resp.json();
     if (!store.scopeGeometryCache) setStore({ scopeGeometryCache: new Map() });
@@ -36,7 +39,10 @@ export async function fetchScopeGeometry(scope, ref) {
   const cacheKey = `${scope}:${ref || ''}`;
   const cached = store.scopeGeometryCache?.get?.(cacheKey);
   if (cached) return cached;
-  const resp = await fetch(`/api/v1/geojson/${encodeURIComponent(scope)}/${encodeURIComponent(ref)}`);
+  const resp = await fetch(
+    `/api/v1/geojson/${encodeURIComponent(scope)}/${encodeURIComponent(ref)}`,
+    fetchOpts,
+  );
   if (!resp.ok) {
     diagnostics.log('warn', `No se pudo cargar geometría ${scope}/${ref}: HTTP ${resp.status}`);
     return null;

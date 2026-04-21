@@ -360,6 +360,21 @@ async def require_auth_context(
     return await get_auth_context(request, db)
 
 
+async def try_auth_context(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> AuthContext | None:
+    """Like `require_auth_context` but returns None silently on unauthenticated.
+
+    Useful for endpoints that serve both public and authenticated content
+    (e.g. /tiles that supports `clip_scope=field` only when authenticated).
+    """
+    try:
+        return await get_auth_context(request, db)
+    except HTTPException:
+        return None
+
+
 async def require_authenticated_request(
     request: Request,
     auth: AuthContext = Depends(require_auth_context),

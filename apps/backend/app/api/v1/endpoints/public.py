@@ -14,6 +14,7 @@ from app.services.preload import (
     start_timeline_window_preload,
     start_viewport_preload,
 )
+from app.services.auth import AuthContext, try_auth_context
 from app.services.public_api import (
     TRANSPARENT_PNG,
     build_timeline_frame_manifest,
@@ -204,15 +205,24 @@ async def tiles(
     clip_scope: str | None = Query(None),
     clip_ref: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
+    auth: AuthContext | None = Depends(try_auth_context),
 ):
     """
     Si `clip_scope` está presente, el tile se recorta al polígono resuelto.
     Tiles disjuntos de la geometría devuelven transparente sin pegar a
-    Copernicus ni cachear (early exit). Scope `field` está expuesto por
-    endpoint protegido separado si hace falta — aquí se rechaza.
+    Copernicus ni cachear (early exit).
+
+    `clip_scope='field'` sólo es válido con sesión autenticada; el ownership
+    check ocurre dentro de `fetch_tile_png` → `resolve_scope_geometry`.
     """
-    if clip_scope == "field":
-        return Response(content=TRANSPARENT_PNG, media_type="image/png", status_code=403)
+    user_id = auth.user.id if (auth and auth.user) else None
+    if clip_scope == "field" and user_id is None:
+        return Response(
+            content=TRANSPARENT_PNG,
+            media_type="image/png",
+            status_code=401,
+            headers={"Cache-Control": "no-store"},
+        )
     image = await fetch_tile_png(
         layer, z, x, y,
         target_date=source_date,
@@ -220,5 +230,6 @@ async def tiles(
         clip_scope=clip_scope,
         clip_ref=clip_ref,
         db=db,
+        user_id=user_id,
     )
     return Response(content=image or TRANSPARENT_PNG, media_type="image/png", headers={"Cache-Control": "max-age=7200"})

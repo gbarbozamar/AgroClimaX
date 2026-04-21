@@ -11,7 +11,7 @@ import {
   saveField,
   savePaddock,
   searchPadron,
-} from './api.js?v=20260420-6';
+} from './api.js?v=20260421-1';
 import {
   clearFarmGeometryEditor,
   fitGeojsonBounds,
@@ -21,10 +21,11 @@ import {
   setFarmGuideOnMap,
   setFarmPaddocksOnMap,
   startFarmGeometryEditor,
-} from './map.js?v=20260420-6';
-import { setSidebarView } from './settings.js?v=20260420-6';
-import { setStore, store } from './state.js?v=20260420-6';
-import { diagnostics } from './diagnostics.js?v=20260420-6';
+} from './map.js?v=20260421-1';
+import { setSidebarView } from './settings.js?v=20260421-1';
+import { setStore, store } from './state.js?v=20260421-1';
+import { diagnostics } from './diagnostics.js?v=20260421-1';
+import { setScope, resetToNacional } from './scopeController.js?v=20260421-1';
 
 function getNode(id) {
   return document.getElementById(id);
@@ -434,6 +435,11 @@ async function selectField(fieldId) {
     setFarmGuideOnMap(store.selectedPadronSearch?.feature || null);
     await refreshMapCollections();
     syncFormValues();
+    // Al deseleccionar un field, salimos del scope field y volvemos al nacional
+    // para que la máscara vuelva al país y los tiles se re-pidan sin clip.
+    if (store.clipScope === 'field') {
+      resetToNacional().catch((err) => diagnostics.log('warn', `resetToNacional on deselectField: ${err.message}`));
+    }
     return;
   }
 
@@ -462,6 +468,9 @@ async function selectField(fieldId) {
   await refreshMapCollections();
   highlightFarmField(detail.id, true);
   syncFormValues();
+  // Activar field mode: máscara visual del campo + tiles pedidos con clip_scope=field.
+  diagnostics.track('field_mode_on', { fieldId: detail.id, establishmentId: detail.establishment_id });
+  setScope('field', detail.id).catch((err) => diagnostics.log('warn', `setScope field: ${err.message}`));
 }
 
 async function refreshFieldsState({ preserveSelection = true } = {}) {

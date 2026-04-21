@@ -9,10 +9,10 @@
  * Reusa toda la lógica ya existente (window.toggleMapLayer, store.activeLayers,
  * window.startDrawing, profilePageUrl) sin duplicar estado.
  */
-import { store, setStore } from './state.js?v=20260420-6';
-import { profilePageUrl } from './api.js?v=20260420-6';
-import { diagnostics } from './diagnostics.js?v=20260420-6';
-import { currentScopeLabel, resetToNacional } from './scopeController.js?v=20260420-6';
+import { store, setStore } from './state.js?v=20260421-1';
+import { profilePageUrl } from './api.js?v=20260421-1';
+import { diagnostics } from './diagnostics.js?v=20260421-1';
+import { currentScopeLabel, resetToNacional } from './scopeController.js?v=20260421-1';
 
 const COLLAPSE_STORAGE_KEY = 'agroclimax.sidebarCollapsed';
 const ACTIVE_SECTION_KEY = 'agroclimax.sidebarActive';

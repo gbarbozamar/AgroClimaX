@@ -11,7 +11,7 @@
  *   initDiagnostics();
  *   diagnostics.track('layer_toggle', { layerId: 'rgb', enabled: true });
  */
-import { store } from './state.js?v=20260420-6';
+import { store } from './state.js?v=20260421-1';
 
 const MAX_ENTRIES = 500;
 const LS_BUFFER_KEY = 'agroclimax.diag.buffer';
