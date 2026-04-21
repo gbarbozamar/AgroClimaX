@@ -1,6 +1,7 @@
 from app.models.auth import AppUser, AppUserProfile, AuthSession
 from app.models.alerta import AlertState, AlertaEvento, NotificationEvent, SuscriptorAlerta
 from app.models.farm import FarmEstablishment, FarmField, FarmPaddock, PadronLookupCache
+from app.models.field_snapshot import FieldImageSnapshot
 from app.models.humedad import (
     AOIUnit,
     CalibrationSnapshot,
@@ -36,6 +37,7 @@ __all__ = [
     "FarmField",
     "FarmPaddock",
     "PadronLookupCache",
+    "FieldImageSnapshot",
     "AOIUnit",
     "CalibrationSnapshot",
     "ForecastSignal",
