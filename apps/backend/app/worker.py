@@ -4,14 +4,18 @@ import asyncio
 import os
 import logging
 
+from sqlalchemy import asc, select
+
 from app.bootstrap import initialize_application_state, run_startup_warmup
 from app.core.config import settings
-from app.db.session import engine
+from app.db.session import AsyncSessionLocal, engine
 from app.services.pipeline_ops import scheduler_loop
 
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+FIELD_VIDEO_POLL_SECONDS = 10
 
 
 async def _handle_healthcheck(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -49,6 +53,35 @@ async def _start_health_server() -> asyncio.AbstractServer | None:
     return server
 
 
+async def field_video_loop() -> None:
+    """Fase 4: procesa FieldVideoJob queued uno a la vez (concurrencia 1)."""
+    try:
+        from app.models.field_video import FieldVideoJob
+        from app.services.field_video import generate_field_video
+    except Exception:  # pragma: no cover - model/service no listo
+        logger.warning("FieldVideo loop deshabilitado: modulos no disponibles")
+        return
+
+    while True:
+        try:
+            async with AsyncSessionLocal() as session:
+                stmt = (
+                    select(FieldVideoJob)
+                    .where(FieldVideoJob.status == "queued")
+                    .order_by(asc(FieldVideoJob.created_at))
+                    .limit(1)
+                )
+                job = (await session.execute(stmt)).scalar_one_or_none()
+                if job is not None:
+                    logger.info("FieldVideo worker tomando job %s", job.id)
+                    await generate_field_video(session, job.id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Fallo en field_video_loop")
+        await asyncio.sleep(FIELD_VIDEO_POLL_SECONDS)
+
+
 async def main() -> None:
     logger.info("AgroClimaX worker iniciando - entorno=%s role=%s", settings.app_env, settings.app_runtime_role)
     await initialize_application_state()
@@ -59,7 +92,10 @@ async def main() -> None:
             await run_startup_warmup()
 
         if settings.pipeline_scheduler_enabled:
-            await scheduler_loop()
+            await asyncio.gather(
+                scheduler_loop(),
+                field_video_loop(),
+            )
         else:
             logger.info("Worker finalizado: scheduler deshabilitado")
     finally:

@@ -6,6 +6,8 @@ from app.api.v1.endpoints import (
     auth,
     campos,
     client_diagnostics,
+    field_timeline,
+    field_video,
     geo_scopes,
     ground_truth,
     hexagonos,
@@ -41,6 +43,8 @@ api_router.include_router(alert_subscriptions.public_router)
 protected_router.include_router(alertas.router)
 protected_router.include_router(alert_subscriptions.router)
 protected_router.include_router(campos.router)
+protected_router.include_router(field_timeline.router)
+protected_router.include_router(field_video.router)
 protected_router.include_router(unidades.router)
 protected_router.include_router(layers.router)
 protected_router.include_router(hexagonos.router)
