@@ -252,24 +252,40 @@ async def render_field_snapshot(
         )
         return None
 
-    observed_dt = datetime(observed_at.year, observed_at.month, observed_at.day)
+    # El modelo declara observed_at como Date (no DateTime). Pasamos la `date`
+    # directamente — convertir a datetime hacía que el query de idempotencia
+    # no matchee al re-render con misma fecha (UNIQUE fail en INSERT).
+    observed_col = observed_at
 
     existing_result = await db.execute(
         select(FieldImageSnapshot).where(
             FieldImageSnapshot.field_id == field_id,
             FieldImageSnapshot.layer_key == layer_key,
-            FieldImageSnapshot.observed_at == observed_dt,
+            FieldImageSnapshot.observed_at == observed_col,
         ).limit(1)
     )
     snapshot = existing_result.scalar_one_or_none()
 
+    # user_id requerido por FK del modelo. Derivado del FarmField; fallback
+    # a 'pipeline-anonymous' si el row no está en DB (caso edge del worker
+    # que renderea desde geometría externa).
+    user_id = (
+        getattr(field_obj, "user_id", None)
+        if field_obj
+        else None
+    ) or "pipeline-anonymous"
+
     payload = {
         "field_id": field_id,
+        "user_id": user_id,
         "layer_key": layer_key,
-        "observed_at": observed_dt,
+        "observed_at": observed_col,
+        # Compat con ambos nombres de columna usados por agentes paralelos.
         "storage_path": str(out_path),
+        "storage_key": str(out_path),
         "width_px": out_w,
         "height_px": out_h,
+        "bbox_json": [west, south, east, north],
         "bbox_west": west,
         "bbox_south": south,
         "bbox_east": east,
@@ -279,6 +295,7 @@ async def render_field_snapshot(
         "area_ha": area_ha,
         "risk_score": risk_score,
         "ndmi_mean": ndmi_mean,
+        "s2_ndmi_mean": ndmi_mean,
         "state": state,
     }
 
