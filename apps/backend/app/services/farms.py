@@ -17,6 +17,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.models.alerta import AlertState
 from app.models.auth import AppUser
 from app.models.farm import FarmEstablishment, FarmField, FarmPaddock, PadronLookupCache
 from app.models.humedad import AOIUnit
