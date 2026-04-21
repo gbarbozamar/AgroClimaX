@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from contextlib import suppress
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta, timezone
@@ -652,7 +653,57 @@ async def execute_daily_pipeline_job(
         status="success",
         details=_compact_daily_result(result),
     )
+
+    # Post-daily hook: renderizar snapshots de campos activos (Fase 2 del
+    # Field Mode plan). Detrás de un env flag para permitir rollback sin
+    # redeploy. Failures aquí no deben afectar el pipeline — solo log.
+    if os.environ.get("FIELD_SNAPSHOTS_ENABLED", "true").lower() in ("1", "true", "yes"):
+        try:
+            await _render_active_field_snapshots(session, target_date=target_date)
+        except Exception as exc:  # pragma: no cover - best-effort post-hook
+            logger.warning("field snapshots post-hook failed: %s", exc)
+
     return {"status": "success", "job": _serialize_run(finalized), "result": result}
+
+
+async def _render_active_field_snapshots(
+    session: AsyncSession,
+    *,
+    target_date: date,
+) -> None:
+    """Enumera FarmField activos con ownership y renderiza snapshots por capa
+    prioritaria. Idempotente por UniqueConstraint (field_id, layer_key, observed_at).
+    """
+    try:
+        from app.models.farm import FarmField
+        from app.services.field_snapshots import render_field_snapshot
+    except Exception as exc:
+        logger.warning("field snapshots module not available: %s", exc)
+        return
+
+    priority_layers = ["alerta_fusion", "rgb", "ndvi", "ndmi"]
+    result = await session.execute(
+        select(FarmField).where(FarmField.user_id.is_not(None))
+    )
+    fields = list(result.scalars().all())
+    if not fields:
+        return
+
+    rendered = 0
+    for field in fields:
+        for layer in priority_layers:
+            try:
+                await render_field_snapshot(session, field.id, layer, target_date)
+                rendered += 1
+            except Exception as exc:  # pragma: no cover - por-field best-effort
+                logger.info(
+                    "field snapshot skipped field=%s layer=%s exc=%s",
+                    field.id, layer, exc,
+                )
+    logger.info(
+        "field snapshots post-hook rendered=%d fields=%d observed_at=%s",
+        rendered, len(fields), target_date.isoformat(),
+    )
 
 
 async def execute_recalibration_job(
