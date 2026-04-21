@@ -8,6 +8,7 @@ from app.api.v1.endpoints import (
     client_diagnostics,
     field_timeline,
     field_video,
+    mcp_feed,
     geo_scopes,
     ground_truth,
     hexagonos,
@@ -39,6 +40,9 @@ api_router.include_router(client_diagnostics.router)
 # en el handler, así que no necesita el wrapper con dependencies=).
 api_router.include_router(geo_scopes.protected_router)
 api_router.include_router(geo_scopes.public_router)
+# MCP feed: auth propia via service token (header X-Service-Token), no va
+# dentro de protected_router porque no usa session cookie.
+api_router.include_router(mcp_feed.router)
 api_router.include_router(alert_subscriptions.public_router)
 protected_router.include_router(alertas.router)
 protected_router.include_router(alert_subscriptions.router)
