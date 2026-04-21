@@ -156,7 +156,14 @@ TRANSPARENT_PNG = (
 logger = logging.getLogger(__name__)
 
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
-_MIN_VALID_TILE_BYTES = 1024
+# PNG 256x256 legítimo con contenido homogéneo (ej. NDVI de un campo pequeño
+# con poca varianza espacial) puede comprimir a ~500-900b. El threshold previo
+# de 1024b rechazaba esos tiles como "sospechosos" y devolvía transparente,
+# haciendo que NDVI/NDWI/LST no renderizaran en scope=field cuando el campo
+# tenía cobertura chica. Los placeholders de error Copernicus son 300-350b
+# (confirmado en logs), así que 500b discrimina entre "tile real chico" y
+# "placeholder de error" con margen.
+_MIN_VALID_TILE_BYTES = 500
 
 
 def _is_valid_tile_png(data: bytes | None) -> bool:
