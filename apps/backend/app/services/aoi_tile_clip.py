@@ -115,11 +115,13 @@ def tile_fully_contained(z: int, x: int, y: int, geom: BaseGeometry | None) -> b
 async def _resolve_country(session: AsyncSession) -> BaseGeometry:
     """Unión de los 19 departamentos de Uruguay, cacheada en memoria.
 
-    Aplicamos un buffer pequeño (~1km) al resultado para cerrar slivers micro
-    entre polígonos departamentales que dejaban franjas sin renderizar en el
-    este (Rocha / Treinta y Tres / Cerro Largo) cuando los polígonos fuente
-    tienen bordes ligeramente desencontrados. El buffer es visualmente
-    imperceptible a escala país pero elimina los gaps de clipping.
+    Aplicamos un buffer ~0.05° (~5.5 km) al resultado para cerrar los slivers
+    y recortes del este (Rocha / Treinta y Tres / Cerro Largo) donde los
+    polígonos departamentales están truncados respecto a la línea de costa
+    real. Con 0.01° el contorno aún dejaba un hueco visible sobre el Atlántico
+    y la frontera brasileña a zoom >= 9. 0.05° es visualmente casi
+    imperceptible a escala país pero elimina los gaps de clipping incluso a
+    zoom alto.
     """
     global _COUNTRY_GEOM
     if _COUNTRY_GEOM is not None:
@@ -136,9 +138,9 @@ async def _resolve_country(session: AsyncSession) -> BaseGeometry:
         raise ScopeNotFoundError("No department geometries found to build country union")
     geoms = [shape(g) for g in geojsons]
     raw_union = unary_union(geoms)
-    # Buffer ~0.01° (~1.1 km) cierra slivers entre deptos sin expandir
+    # Buffer ~0.05° (~5.5 km) cierra slivers y gaps costeros sin expandir
     # percepciblemente el contorno del país en overlays visuales.
-    _COUNTRY_GEOM = raw_union.buffer(0.01)
+    _COUNTRY_GEOM = raw_union.buffer(0.05)
     logger.info(
         "country union computed from %d departments (raw bounds=%s, buffered bounds=%s)",
         len(geoms), raw_union.bounds, _COUNTRY_GEOM.bounds,
