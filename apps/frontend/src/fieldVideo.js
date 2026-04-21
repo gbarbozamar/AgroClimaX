@@ -120,7 +120,9 @@ export function openFieldVideoModal(fieldId, layerKey = 'ndvi', durationDays = 3
     body.appendChild(video);
     const meta = document.createElement('div');
     meta.className = 'field-video-meta';
-    meta.textContent = `${job.frame_count ?? '?'} frames · ${(job.size_bytes ? (job.size_bytes / 1024 / 1024).toFixed(2) : '?')} MB`;
+    const frames = job.frame_count ?? job.frames ?? '?';
+    const mb = Number.isFinite(job.size_bytes) ? (job.size_bytes / 1024 / 1024).toFixed(2) : '?';
+    meta.textContent = `${frames} frames · ${mb} MB · layer=${layerKey} · ${durationDays}d`;
     body.appendChild(meta);
   }
 
