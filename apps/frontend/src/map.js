@@ -132,6 +132,37 @@ const BUILTIN_LAYER_DEFS = [
   },
 ];
 const LAYER_CATEGORY_ORDER = ['Analiticas', 'Suelos', 'Agua', 'Parcelas', 'Infraestructura', 'Restricciones', 'Administrativas'];
+const LAYER_CATEGORY_COLLAPSE_STORAGE_KEY = 'agroclimax:layer-categories-collapsed';
+
+function readCollapsedCategories() {
+  try {
+    const raw = window.localStorage.getItem(LAYER_CATEGORY_COLLAPSE_STORAGE_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    return new Set(Array.isArray(parsed) ? parsed : []);
+  } catch (_) {
+    return new Set();
+  }
+}
+
+function writeCollapsedCategories(set) {
+  try {
+    window.localStorage.setItem(LAYER_CATEGORY_COLLAPSE_STORAGE_KEY, JSON.stringify([...set]));
+  } catch (_) {
+    // ignore storage failures
+  }
+}
+
+function isCategoryCollapsed(category) {
+  return readCollapsedCategories().has(category);
+}
+
+function setCategoryCollapsed(category, collapsed) {
+  const set = readCollapsedCategories();
+  if (collapsed) set.add(category);
+  else set.delete(category);
+  writeCollapsedCategories(set);
+}
 const RECOMMENDED_LAYER_IDS = ['alerta', 'coneat', 'hidrografia', 'area_inundable', 'catastro_rural', 'rutas_camineria', 'zonas_sensibles'];
 const TIMELINE_WINDOW_DAYS = 365;
 const TIMELINE_SPEED_PRESETS = [
@@ -896,7 +927,10 @@ function renderLayerMenu() {
   const html = [];
   groups.forEach((items, category) => {
     if (!items.length) return;
-    html.push(`<section class="map-layer-group"><h4 class="map-layer-group-title">${category}</h4>`);
+    const collapsed = isCategoryCollapsed(category);
+    html.push(`<section class="map-layer-group${collapsed ? ' is-collapsed' : ''}" data-category="${category}">`);
+    html.push(`<button type="button" class="map-layer-category-header" data-category-toggle="${category}" aria-expanded="${collapsed ? 'false' : 'true'}"><span class="map-layer-category-chevron" aria-hidden="true">&#9662;</span><span class="map-layer-group-title">${category}</span></button>`);
+    html.push(`<div class="map-layer-category-body${collapsed ? ' collapsed' : ''}">`);
     items.forEach((definition) => {
       const active = isLayerActive(definition.id);
       const opacity = Math.round(layerOpacityValue(definition.id, Number(definition.opacityDefault || 0.85)) * 100);
@@ -910,11 +944,14 @@ function renderLayerMenu() {
               <span class="map-layer-meta">${getLayerMenuLabel(definition)}</span>
               ${error ? `<span class="map-layer-error">${error}</span>` : ''}
             </span>
+            <span class="map-layer-opacity-inline" title="Opacidad ${opacity}%">
+              <input type="range" class="layer-opacity" min="0" max="100" value="${opacity}" data-opacity-layer="${definition.id}" aria-label="Opacidad de ${definition.label}">
+            </span>
           </span>
-          ${active ? `<span class="map-layer-opacity"><input type="range" min="15" max="100" value="${opacity}" data-opacity-layer="${definition.id}"><span>${opacity}%</span></span>` : ''}
         </label>
       `);
     });
+    html.push('</div>');
     html.push('</section>');
   });
   groupsNode.innerHTML = html.join('');
@@ -942,8 +979,25 @@ function ensureLayerControlEvents() {
     groupsNode.addEventListener('input', (event) => {
       const slider = event.target.closest('[data-opacity-layer]');
       if (!slider) return;
-      const value = Math.max(0.15, Math.min(1, Number(slider.value) / 100));
+      const value = Math.max(0, Math.min(1, Number(slider.value) / 100));
       setLayerOpacityValue(slider.dataset.opacityLayer, value);
+    });
+    groupsNode.addEventListener('click', (event) => {
+      if (event.target.closest('.layer-opacity')) {
+        // Prevent the surrounding <label> from toggling the layer checkbox
+        // when the user clicks directly on the opacity slider.
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      const header = event.target.closest('[data-category-toggle]');
+      if (!header) return;
+      event.preventDefault();
+      const category = header.getAttribute('data-category-toggle');
+      if (!category) return;
+      const nextCollapsed = !isCategoryCollapsed(category);
+      setCategoryCollapsed(category, nextCollapsed);
+      renderLayerMenu();
     });
   }
   if (clearBtn && !clearBtn.dataset.bound) {
@@ -2015,6 +2069,8 @@ function paddockPopup(props) {
 
 function fitLayerBounds(layer, fitBounds = false, maxZoom = 15) {
   if (!store.map || !fitBounds || !layer?.getBounds) return;
+  // Guard: respetar preserveViewportTransient seteado por handleDepartmentSelect/handleSectionSelect.
+  if (store.preserveViewportTransient) return;
   store.map.fitBounds(layer.getBounds(), { padding: [28, 28], maxZoom });
 }
 
@@ -2270,6 +2326,8 @@ function syncConeatVisibilityHint() {
 
 function ensureConeatVisibleZoom() {
   if (!store.map || store.map.getZoom() >= CONEAT_MIN_VISIBLE_ZOOM) return;
+  // Guard transient: no pisamos el viewport del usuario tras una selección admin.
+  if (store.preserveViewportTransient) return;
 
   const selectedDepartmentLayer = store.selectedDepartment
     ? store.departmentsLookup?.[store.selectedDepartment]
@@ -2727,7 +2785,8 @@ export function highlightDepartment(departmentName, fitBounds = false) {
   const layer = store.departmentsLookup[departmentName];
   if (!layer) return;
   if (layer.bringToFront) layer.bringToFront();
-  if (fitBounds && layer.getBounds) {
+  // Guard transient: preservamos highlight visual pero NO movemos viewport.
+  if (fitBounds && layer.getBounds && !store.preserveViewportTransient) {
     store.map.fitBounds(layer.getBounds(), { padding: [20, 20], maxZoom: 8 });
   }
   if (layer.openPopup) layer.openPopup();
@@ -2740,7 +2799,7 @@ export function highlightSection(sectionId, fitBounds = false) {
   const layer = store.sectionsLookup[sectionId];
   if (!layer) return;
   if (layer.bringToFront) layer.bringToFront();
-  if (fitBounds && layer.getBounds) {
+  if (fitBounds && layer.getBounds && !store.preserveViewportTransient) {
     store.map.fitBounds(layer.getBounds(), { padding: [20, 20], maxZoom: 10 });
   }
   if (layer.openPopup) layer.openPopup();
@@ -2753,7 +2812,7 @@ export function highlightProductive(unitId, fitBounds = false) {
   const layer = store.productiveLookup[unitId];
   if (!layer) return;
   if (layer.bringToFront) layer.bringToFront();
-  if (fitBounds && layer.getBounds) {
+  if (fitBounds && layer.getBounds && !store.preserveViewportTransient) {
     store.map.fitBounds(layer.getBounds(), { padding: [20, 20], maxZoom: 13 });
   }
   if (layer.openPopup) layer.openPopup();
@@ -2766,7 +2825,7 @@ export function highlightHex(hexId, fitBounds = false) {
   const layer = store.hexLookup[hexId];
   if (!layer) return;
   if (layer.bringToFront) layer.bringToFront();
-  if (fitBounds && layer.getBounds) {
+  if (fitBounds && layer.getBounds && !store.preserveViewportTransient) {
     store.map.fitBounds(layer.getBounds(), { padding: [20, 20], maxZoom: 10 });
   }
   if (layer.openPopup) layer.openPopup();
@@ -2779,7 +2838,7 @@ export function updateFocus(model, { preserveViewport = false } = {}) {
   // setFarmGuideOnMap — we must not undo that zoom from a downstream loadSelection call.
   // Or cuando el llamador pide explícitamente preserveViewport (ej. handleDepartmentSelect,
   // handleSectionSelect — el usuario no quiere que clickear depto/sección le mueva el mapa).
-  const preserveFarmViewport = preserveViewport || Boolean(
+  const preserveFarmViewport = preserveViewport || store.preserveViewportTransient || Boolean(
     store.selectedEstablishmentId || store.selectedFieldId || store.selectedPaddockId || store.selectedPadronSearch
   );
   if (store.focusMarker) store.map.removeLayer(store.focusMarker);
@@ -2850,7 +2909,8 @@ export async function toggleMapLayer(layerId, desiredActive = null) {
 }
 
 export function setLayerOpacityValue(layerId, value) {
-  const clamped = Math.max(0.15, Math.min(1, Number(value) || 0.85));
+  const numeric = Number.isFinite(Number(value)) ? Number(value) : 0.85;
+  const clamped = Math.max(0, Math.min(1, numeric));
   const nextOpacities = { ...(store.layerOpacities || {}), [layerId]: clamped };
   setStore({ layerOpacities: nextOpacities });
   const layerInstance = store.layerInstances?.[layerId];

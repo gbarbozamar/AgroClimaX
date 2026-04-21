@@ -925,6 +925,46 @@
       text-transform: uppercase;
       color: rgba(191, 208, 233, 0.88);
     }
+    .map-layer-category-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 2px;
+      margin: 0;
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: inherit;
+      text-align: left;
+      width: 100%;
+      user-select: none;
+    }
+    .map-layer-category-header:hover .map-layer-group-title {
+      color: rgba(220, 233, 250, 1);
+    }
+    .map-layer-category-header:focus-visible {
+      outline: 2px solid rgba(74, 144, 217, 0.55);
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
+    .map-layer-category-chevron {
+      display: inline-block;
+      font-size: 0.7rem;
+      color: rgba(191, 208, 233, 0.7);
+      transition: transform 150ms ease;
+      transform: rotate(0deg);
+    }
+    .map-layer-group.is-collapsed .map-layer-category-chevron {
+      transform: rotate(-90deg);
+    }
+    .map-layer-category-body {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .map-layer-category-body.collapsed {
+      display: none;
+    }
     .map-layer-item {
       display: flex;
       flex-direction: column;
@@ -989,6 +1029,34 @@
       flex: 1;
       accent-color: var(--accent);
       cursor: pointer;
+    }
+    .map-layer-opacity-inline {
+      display: inline-flex;
+      align-items: center;
+      margin-left: auto;
+      padding-left: 8px;
+      flex-shrink: 0;
+    }
+    .map-layer-item-main {
+      align-items: center;
+    }
+    input[type=range].layer-opacity {
+      width: 72px;
+      height: 14px;
+      accent-color: var(--accent);
+      cursor: pointer;
+      margin: 0;
+      padding: 0;
+      background: transparent;
+    }
+    input[type=range].layer-opacity:focus-visible {
+      outline: 2px solid rgba(74, 144, 217, 0.55);
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
+    .map-layer-item .map-layer-copy {
+      flex: 1 1 auto;
+      min-width: 0;
     }
     .map-timeline {
       position: absolute;
