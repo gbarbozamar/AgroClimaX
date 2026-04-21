@@ -316,7 +316,10 @@ function renderFieldsList() {
   const clearButtonHtml = store.selectedFieldId
     ? '<button class="fields-list-clear" type="button" data-role="deselect-field">✕ Salir del campo seleccionado (volver a nacional)</button>'
     : '';
-  node.innerHTML = clearButtonHtml + items.map((item) => `
+  const videoButtonHtml = store.selectedFieldId
+    ? '<button class="field-video-btn" type="button" data-role="request-video" title="Generar video timelapse NDVI últimos 30 días">🎬 Generar video 30d (NDVI)</button>'
+    : '';
+  node.innerHTML = clearButtonHtml + videoButtonHtml + items.map((item) => `
     <button class="fields-list-item ${item.id === store.selectedFieldId ? 'active' : ''}" type="button" data-field-id="${escapeHtml(item.id)}">
       <span class="fields-list-title">${escapeHtml(item.name)}</span>
       <span class="fields-list-copy">${escapeHtml(item.establishment_name || 'Sin establecimiento')} · ${escapeHtml(item.department || '-')} · ${escapeHtml(item.area_ha || '-')} ha</span>
@@ -326,6 +329,13 @@ function renderFieldsList() {
   if (deselectBtn) {
     deselectBtn.addEventListener('click', async () => {
       await selectField(null);
+    });
+  }
+  const videoBtn = node.querySelector('[data-role="request-video"]');
+  if (videoBtn) {
+    videoBtn.addEventListener('click', async () => {
+      const { openFieldVideoModal } = await import('./fieldVideo.js?v=20260421-1');
+      openFieldVideoModal(store.selectedFieldId, 'ndvi', 30);
     });
   }
   node.querySelectorAll('[data-field-id]').forEach((button) => {

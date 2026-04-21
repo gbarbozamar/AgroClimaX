@@ -1407,6 +1407,84 @@
       color: #ffbcbc;
     }
 
+    .field-video-btn {
+      width: 100%;
+      padding: 8px 12px;
+      margin-bottom: 8px;
+      background: rgba(90, 140, 255, 0.14);
+      color: #a9c4ff;
+      border: 1px solid rgba(90, 140, 255, 0.35);
+      border-radius: 8px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+
+    .field-video-btn:hover {
+      background: rgba(90, 140, 255, 0.25);
+      color: #d3e1ff;
+    }
+
+    .field-video-modal-backdrop {
+      position: fixed; inset: 0;
+      background: rgba(0, 0, 0, 0.7);
+      z-index: 10000;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    .field-video-modal {
+      position: relative;
+      background: #14181f;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      padding: 20px 22px 16px;
+      max-width: 80vw; max-height: 80vh; min-width: 480px;
+      box-shadow: 0 14px 36px rgba(0,0,0,0.55);
+    }
+
+    .field-video-title {
+      font-size: 0.9rem; font-weight: 700;
+      color: #fff; margin-bottom: 12px;
+    }
+
+    .field-video-close {
+      position: absolute; top: 8px; right: 10px;
+      background: transparent; border: none;
+      color: #99a; cursor: pointer;
+      font-size: 1.1rem; line-height: 1;
+    }
+    .field-video-close:hover { color: #fff; }
+
+    .field-video-body {
+      display: flex; flex-direction: column;
+      align-items: center; gap: 10px;
+      min-height: 180px; justify-content: center;
+    }
+
+    .field-video-progress-text { font-size: 0.8rem; color: #99a; }
+
+    .field-video-spinner {
+      width: 38px; height: 38px;
+      border: 3px solid rgba(255, 255, 255, 0.15);
+      border-top-color: #a9c4ff;
+      border-radius: 50%;
+      animation: field-video-spin 0.9s linear infinite;
+    }
+    @keyframes field-video-spin { to { transform: rotate(360deg); } }
+
+    .field-video-player {
+      max-width: 72vw; max-height: 60vh;
+      border-radius: 8px; background: #000;
+    }
+
+    .field-video-meta { font-size: 0.72rem; color: #99a; }
+
+    .field-video-error {
+      color: #ff9090; font-size: 0.8rem;
+      max-width: 420px; text-align: center;
+    }
+
     .fields-result-box {
       border: 1px solid rgba(255,255,255,0.08);
       border-radius: 10px;
