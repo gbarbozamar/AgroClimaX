@@ -128,18 +128,20 @@ async def _get_or_placeholder(path: str, params: dict, user_id: str | None) -> d
 
 
 @mcp.tool
-async def paddock_metrics(field_id: str, user_id: str | None = None) -> dict:
-    """Métricas agronómicas por potrero (NDVI/NDMI stats, área, heterogeneidad)."""
+async def paddock_metrics(paddock_id: str, date_range_days: int = 30, user_id: str | None = None) -> dict:
+    """Métricas agregadas de un potrero (risk current/mean/max 30d, NDMI trend, días en alerta)."""
     return await _get_or_placeholder(
-        f"/api/v1/mcp/fields/{field_id}/paddock-metrics", {}, user_id
+        f"/api/v1/mcp/paddocks/{paddock_id}/metrics",
+        {"date_range_days": date_range_days},
+        user_id,
     )
 
 
 @mcp.tool
-async def establishment_summary(field_id: str, user_id: str | None = None) -> dict:
-    """Resumen de establecimiento (emergencia, cobertura, stand count estimado)."""
+async def establishment_summary(establishment_id: str, user_id: str | None = None) -> dict:
+    """Resumen de establecimiento (fields totales, área, highest_risk_field, fields_in_alert)."""
     return await _get_or_placeholder(
-        f"/api/v1/mcp/fields/{field_id}/establishment-summary", {}, user_id
+        f"/api/v1/mcp/establishments/{establishment_id}/summary", {}, user_id
     )
 
 
@@ -147,7 +149,7 @@ async def establishment_summary(field_id: str, user_id: str | None = None) -> di
 async def crop_prediction(
     field_id: str, horizon_days: int = 30, user_id: str | None = None
 ) -> dict:
-    """Predicción de rendimiento / estrés hídrico a N días."""
+    """Predicción heurística del outlook del campo (NDMI trend + risk tier + yield estimate). Modelo: heuristic-v0.1."""
     return await _get_or_placeholder(
         f"/api/v1/mcp/fields/{field_id}/crop-prediction",
         {"horizon_days": horizon_days},
