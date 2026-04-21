@@ -227,3 +227,53 @@ async def mcp_list_fields_by_alert(
                 "observed_at": snap.observed_at.isoformat() if snap.observed_at else None,
             })
     return results
+
+
+@router.get("/paddocks/{paddock_id}/metrics")
+async def mcp_paddock_metrics(
+    paddock_id: str,
+    date_range_days: int = Query(30, ge=1, le=365),
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_service_token),
+):
+    try:
+        from app.services.paddock_metrics import get_paddock_metrics
+    except Exception:
+        raise HTTPException(status_code=503, detail="paddock_metrics service not available")
+    try:
+        return await get_paddock_metrics(db, paddock_id, date_range_days)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/establishments/{establishment_id}/summary")
+async def mcp_establishment_summary(
+    establishment_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_service_token),
+):
+    try:
+        from app.services.establishment_summary import get_establishment_summary
+    except Exception:
+        raise HTTPException(status_code=503, detail="establishment_summary service not available")
+    try:
+        return await get_establishment_summary(db, establishment_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/fields/{field_id}/crop-prediction")
+async def mcp_crop_prediction(
+    field_id: str,
+    horizon_days: int = Query(30, ge=1, le=365),
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_service_token),
+):
+    try:
+        from app.services.crop_prediction import predict_crop_outlook
+    except Exception:
+        raise HTTPException(status_code=503, detail="crop_prediction service not available")
+    try:
+        return await predict_crop_outlook(db, field_id, horizon_days)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
