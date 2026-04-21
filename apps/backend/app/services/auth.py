@@ -11,7 +11,10 @@ from typing import Any
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import Depends, HTTPException, Request
+import hmac
+import os
+
+from fastapi import Depends, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -386,6 +389,24 @@ async def require_authenticated_request(
         if not received or received != auth.csrf_token:
             raise HTTPException(status_code=403, detail="CSRF token invalido")
     return auth
+
+
+async def require_service_token(
+    x_service_token: str = Header(..., alias="X-Service-Token"),
+    x_user_id: str | None = Header(None, alias="X-User-Id"),
+) -> dict:
+    """Fase 5 MCP: service-token auth para `/api/v1/mcp/*` endpoints.
+
+    Retorna {is_service: True, user_id: str|None}. Constant-time comparison
+    contra el token configurado en env MCP_SERVICE_TOKEN. Si el token env no
+    está seteado, el servicio queda deshabilitado (503) — fail-closed.
+    """
+    expected = os.environ.get("MCP_SERVICE_TOKEN", "")
+    if not expected:
+        raise HTTPException(status_code=503, detail="MCP disabled (no MCP_SERVICE_TOKEN configured)")
+    if not hmac.compare_digest(x_service_token, expected):
+        raise HTTPException(status_code=401, detail="Invalid service token")
+    return {"is_service": True, "user_id": x_user_id}
 
 
 async def logout_auth_session(request: Request, db: AsyncSession) -> JSONResponse:
