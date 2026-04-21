@@ -118,6 +118,11 @@ async def generate_field_video(db: AsyncSession, job_id: str) -> dict | None:
         frame_count = await asyncio.to_thread(_encode_mp4_sync, existing, target, DEFAULT_FPS)
 
         job.video_path = str(target)
+        try:
+            # frame_count es column nullable; setattr tolera si no existe en schema viejo.
+            setattr(job, "frame_count", frame_count)
+        except Exception:
+            pass
         job.progress_pct = 100.0
         job.status = "ready"
         job.finished_at = _now_utc()

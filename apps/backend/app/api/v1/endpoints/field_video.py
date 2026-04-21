@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -70,6 +71,17 @@ async def _ensure_field_owned(db: AsyncSession, *, user_id: str, field_id: str) 
 
 
 def _serialize(job: FieldVideoJob) -> dict[str, Any]:
+    # Derivar size_bytes del archivo en disco (autoritativo). frame_count se
+    # guarda en la columna del modelo si existe, sino queda None.
+    size_bytes: int | None = None
+    try:
+        if job.video_path:
+            p = Path(job.video_path)
+            if p.exists():
+                size_bytes = p.stat().st_size
+    except Exception:
+        size_bytes = None
+    frame_count = getattr(job, "frame_count", None)
     return {
         "job_id": job.id,
         "field_id": job.field_id,
@@ -82,6 +94,8 @@ def _serialize(job: FieldVideoJob) -> dict[str, Any]:
             if job.status == "ready"
             else None
         ),
+        "frame_count": frame_count,
+        "size_bytes": size_bytes,
         "error_message": job.error_message,
         "created_at": _coerce_utc(job.created_at).isoformat() if job.created_at else None,
         "finished_at": _coerce_utc(job.finished_at).isoformat() if job.finished_at else None,

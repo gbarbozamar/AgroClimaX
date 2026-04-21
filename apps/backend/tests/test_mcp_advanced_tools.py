@@ -171,14 +171,15 @@ class CropPredictionTests(IsolatedAsyncioTestCase):
     async def test_crop_prediction_insufficient_data(self):
         module = importlib.import_module("app.services.crop_prediction")
         fn = (
-            getattr(module, "predict_crop", None)
+            getattr(module, "predict_crop_outlook", None)
+            or getattr(module, "predict_crop", None)
             or getattr(module, "compute_crop_prediction", None)
             or getattr(module, "crop_prediction", None)
         )
         self.assertIsNotNone(
             fn,
             "crop_prediction module must expose a callable "
-            "(predict_crop / compute_crop_prediction / crop_prediction)",
+            "(predict_crop_outlook / predict_crop / compute_crop_prediction / crop_prediction)",
         )
 
         user_id = f"user-{uuid4().hex[:8]}"

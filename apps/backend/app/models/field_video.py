@@ -28,6 +28,7 @@ class FieldVideoJob(Base):
     status = Column(String(32), nullable=False, default="queued", index=True)
     progress_pct = Column(Float, nullable=False, default=0.0)
     video_path = Column(Text, nullable=True)
+    frame_count = Column(Integer, nullable=True)  # nº frames usados al encodear (set al status=ready)
     error_message = Column(Text, nullable=True)
     started_at = Column(DateTime(timezone=True), nullable=True)
     finished_at = Column(DateTime(timezone=True), nullable=True)
