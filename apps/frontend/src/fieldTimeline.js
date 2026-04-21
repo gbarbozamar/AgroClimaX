@@ -26,19 +26,23 @@ export async function loadFieldTimelineFrames(fieldId, layerKey = 'ndvi', days =
     if (!resp.ok) {
       diagnostics.log('warn', `fieldTimeline: HTTP ${resp.status} para field=${fieldId} layer=${layerKey}`);
       setStore({ fieldTimelineSource: 'global', fieldTimelineFrames: [], fieldTimelineDate: null });
+      _unmountFieldSlider();
       return;
     }
     const data = await resp.json();
     const frames = Array.isArray(data?.days) ? data.days : [];
+    const selectedDate = frames[frames.length - 1]?.observed_at || null;
     setStore({
       fieldTimelineFrames: frames,
       fieldTimelineSource: 'field',
-      fieldTimelineDate: frames[frames.length - 1]?.observed_at || null,
+      fieldTimelineDate: selectedDate,
     });
     diagnostics.log('info', `fieldTimeline: ${frames.length} frames cargados field=${fieldId} layer=${layerKey}`);
+    _mountFieldSlider(frames, fieldId, layerKey, selectedDate);
   } catch (err) {
     diagnostics.log('warn', `fieldTimeline fetch err: ${err.message}`);
     setStore({ fieldTimelineSource: 'global', fieldTimelineFrames: [], fieldTimelineDate: null });
+    _unmountFieldSlider();
   }
 }
 
@@ -48,6 +52,55 @@ export function clearFieldTimeline() {
     fieldTimelineSource: 'global',
     fieldTimelineDate: null,
   });
+  _unmountFieldSlider();
+  // Ocultar overlay si existe (B4).
+  import('./fieldFrameOverlay.js?v=20260421-2')
+    .then((mod) => mod.hideFieldFrameOverlay?.())
+    .catch(() => { /* módulo aún no disponible, noop */ });
+}
+
+async function _mountFieldSlider(frames, fieldId, layerKey, selectedDate) {
+  if (!frames?.length) {
+    _unmountFieldSlider();
+    return;
+  }
+  const container = document.getElementById('field-frame-slider-mount') || _ensureSliderMount();
+  try {
+    const mod = await import('./fieldFrameSlider.js?v=20260421-2');
+    mod.injectFieldFrameSliderStyles?.();
+    mod.renderFieldFrameSlider(container, frames, {
+      layerKey,
+      selectedDate,
+      onSelect: async (frame) => {
+        setStore({ fieldTimelineDate: frame.observed_at });
+        diagnostics.log('info', `fieldTimeline: frame seleccionado ${frame.observed_at}`);
+        // Overlay B4: pintar el PNG sobre el mapa cuando se clickea un frame.
+        try {
+          const ov = await import('./fieldFrameOverlay.js?v=20260421-2');
+          ov.showFieldFrameOverlay?.(frame.image_url, frame.metadata?.bbox);
+        } catch (_) { /* overlay opcional */ }
+      },
+    });
+  } catch (err) {
+    diagnostics.log('warn', `fieldFrameSlider no disponible: ${err.message}`);
+  }
+}
+
+function _ensureSliderMount() {
+  let el = document.getElementById('field-frame-slider-mount');
+  if (el) return el;
+  el = document.createElement('div');
+  el.id = 'field-frame-slider-mount';
+  el.className = 'field-frame-slider-mount';
+  const dock = document.querySelector('.map-timeline') || document.querySelector('.timeline-dock');
+  if (dock?.parentElement) dock.parentElement.insertBefore(el, dock);
+  else document.body.appendChild(el);
+  return el;
+}
+
+function _unmountFieldSlider() {
+  const el = document.getElementById('field-frame-slider-mount');
+  if (el) el.innerHTML = '';
 }
 
 // Suscripción al evento custom 'agroclimax:scope-change' para auto-cargar
