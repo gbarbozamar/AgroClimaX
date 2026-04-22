@@ -95,40 +95,84 @@ async def generate_field_video(db: AsyncSession, job_id: str) -> dict | None:
 
         if len(rows) < 2:
             job.status = "failed"
-            job.error_message = f"insufficient_frames ({len(rows)} found, need >= 2)"
+            job.error_message = (
+                f"insufficient_frames: {len(rows)} snapshots reales en los ultimos "
+                f"{job.duration_days} dias (se necesitan >=2)"
+            )
             job.finished_at = _now_utc()
             await db.commit()
             return {"job_id": job.id, "status": "failed"}
 
-        png_paths = [FIELD_SNAPSHOT_ROOT / row.storage_key.replace("fields/", "", 1)
-                     if row.storage_key.startswith("fields/")
-                     else Path(row.storage_key)
-                     for row in rows]
-        # Filter existing files
-        existing = [p for p in png_paths if p.exists()]
+        # Mantener pairing (path, observed_at) para poder calcular cobertura real
+        # aun despues de filtrar archivos ausentes en disco.
+        pairs: list[tuple[Path, date]] = []
+        for row in rows:
+            if row.storage_key.startswith("fields/"):
+                p = FIELD_SNAPSHOT_ROOT / row.storage_key.replace("fields/", "", 1)
+            else:
+                p = Path(row.storage_key)
+            pairs.append((p, row.observed_at))
+        existing_pairs = [(p, d) for (p, d) in pairs if p.exists()]
+        existing = [p for (p, _) in existing_pairs]
+
         if len(existing) < 2:
             job.status = "failed"
-            job.error_message = f"insufficient_frames on disk ({len(existing)} exist of {len(rows)})"
+            job.error_message = (
+                f"insufficient_frames: {len(existing)} snapshots reales en los ultimos "
+                f"{job.duration_days} dias (se necesitan >=2)"
+            )
             job.finished_at = _now_utc()
             await db.commit()
             return {"job_id": job.id, "status": "failed"}
+
+        # Cobertura real: rango entre primer y ultimo frame que SI existe.
+        dates_sorted = sorted(d for (_, d) in existing_pairs)
+        covered_days = max(0, (dates_sorted[-1] - dates_sorted[0]).days)
+
+        # fps adaptativo: para videos con pocos frames bajar el fps para que el
+        # usuario pueda leer cada escena. Default 4, minimo 1.
+        adaptive_fps = max(1, min(DEFAULT_FPS, len(existing) // 4))
 
         target = _job_video_path(job_id)
         # Encoding blocking → to_thread para no bloquear el loop asyncio.
-        frame_count = await asyncio.to_thread(_encode_mp4_sync, existing, target, DEFAULT_FPS)
+        frame_count = await asyncio.to_thread(_encode_mp4_sync, existing, target, adaptive_fps)
 
         job.video_path = str(target)
+        # Garantizar consistencia entre lo que devolvio el encoder (puede skipear
+        # frames corruptos con PIL) y el contador persistido.
         try:
-            # frame_count es column nullable; setattr tolera si no existe en schema viejo.
-            setattr(job, "frame_count", frame_count)
+            setattr(job, "frame_count", int(frame_count))
         except Exception:
             pass
+        # Persistir cobertura real. Intentar columna dedicada si existe; sino
+        # guardar como info informativa en error_message (no es realmente un error).
+        stored_actual = False
+        try:
+            if hasattr(job, "duration_days_actual"):
+                setattr(job, "duration_days_actual", covered_days)
+                stored_actual = True
+        except Exception:
+            stored_actual = False
+        if not stored_actual:
+            job.error_message = (
+                f"covers {covered_days} real days out of {job.duration_days} requested"
+            )
         job.progress_pct = 100.0
         job.status = "ready"
         job.finished_at = _now_utc()
         await db.commit()
-        logger.info("field video ready job=%s frames=%d path=%s", job_id, frame_count, target)
-        return {"job_id": job.id, "status": "ready", "frame_count": frame_count}
+        logger.info(
+            "field video ready job=%s frames=%d covered=%dd fps=%d path=%s",
+            job_id, frame_count, covered_days, adaptive_fps, target,
+        )
+        return {
+            "job_id": job.id,
+            "status": "ready",
+            "frame_count": frame_count,
+            "covered_days": covered_days,
+            "requested_days": job.duration_days,
+            "fps": adaptive_fps,
+        }
 
     except Exception as exc:
         logger.exception("generate_field_video fallo para %s", job_id)

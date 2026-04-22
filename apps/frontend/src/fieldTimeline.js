@@ -93,6 +93,7 @@ async function _mountFieldSlider(frames, fieldId, layerKey, selectedDate, availa
       layerKey,
       selectedDate,
       availableLayers,
+      fieldName: store.selectedFieldDetail?.name || 'campo',
       onLayerChange: async (newLayer) => {
         if (!newLayer || newLayer === layerKey) return;
         diagnostics.log('info', `fieldTimeline: cambio de layer ${layerKey} -> ${newLayer}`);

@@ -70,6 +70,27 @@ async def _ensure_field_owned(db: AsyncSession, *, user_id: str, field_id: str) 
     return row
 
 
+_COVERED_RE = None  # lazy-compiled inside _covered_from_error
+
+
+def _covered_from_error(msg: str | None) -> int | None:
+    """Extrae `covers N real days out of M requested` si el modelo no tiene
+    columna dedicada y usamos error_message como fallback informativo."""
+    global _COVERED_RE
+    if not msg or "covers " not in msg:
+        return None
+    import re
+    if _COVERED_RE is None:
+        _COVERED_RE = re.compile(r"covers\s+(\d+)\s+real days")
+    m = _COVERED_RE.search(msg)
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
+    except Exception:
+        return None
+
+
 def _serialize(job: FieldVideoJob) -> dict[str, Any]:
     # Derivar size_bytes del archivo en disco (autoritativo). frame_count se
     # guarda en la columna del modelo si existe, sino queda None.
@@ -82,11 +103,20 @@ def _serialize(job: FieldVideoJob) -> dict[str, Any]:
     except Exception:
         size_bytes = None
     frame_count = getattr(job, "frame_count", None)
+
+    # covered_days: preferir columna dedicada, sino parsear del error_message
+    # (lo guardamos como info positiva cuando no hay columna).
+    covered_days: int | None = getattr(job, "duration_days_actual", None)
+    if covered_days is None and job.status == "ready":
+        covered_days = _covered_from_error(job.error_message)
+
     return {
         "job_id": job.id,
         "field_id": job.field_id,
         "layer_key": job.layer_key,
         "duration_days": job.duration_days,
+        "requested_days": job.duration_days,
+        "covered_days": covered_days,
         "status": job.status,
         "progress_pct": round(float(job.progress_pct or 0.0), 2),
         "video_url": (

@@ -339,12 +339,14 @@ function buildTooltip(frame) {
  *        Lista de capas con snapshots disponibles, output de /layers-available.
  * @param {(newLayerKey: string) => void} [opts.onLayerChange]
  *        Callback invocado al cambiar de capa desde el dropdown del header.
+ * @param {string} [opts.fieldName]       Nombre del campo, usado para construir
+ *        el filename del PNG al descargar un frame.
  */
 export function renderFieldFrameSlider(containerEl, frames, opts = {}) {
   if (!containerEl || !(containerEl instanceof HTMLElement)) return;
   injectFieldFrameSliderStyles();
 
-  const { onSelect, selectedDate, layerKey, availableLayers, onLayerChange } = opts || {};
+  const { onSelect, selectedDate, layerKey, availableLayers, onLayerChange, fieldName } = opts || {};
   const list = Array.isArray(frames) ? frames : [];
   const collapsed = readCollapsedState();
   const collapsedClass = collapsed ? ' collapsed' : '';
@@ -382,6 +384,9 @@ export function renderFieldFrameSlider(containerEl, frames, opts = {}) {
 
   const headerDateText = formatShortDate(activeFrame?.observed_at);
 
+  const fieldSlug = sanitizeFilenamePart(fieldName, 'campo');
+  const layerSlug = sanitizeFilenamePart(layerKey, 'layer');
+
   const dotsHtml = list
     .map((frame) => {
       const date = formatShortDate(frame?.observed_at);
@@ -392,6 +397,19 @@ export function renderFieldFrameSlider(containerEl, frames, opts = {}) {
             frame.image_url,
           )}" alt="${escapeAttr(date)}" class="field-frame-thumb" loading="lazy" />`
         : `<div class="field-frame-thumb-missing" aria-label="sin imagen">n/a</div>`;
+      const dateSlug = sanitizeFilenamePart(date, 'frame');
+      const filename = `${fieldSlug}-${layerSlug}-${dateSlug}.png`;
+      const downloadBtn = frame?.image_url
+        ? `<button
+            type="button"
+            class="field-frame-download"
+            data-role="download-frame"
+            data-img="${escapeAttr(frame.image_url)}"
+            data-filename="${escapeAttr(filename)}"
+            title="Descargar PNG"
+            aria-label="Descargar PNG"
+          >⬇</button>`
+        : '';
       return `
         <button
           type="button"
@@ -401,6 +419,7 @@ export function renderFieldFrameSlider(containerEl, frames, opts = {}) {
         >
           ${thumb}
           <span class="field-frame-date">${escapeAttr(date)}</span>
+          ${downloadBtn}
         </button>
       `;
     })
@@ -423,29 +442,50 @@ export function renderFieldFrameSlider(containerEl, frames, opts = {}) {
 
   // Delegación de eventos en el track.
   const track = containerEl.querySelector('.field-frame-slider-track');
-  if (track && typeof onSelect === 'function') {
-    track.addEventListener(
-      'click',
-      (ev) => {
-        const target = ev.target instanceof Element ? ev.target : null;
-        if (!target) return;
-        const btn = target.closest('.field-frame-dot');
-        if (!btn || !track.contains(btn)) return;
-        const observed = btn.getAttribute('data-observed');
-        if (!observed) return;
-        const frame = list.find((f) => sameDate(f?.observed_at, observed));
-        if (frame) {
-          try {
-            onSelect(frame);
-          } catch (err) {
-            // No rompemos el render por un handler que lance.
-            // eslint-disable-next-line no-console
-            console.warn('fieldFrameSlider onSelect error:', err);
-          }
+  if (track) {
+    track.addEventListener('click', (ev) => {
+      const target = ev.target instanceof Element ? ev.target : null;
+      if (!target) return;
+
+      // Descarga del PNG: interceptamos ANTES del click del dot parent.
+      const downloadBtn = target.closest('[data-role="download-frame"]');
+      if (downloadBtn && track.contains(downloadBtn)) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const imgUrl = downloadBtn.getAttribute('data-img');
+        const filename = downloadBtn.getAttribute('data-filename') || 'frame.png';
+        if (!imgUrl) return;
+        try {
+          const a = document.createElement('a');
+          a.href = imgUrl;
+          a.download = filename;
+          a.rel = 'noopener';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.warn('fieldFrameSlider download error:', err);
         }
-      },
-      { passive: true },
-    );
+        return;
+      }
+
+      if (typeof onSelect !== 'function') return;
+      const btn = target.closest('.field-frame-dot');
+      if (!btn || !track.contains(btn)) return;
+      const observed = btn.getAttribute('data-observed');
+      if (!observed) return;
+      const frame = list.find((f) => sameDate(f?.observed_at, observed));
+      if (frame) {
+        try {
+          onSelect(frame);
+        } catch (err) {
+          // No rompemos el render por un handler que lance.
+          // eslint-disable-next-line no-console
+          console.warn('fieldFrameSlider onSelect error:', err);
+        }
+      }
+    });
   }
 
   // Scroll para que el dot activo sea visible.
