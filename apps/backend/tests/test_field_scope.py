@@ -101,6 +101,36 @@ class TilesClipScopeFieldTests(IsolatedAsyncioTestCase):
                 # En testing bypass, siempre inyecta test-user
                 self.assertEqual(captured.get("user_id"), "test-user")
 
+    def test_field_clip_without_auth_degrades_to_none(self):
+        """Sin sesión (tiles pedidos por <img> sin cookies), no devolver 401.
+
+        Fallback degradado: dejar clip_scope=None para que el tile se sirva
+        sin recorte server-side; el visual clipMask del frontend se encarga
+        de ocultar el área exterior al potrero. Evita que el mapa quede
+        completamente en blanco cuando Leaflet pide tiles sin cookies.
+        """
+        from app.core.config import settings as app_settings
+
+        captured = {}
+
+        async def _fake_fetch(*args, **kwargs):
+            captured.update(kwargs)
+            from app.services.public_api import TRANSPARENT_PNG
+            return TRANSPARENT_PNG
+
+        with patch.object(app_settings, "auth_bypass_for_tests", False), \
+             patch("app.api.v1.endpoints.public.fetch_tile_png", side_effect=_fake_fetch):
+            with TestClient(app) as client:
+                resp = client.get(
+                    "/api/v1/tiles/ndvi/15/11328/19361.png",
+                    params={"clip_scope": "field", "clip_ref": "any-field"},
+                )
+                self.assertEqual(resp.status_code, 200)
+                # Degradado: clip_scope/ref quedan None cuando no hay auth
+                self.assertIsNone(captured.get("clip_scope"))
+                self.assertIsNone(captured.get("clip_ref"))
+                self.assertIsNone(captured.get("user_id"))
+
 
 if __name__ == "__main__":
     unittest.main()

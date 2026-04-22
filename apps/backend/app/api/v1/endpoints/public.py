@@ -27,6 +27,13 @@ from app.services.public_api import (
 
 router = APIRouter(tags=["public"])
 
+# Router sin guard de sesión a nivel router. Sirve endpoints que pueden ser
+# invocados por `<img>` tags del mapa (Leaflet), los cuales NO envían cookies
+# por defecto. El endpoint /tiles sigue soportando `clip_scope=field` cuando
+# la sesión sí viaja (p.ej. fetch same-origin), y degrada a sin-clip si no hay
+# auth (ver handler).
+public_router = APIRouter(tags=["public"])
+
 
 class PreloadRequest(BaseModel):
     bbox: str | None = None
@@ -194,7 +201,7 @@ async def preload_status(run_key: str = Query(...)):
     return await get_preload_status(run_key)
 
 
-@router.get("/tiles/{layer}/{z}/{x}/{y}.png")
+@public_router.get("/tiles/{layer}/{z}/{x}/{y}.png")
 async def tiles(
     layer: str,
     z: int,
@@ -214,15 +221,17 @@ async def tiles(
 
     `clip_scope='field'` sólo es válido con sesión autenticada; el ownership
     check ocurre dentro de `fetch_tile_png` → `resolve_scope_geometry`.
+
+    Si la request viene sin sesión (p.ej. `<img>` tag de Leaflet que no envía
+    cookies cross-fetch), degradamos a `clip_scope=None` en vez de responder
+    401: el frontend tiene un visual clipMask por encima que oculta el área
+    exterior al potrero, así que servir el tile base sin recorte server-side
+    no filtra datos privados y evita romper el mapa por completo.
     """
     user_id = auth.user.id if (auth and auth.user) else None
     if clip_scope == "field" and user_id is None:
-        return Response(
-            content=TRANSPARENT_PNG,
-            media_type="image/png",
-            status_code=401,
-            headers={"Cache-Control": "no-store"},
-        )
+        clip_scope = None
+        clip_ref = None
     image = await fetch_tile_png(
         layer, z, x, y,
         target_date=source_date,

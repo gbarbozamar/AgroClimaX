@@ -40,6 +40,12 @@ api_router.include_router(client_diagnostics.router)
 # en el handler, así que no necesita el wrapper con dependencies=).
 api_router.include_router(geo_scopes.protected_router)
 api_router.include_router(geo_scopes.public_router)
+# /tiles/... debe ser accesible sin cookie: los <img> de Leaflet no envían
+# credentials por defecto. El handler usa try_auth_context y degrada a
+# clip_scope=None si no hay sesión (el clipMask visual del frontend se
+# encarga del recorte final). Ownership para field sigue checkeado dentro
+# de fetch_tile_png → resolve_scope_geometry cuando sí llega user_id.
+api_router.include_router(public.public_router)
 # MCP feed: auth propia via service token (header X-Service-Token), no va
 # dentro de protected_router porque no usa session cookie.
 api_router.include_router(mcp_feed.router)

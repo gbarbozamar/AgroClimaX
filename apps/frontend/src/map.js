@@ -658,6 +658,10 @@ function createTemporalLeafletLayer(definition, frameRole) {
     keepBuffer: 1,
     bounds: URUGUAY_BOUNDS,
     noWrap: true,
+    // Enviar cookies de sesión en las peticiones de tile para que el backend
+    // reciba auth y pueda procesar clip_scope=field. Same-origin ignora esta
+    // opción (cookies van por defecto); queda wired para setups cross-origin.
+    crossOrigin: 'use-credentials',
   });
 }
 
