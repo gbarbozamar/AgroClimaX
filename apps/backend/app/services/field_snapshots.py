@@ -283,27 +283,8 @@ async def render_field_snapshot(
             )
         )).scalars().all()
         draw = ImageDraw.Draw(canvas, 'RGBA')
-        # 5b.0 Dibujar el borde del field (naranja) para que el usuario vea la
-        # silueta completa del campo aunque no haya datos Copernicus adentro.
-        def _field_px(lon, lat):
-            dx_ = canvas_east - canvas_west
-            dy_ = canvas_north - canvas_south
-            fx_ = (lon - canvas_west) / dx_ if dx_ > 0 else 0
-            fy_ = (canvas_north - lat) / dy_ if dy_ > 0 else 0
-            return (int(fx_ * native_w), int(fy_ * native_h))
-
-        def _draw_poly_outline(poly_, color, width):
-            if poly_.is_empty:
-                return
-            ext = [_field_px(x, y) for x, y in poly_.exterior.coords]
-            if len(ext) >= 2:
-                draw.line(ext + [ext[0]], fill=color, width=width)
-
-        if geom.geom_type == "Polygon":
-            _draw_poly_outline(geom, (255, 140, 0, 240), 3)
-        elif geom.geom_type == "MultiPolygon":
-            for sub in geom.geoms:
-                _draw_poly_outline(sub, (255, 140, 0, 240), 3)
+        # 5b.0 Borde del field REMOVIDO por pedido del usuario — el usuario veía
+        # dos polígonos (field + paddock) y quería solo los paddocks.
 
         if paddock_rows:
             for p in paddock_rows:
@@ -338,6 +319,39 @@ async def render_field_snapshot(
                         draw.line(px + [px[0]], fill=(255, 220, 0, 220), width=3)
     except Exception as exc:
         logger.info("paddock boundaries overlay skipped: %s", exc)
+
+    # 5b.5 Crop al bbox del field para centrar la imagen: el canvas original
+    # cubre el rango de tiles XYZ, que es mayor que el field. Croppeamos a un
+    # cuadrado ajustado al field (+ pequeño margen) para que el usuario vea el
+    # campo centrado y ocupando todo el recuadro.
+    try:
+        dx_all = canvas_east - canvas_west
+        dy_all = canvas_north - canvas_south
+        if dx_all > 0 and dy_all > 0:
+            # Field bbox en pixel coords del canvas actual.
+            fw, fs, fe, fn = geom.bounds  # (W, S, E, N)
+            px0 = int((fw - canvas_west) / dx_all * native_w)
+            px1 = int((fe - canvas_west) / dx_all * native_w)
+            py0 = int((canvas_north - fn) / dy_all * native_h)  # top
+            py1 = int((canvas_north - fs) / dy_all * native_h)  # bottom
+            # Margen 6% de cada lado.
+            field_w = max(1, px1 - px0)
+            field_h = max(1, py1 - py0)
+            margin = int(max(field_w, field_h) * 0.06)
+            # Para que quede cuadrado-ish, extender al lado más corto.
+            side = max(field_w, field_h) + margin * 2
+            cx = (px0 + px1) // 2
+            cy = (py0 + py1) // 2
+            crop_x0 = max(0, cx - side // 2)
+            crop_y0 = max(0, cy - side // 2)
+            crop_x1 = min(native_w, crop_x0 + side)
+            crop_y1 = min(native_h, crop_y0 + side)
+            # Crop + actualizar referencias (paddocks ya están dibujados encima).
+            canvas = canvas.crop((crop_x0, crop_y0, crop_x1, crop_y1))
+            native_w = canvas.width
+            native_h = canvas.height
+    except Exception as exc:
+        logger.info("field crop centering skipped: %s", exc)
 
     # 5c. Etiqueta de fecha+layer+field_name en bottom-left del canvas.
     try:

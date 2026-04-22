@@ -392,13 +392,13 @@ export function renderFieldFrameSlider(containerEl, frames, opts = {}) {
       const date = formatShortDate(frame?.observed_at);
       const tooltip = buildTooltip(frame);
       const isActive = sameDate(frame?.observed_at, activeDate);
-      // onerror: si el PNG no carga (404/403/etc), ocultamos el dot completo
-      // en vez de mostrar el icono roto de imagen. El usuario pidió no
-      // ver "cards con el símbolo de la imagen rota".
+      // thumb: inicialmente vacío. Tras renderizar, JS attach-a handler robusto
+      // que valida naturalWidth>0 (el inline onerror a veces no dispara con
+      // CSP strict o cachés intermedios). Si falla, removemos el dot entero.
       const thumb = frame?.image_url
-        ? `<img src="${escapeAttr(
+        ? `<img data-src="${escapeAttr(
             frame.image_url,
-          )}" alt="${escapeAttr(date)}" class="field-frame-thumb" loading="lazy" onerror="this.closest('.field-frame-dot')?.remove()" />`
+          )}" alt="${escapeAttr(date)}" class="field-frame-thumb" loading="lazy" />`
         : `<div class="field-frame-thumb-missing" aria-label="sin imagen">n/a</div>`;
       const dateSlug = sanitizeFilenamePart(date, 'frame');
       const filename = `${fieldSlug}-${layerSlug}-${dateSlug}.png`;
@@ -442,6 +442,23 @@ export function renderFieldFrameSlider(containerEl, frames, opts = {}) {
 
   attachToggleHandler(containerEl);
   attachLayerSelectHandler(containerEl, onLayerChange);
+
+  // Setup de cada <img data-src>: attach load/error handlers con JS (robusto
+  // vs inline onerror que puede no dispararse bajo CSP strict) y set src
+  // despues del attach para garantizar que los handlers corran.
+  const imgs = containerEl.querySelectorAll('.field-frame-thumb[data-src]');
+  imgs.forEach((img) => {
+    const url = img.getAttribute('data-src');
+    img.removeAttribute('data-src');
+    const dot = img.closest('.field-frame-dot');
+    const fail = () => { try { dot?.remove(); } catch (_) { /* noop */ } };
+    img.addEventListener('error', fail, { once: true });
+    img.addEventListener('load', () => {
+      // A veces load dispara aunque el PNG esté corrupto (naturalWidth=0).
+      if (!img.naturalWidth || !img.naturalHeight) fail();
+    }, { once: true });
+    img.src = url;
+  });
 
   // Delegación de eventos en el track.
   const track = containerEl.querySelector('.field-frame-slider-track');
