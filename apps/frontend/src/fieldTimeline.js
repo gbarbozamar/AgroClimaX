@@ -74,10 +74,7 @@ export function clearFieldTimeline() {
     fieldTimelineDate: null,
   });
   _unmountFieldSlider();
-  // Ocultar overlay si existe (B4).
-  import('./fieldFrameOverlay.js?v=20260421-2')
-    .then((mod) => mod.hideFieldFrameOverlay?.())
-    .catch(() => { /* módulo aún no disponible, noop */ });
+  // El lightbox se auto-cierra (Escape / click-outside / close-button); no requiere cleanup externo.
 }
 
 async function _mountFieldSlider(frames, fieldId, layerKey, selectedDate, availableLayers = [], days = 30) {
@@ -102,11 +99,17 @@ async function _mountFieldSlider(frames, fieldId, layerKey, selectedDate, availa
       onSelect: async (frame) => {
         setStore({ fieldTimelineDate: frame.observed_at });
         diagnostics.log('info', `fieldTimeline: frame seleccionado ${frame.observed_at}`);
-        // Overlay B4: pintar el PNG sobre el mapa cuando se clickea un frame.
+        // A2: abrir lightbox modal en lugar de overlay sobre el mapa.
         try {
-          const ov = await import('./fieldFrameOverlay.js?v=20260421-2');
-          ov.showFieldFrameOverlay?.(frame.image_url, frame.metadata?.bbox);
-        } catch (_) { /* overlay opcional */ }
+          const lb = await import('./fieldFrameLightbox.js?v=20260422-1');
+          const idx = Math.max(0, frames.findIndex(f => f?.observed_at === frame.observed_at));
+          lb.openFieldFrameLightbox?.(frames, idx, {
+            fieldName: store.selectedFieldDetail?.name || 'Campo',
+            layerKey,
+          });
+        } catch (err) {
+          diagnostics.log('warn', `fieldFrameLightbox no disponible: ${err.message}`);
+        }
       },
     });
   } catch (err) {
