@@ -215,6 +215,47 @@ async def render_field_snapshot(
     if valid_tiles == 0:
         return None
 
+    # 5b. Dibujar bordes de potreros (FarmPaddock) sobre el canvas.
+    try:
+        from app.models.farm import FarmPaddock
+        from shapely.geometry import shape as _shape
+        from PIL import ImageDraw
+        paddock_rows = (await db.execute(
+            select(FarmPaddock).where(
+                FarmPaddock.field_id == field_id,
+                FarmPaddock.active == True,  # noqa: E712
+            )
+        )).scalars().all()
+        if paddock_rows:
+            draw = ImageDraw.Draw(canvas, 'RGBA')
+            for p in paddock_rows:
+                if not p.geometry_geojson:
+                    continue
+                try:
+                    geom_p = _shape(p.geometry_geojson)
+                except Exception:
+                    continue
+                # Convertir coords lat/lng a pixel coords dentro del canvas.
+                # Canvas cubre el bbox del field (west..east, south..north) en (0..native_w, 0..native_h).
+                def lonlat_to_px(lon, lat):
+                    fx = (lon - west) / (east - west) if east > west else 0
+                    fy = (north - lat) / (north - south) if north > south else 0
+                    return (int(fx * native_w), int(fy * native_h))
+                # Iterar por geometrías MultiPolygon / Polygon / LineString.
+                polys = []
+                if geom_p.geom_type == 'Polygon':
+                    polys.append(geom_p)
+                elif geom_p.geom_type == 'MultiPolygon':
+                    polys.extend(list(geom_p.geoms))
+                for poly in polys:
+                    coords = list(poly.exterior.coords)
+                    px = [lonlat_to_px(lon, lat) for lon, lat in coords]
+                    if len(px) >= 2:
+                        # Línea amarilla semitransparente, grosor 3.
+                        draw.line(px + [px[0]], fill=(255, 220, 0, 220), width=3)
+    except Exception as exc:
+        logger.info("paddock boundaries overlay skipped: %s", exc)
+
     # 6. Downscale si excede cap de ancho.
     out_w, out_h = native_w, native_h
     if native_w > MAX_WIDTH_PX:
