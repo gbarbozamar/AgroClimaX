@@ -196,6 +196,23 @@ const CSS = `
   transition: transform 0.15s ease;
 }
 .field-frame-slider-toggle:hover { color: #fff; }
+.field-frame-dot { position: relative; }
+.field-frame-download {
+  position: absolute;
+  top: 2px; right: 2px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 0.7rem;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 2;
+}
+.field-frame-dot:hover .field-frame-download { opacity: 1; }
+.field-frame-download:hover { background: rgba(0, 0, 0, 0.85); }
 `;
 
 /**
@@ -239,6 +256,16 @@ function escapeAttr(value) {
     .replace(/"/g, '&quot;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+function sanitizeFilenamePart(value, fallback = '') {
+  if (value == null) return fallback;
+  const cleaned = String(value)
+    .replace(/[\\/:*?"<>|]+/g, '-')
+    .replace(/\s+/g, '_')
+    .replace(/-+/g, '-')
+    .replace(/^[-_\s]+|[-_\s]+$/g, '');
+  return cleaned || fallback;
 }
 
 function attachToggleHandler(containerEl) {
@@ -308,15 +335,20 @@ function buildTooltip(frame) {
  * @param {(frame: object) => void} [opts.onSelect]
  * @param {string} [opts.selectedDate]   ISO date del frame activo
  * @param {string} [opts.layerKey]       e.g. 'ndvi', 'ndwi' (opcional, para el título)
+ * @param {Array<{layer_key: string, count: number, label?: string}>} [opts.availableLayers]
+ *        Lista de capas con snapshots disponibles, output de /layers-available.
+ * @param {(newLayerKey: string) => void} [opts.onLayerChange]
+ *        Callback invocado al cambiar de capa desde el dropdown del header.
  */
 export function renderFieldFrameSlider(containerEl, frames, opts = {}) {
   if (!containerEl || !(containerEl instanceof HTMLElement)) return;
   injectFieldFrameSliderStyles();
 
-  const { onSelect, selectedDate, layerKey } = opts || {};
+  const { onSelect, selectedDate, layerKey, availableLayers, onLayerChange } = opts || {};
   const list = Array.isArray(frames) ? frames : [];
   const collapsed = readCollapsedState();
   const collapsedClass = collapsed ? ' collapsed' : '';
+  const layerSelectHtml = buildLayerSelectHtml(availableLayers, layerKey);
 
   // Si no hay frames, pintamos estado vacío.
   if (list.length === 0) {
@@ -326,6 +358,7 @@ export function renderFieldFrameSlider(containerEl, frames, opts = {}) {
           <span class="field-frame-slider-title">Timeline del campo${
             layerKey ? ` · ${escapeAttr(layerKey)}` : ''
           } · 0 frames</span>
+          ${layerSelectHtml}
           <span class="field-frame-slider-date"></span>
           <button type="button" class="field-frame-slider-toggle" data-role="toggle-slider" title="Plegar/expandir">▾</button>
         </div>
@@ -333,6 +366,7 @@ export function renderFieldFrameSlider(containerEl, frames, opts = {}) {
       </div>
     `;
     attachToggleHandler(containerEl);
+    attachLayerSelectHandler(containerEl, onLayerChange);
     return;
   }
 
@@ -376,6 +410,7 @@ export function renderFieldFrameSlider(containerEl, frames, opts = {}) {
     <div class="field-frame-slider${collapsedClass}">
       <div class="field-frame-slider-header">
         <span class="field-frame-slider-title">${titleText}</span>
+        ${layerSelectHtml}
         <span class="field-frame-slider-date">${escapeAttr(headerDateText)}</span>
         <button type="button" class="field-frame-slider-toggle" data-role="toggle-slider" title="Plegar/expandir">▾</button>
       </div>
@@ -384,6 +419,7 @@ export function renderFieldFrameSlider(containerEl, frames, opts = {}) {
   `;
 
   attachToggleHandler(containerEl);
+  attachLayerSelectHandler(containerEl, onLayerChange);
 
   // Delegación de eventos en el track.
   const track = containerEl.querySelector('.field-frame-slider-track');

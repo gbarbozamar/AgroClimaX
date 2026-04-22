@@ -13,16 +13,37 @@ import { diagnostics } from './diagnostics.js?v=20260421-1';
 
 const API_V1 = '/api/v1';
 
+async function _fetchLayersAvailable(fieldId) {
+  try {
+    const resp = await fetch(
+      `${API_V1}/campos/${encodeURIComponent(fieldId)}/layers-available`,
+      { credentials: 'same-origin' },
+    );
+    if (!resp.ok) {
+      diagnostics.log('warn', `fieldTimeline layers-available HTTP ${resp.status} field=${fieldId}`);
+      return [];
+    }
+    const data = await resp.json();
+    return Array.isArray(data?.layers) ? data.layers : [];
+  } catch (err) {
+    diagnostics.log('warn', `fieldTimeline layers-available err: ${err.message}`);
+    return [];
+  }
+}
+
 export async function loadFieldTimelineFrames(fieldId, layerKey = 'ndvi', days = 30) {
   if (!fieldId) {
     clearFieldTimeline();
     return;
   }
   try {
-    const resp = await fetch(
-      `${API_V1}/campos/${encodeURIComponent(fieldId)}/timeline-frames?layer=${encodeURIComponent(layerKey)}&days=${days}`,
-      { credentials: 'same-origin' },
-    );
+    const [resp, availableLayers] = await Promise.all([
+      fetch(
+        `${API_V1}/campos/${encodeURIComponent(fieldId)}/timeline-frames?layer=${encodeURIComponent(layerKey)}&days=${days}`,
+        { credentials: 'same-origin' },
+      ),
+      _fetchLayersAvailable(fieldId),
+    ]);
     if (!resp.ok) {
       diagnostics.log('warn', `fieldTimeline: HTTP ${resp.status} para field=${fieldId} layer=${layerKey}`);
       setStore({ fieldTimelineSource: 'global', fieldTimelineFrames: [], fieldTimelineDate: null });
@@ -38,7 +59,7 @@ export async function loadFieldTimelineFrames(fieldId, layerKey = 'ndvi', days =
       fieldTimelineDate: selectedDate,
     });
     diagnostics.log('info', `fieldTimeline: ${frames.length} frames cargados field=${fieldId} layer=${layerKey}`);
-    _mountFieldSlider(frames, fieldId, layerKey, selectedDate);
+    _mountFieldSlider(frames, fieldId, layerKey, selectedDate, availableLayers, days);
   } catch (err) {
     diagnostics.log('warn', `fieldTimeline fetch err: ${err.message}`);
     setStore({ fieldTimelineSource: 'global', fieldTimelineFrames: [], fieldTimelineDate: null });
@@ -59,7 +80,7 @@ export function clearFieldTimeline() {
     .catch(() => { /* módulo aún no disponible, noop */ });
 }
 
-async function _mountFieldSlider(frames, fieldId, layerKey, selectedDate) {
+async function _mountFieldSlider(frames, fieldId, layerKey, selectedDate, availableLayers = [], days = 30) {
   if (!frames?.length) {
     _unmountFieldSlider();
     return;
@@ -71,6 +92,12 @@ async function _mountFieldSlider(frames, fieldId, layerKey, selectedDate) {
     mod.renderFieldFrameSlider(container, frames, {
       layerKey,
       selectedDate,
+      availableLayers,
+      onLayerChange: async (newLayer) => {
+        if (!newLayer || newLayer === layerKey) return;
+        diagnostics.log('info', `fieldTimeline: cambio de layer ${layerKey} -> ${newLayer}`);
+        await loadFieldTimelineFrames(fieldId, newLayer, days);
+      },
       onSelect: async (frame) => {
         setStore({ fieldTimelineDate: frame.observed_at });
         diagnostics.log('info', `fieldTimeline: frame seleccionado ${frame.observed_at}`);
