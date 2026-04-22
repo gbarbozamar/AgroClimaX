@@ -6,6 +6,8 @@
 //     initialIndex : int (qué frame mostrar primero)
 //     context      : {fieldName, layerKey}
 
+const HEADER_ID = 'field-lightbox-header';
+
 const STATE = {
   styles_injected: false,
   root: null,
@@ -13,6 +15,8 @@ const STATE = {
   index: 0,
   context: { fieldName: '', layerKey: '' },
   keyHandler: null,
+  previousFocus: null,
+  preloadCache: new Set(),
 };
 
 const STYLES = `
@@ -41,6 +45,10 @@ const STYLES = `
   display: flex;
   flex-direction: column;
   gap: 12px;
+  outline: none;
+}
+.field-frame-lightbox:focus-visible {
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6), 0 0 0 2px #1f6feb;
 }
 .field-frame-lightbox-close {
   position: absolute;
@@ -55,8 +63,10 @@ const STYLES = `
   line-height: 1;
   border-radius: 6px;
 }
-.field-frame-lightbox-close:hover {
+.field-frame-lightbox-close:hover,
+.field-frame-lightbox-close:focus-visible {
   background: rgba(255, 255, 255, 0.08);
+  outline: none;
 }
 .field-frame-lightbox-header {
   font-size: 0.92rem;
@@ -64,6 +74,27 @@ const STYLES = `
   padding-right: 32px;
   color: #cbd5e1;
   letter-spacing: 0.01em;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.field-frame-lightbox-header-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.field-frame-lightbox-header-counter {
+  flex: 0 0 auto;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: #94a3b8;
+  font-variant-numeric: tabular-nums;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 999px;
+  padding: 2px 10px;
+  white-space: nowrap;
 }
 .field-frame-lightbox-stage {
   position: relative;
@@ -100,8 +131,10 @@ const STYLES = `
   justify-content: center;
   user-select: none;
 }
-.field-frame-lightbox-nav:hover:not(:disabled) {
+.field-frame-lightbox-nav:hover:not(:disabled),
+.field-frame-lightbox-nav:focus-visible:not(:disabled) {
   background: rgba(0, 0, 0, 0.8);
+  outline: none;
 }
 .field-frame-lightbox-nav:disabled {
   opacity: 0.3;
@@ -149,13 +182,27 @@ const STYLES = `
   font-size: 0.82rem;
   cursor: pointer;
 }
-.field-frame-lightbox-btn:hover {
+.field-frame-lightbox-btn:hover,
+.field-frame-lightbox-btn:focus-visible {
   background: #2a7bff;
+  outline: none;
 }
 .field-frame-lightbox-counter {
   font-size: 0.72rem;
   color: #94a3b8;
   text-align: center;
+}
+.field-frame-lightbox-toast {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  pointer-events: none;
 }
 `;
 
@@ -200,6 +247,10 @@ function formatBBox(bbox) {
 
 function currentFrame() {
   return STATE.frames[STATE.index] || null;
+}
+
+function hasValidImageUrl(frame) {
+  return !!(frame && typeof frame.image_url === 'string' && frame.image_url.trim());
 }
 
 function buildMetaRows(frame) {
@@ -252,7 +303,10 @@ function downloadFilename(frame) {
 }
 
 function triggerDownload(frame) {
-  if (!frame || !frame.image_url) return;
+  if (!frame || !frame.image_url) {
+    showToast('Frame sin imagen disponible');
+    return;
+  }
   const a = document.createElement('a');
   a.href = frame.image_url;
   a.download = downloadFilename(frame);
@@ -265,6 +319,66 @@ function triggerDownload(frame) {
   }, 0);
 }
 
+let toastTimer = null;
+function showToast(msg) {
+  if (!STATE.root) return;
+  let toast = STATE.root.querySelector('.field-frame-lightbox-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.className = 'field-frame-lightbox-toast';
+    toast.setAttribute('role', 'status');
+    toast.setAttribute('aria-live', 'polite');
+    STATE.root.appendChild(toast);
+  }
+  toast.textContent = msg;
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    if (toast && toast.parentNode) toast.parentNode.removeChild(toast);
+    toastTimer = null;
+  }, 2200);
+}
+
+function preloadIndex(idx) {
+  if (idx < 0 || idx >= STATE.frames.length) return;
+  const f = STATE.frames[idx];
+  if (!hasValidImageUrl(f)) return;
+  const url = f.image_url;
+  if (STATE.preloadCache.has(url)) return;
+  STATE.preloadCache.add(url);
+  try {
+    const pre = new Image();
+    pre.src = url;
+  } catch (_e) {
+    // noop
+  }
+}
+
+function findNextValidIndex(from, dir) {
+  // dir: +1 or -1. Returns -1 if none.
+  let i = from;
+  while (i >= 0 && i < STATE.frames.length) {
+    if (hasValidImageUrl(STATE.frames[i])) return i;
+    i += dir;
+  }
+  return -1;
+}
+
+function ensureValidIndex() {
+  // If current frame lacks image_url, try to skip forward, then backward.
+  if (hasValidImageUrl(STATE.frames[STATE.index])) return true;
+  const fwd = findNextValidIndex(STATE.index + 1, +1);
+  if (fwd !== -1) {
+    STATE.index = fwd;
+    return true;
+  }
+  const back = findNextValidIndex(STATE.index - 1, -1);
+  if (back !== -1) {
+    STATE.index = back;
+    return true;
+  }
+  return false;
+}
+
 function renderFrame() {
   if (!STATE.root) return;
   const frame = currentFrame();
@@ -272,15 +386,21 @@ function renderFrame() {
   if (!modal || !frame) return;
 
   // Header
-  const header = modal.querySelector('.field-frame-lightbox-header');
+  const titleEl = modal.querySelector('.field-frame-lightbox-header-title');
+  const counterEl = modal.querySelector('.field-frame-lightbox-header-counter');
   const observed = frame.observed_at || '';
   const layerLabel = (STATE.context.layerKey || '').toUpperCase();
-  header.textContent = `${STATE.context.fieldName || ''} · ${layerLabel} · ${observed}`;
+  if (titleEl) {
+    titleEl.textContent = `${STATE.context.fieldName || ''} · ${layerLabel} · ${observed}`;
+  }
+  if (counterEl) {
+    counterEl.textContent = `${STATE.index + 1} / ${STATE.frames.length}`;
+  }
 
   // Image (fade-in)
   const img = modal.querySelector('.field-frame-lightbox-img');
   img.classList.add('is-loading');
-  img.alt = `${STATE.context.fieldName || 'field'} ${observed}`;
+  img.alt = `${STATE.context.fieldName || 'field'} ${layerLabel} ${observed}`.trim();
   const onLoad = () => {
     img.classList.remove('is-loading');
     img.removeEventListener('load', onLoad);
@@ -300,7 +420,7 @@ function renderFrame() {
   prevBtn.disabled = STATE.index <= 0;
   nextBtn.disabled = STATE.index >= STATE.frames.length - 1;
 
-  // Counter
+  // Counter (footer, compact)
   const counter = modal.querySelector('.field-frame-lightbox-counter');
   if (counter) {
     counter.textContent = STATE.frames.length > 1
@@ -311,25 +431,136 @@ function renderFrame() {
   // Meta
   const metaWrap = modal.querySelector('.field-frame-lightbox-meta-wrap');
   metaWrap.replaceChildren(renderMeta(frame));
+
+  // Preload neighbors so next arrow press is instant.
+  preloadIndex(STATE.index + 1);
+  preloadIndex(STATE.index - 1);
 }
 
 function goTo(delta) {
-  const next = STATE.index + delta;
-  if (next < 0 || next >= STATE.frames.length) return;
+  const total = STATE.frames.length;
+  if (!total) return;
+  let next = STATE.index + delta;
+  if (next < 0) next = 0;
+  if (next >= total) next = total - 1;
+  if (next === STATE.index) return;
+
+  // If the target frame has no image_url, try to skip over it in the same direction.
+  if (!hasValidImageUrl(STATE.frames[next])) {
+    const dir = delta >= 0 ? +1 : -1;
+    const valid = findNextValidIndex(next, dir);
+    if (valid !== -1) {
+      next = valid;
+    } else {
+      // No more valid frames in this direction; stay put.
+      showToast('Sin más frames disponibles');
+      return;
+    }
+  }
+
   STATE.index = next;
   renderFrame();
 }
 
+function goToIndex(idx) {
+  if (!STATE.frames.length) return;
+  let target = Math.max(0, Math.min(idx, STATE.frames.length - 1));
+  if (!hasValidImageUrl(STATE.frames[target])) {
+    const dir = idx >= STATE.index ? +1 : -1;
+    const valid = findNextValidIndex(target, dir);
+    if (valid !== -1) target = valid;
+    else {
+      showToast('Sin más frames disponibles');
+      return;
+    }
+  }
+  if (target === STATE.index) return;
+  STATE.index = target;
+  renderFrame();
+}
+
+function getFocusableElements(container) {
+  if (!container) return [];
+  const sel = [
+    'a[href]',
+    'button:not([disabled])',
+    'input:not([disabled])',
+    'select:not([disabled])',
+    'textarea:not([disabled])',
+    '[tabindex]:not([tabindex="-1"])',
+  ].join(',');
+  return Array.from(container.querySelectorAll(sel)).filter(
+    (el) => !el.hasAttribute('disabled') && el.offsetParent !== null,
+  );
+}
+
+function trapFocus(ev) {
+  if (!STATE.root) return;
+  const modal = STATE.root.querySelector('.field-frame-lightbox');
+  if (!modal) return;
+  const focusables = getFocusableElements(modal);
+  if (!focusables.length) {
+    ev.preventDefault();
+    modal.focus();
+    return;
+  }
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  const active = document.activeElement;
+  if (ev.shiftKey) {
+    if (active === first || active === modal || !modal.contains(active)) {
+      ev.preventDefault();
+      last.focus();
+    }
+  } else {
+    if (active === last) {
+      ev.preventDefault();
+      first.focus();
+    }
+  }
+}
+
 function handleKeydown(ev) {
-  if (ev.key === 'Escape') {
+  if (!STATE.root) return;
+  const key = ev.key;
+
+  if (key === 'Escape') {
     ev.preventDefault();
     closeLightbox();
-  } else if (ev.key === 'ArrowLeft') {
+    return;
+  }
+  if (key === 'ArrowLeft') {
     ev.preventDefault();
     goTo(-1);
-  } else if (ev.key === 'ArrowRight') {
+    return;
+  }
+  if (key === 'ArrowRight') {
     ev.preventDefault();
     goTo(+1);
+    return;
+  }
+  if (key === 'Home') {
+    ev.preventDefault();
+    goToIndex(0);
+    return;
+  }
+  if (key === 'End') {
+    ev.preventDefault();
+    goToIndex(STATE.frames.length - 1);
+    return;
+  }
+  if (key === 'd' || key === 'D') {
+    // Don't intercept if user is typing in an input (future-proof).
+    const tgt = ev.target;
+    const tag = tgt && tgt.tagName ? tgt.tagName.toLowerCase() : '';
+    if (tag === 'input' || tag === 'textarea' || (tgt && tgt.isContentEditable)) return;
+    ev.preventDefault();
+    triggerDownload(currentFrame());
+    return;
+  }
+  if (key === 'Tab') {
+    trapFocus(ev);
+    return;
   }
 }
 
@@ -338,12 +569,28 @@ function closeLightbox() {
     document.removeEventListener('keydown', STATE.keyHandler);
     STATE.keyHandler = null;
   }
+  if (toastTimer) {
+    clearTimeout(toastTimer);
+    toastTimer = null;
+  }
   if (STATE.root && STATE.root.parentNode) {
     STATE.root.parentNode.removeChild(STATE.root);
   }
   STATE.root = null;
   STATE.frames = [];
   STATE.index = 0;
+  STATE.preloadCache = new Set();
+
+  // Restore focus to the element that had it before opening.
+  const prev = STATE.previousFocus;
+  STATE.previousFocus = null;
+  if (prev && typeof prev.focus === 'function' && document.contains(prev)) {
+    try {
+      prev.focus();
+    } catch (_e) {
+      // ignore
+    }
+  }
 }
 
 function buildDOM() {
@@ -354,6 +601,8 @@ function buildDOM() {
   modal.className = 'field-frame-lightbox';
   modal.setAttribute('role', 'dialog');
   modal.setAttribute('aria-modal', 'true');
+  modal.setAttribute('aria-labelledby', HEADER_ID);
+  modal.setAttribute('tabindex', '-1');
 
   const closeBtn = document.createElement('button');
   closeBtn.type = 'button';
@@ -364,6 +613,15 @@ function buildDOM() {
 
   const header = document.createElement('div');
   header.className = 'field-frame-lightbox-header';
+  header.id = HEADER_ID;
+  const headerTitle = document.createElement('span');
+  headerTitle.className = 'field-frame-lightbox-header-title';
+  const headerCounter = document.createElement('span');
+  headerCounter.className = 'field-frame-lightbox-header-counter';
+  headerCounter.setAttribute('aria-live', 'polite');
+  headerCounter.setAttribute('aria-atomic', 'true');
+  header.appendChild(headerTitle);
+  header.appendChild(headerCounter);
   modal.appendChild(header);
 
   const stage = document.createElement('div');
@@ -372,7 +630,7 @@ function buildDOM() {
   const prevBtn = document.createElement('button');
   prevBtn.type = 'button';
   prevBtn.className = 'field-frame-lightbox-nav field-frame-lightbox-nav-left';
-  prevBtn.setAttribute('aria-label', 'Frame anterior');
+  prevBtn.setAttribute('aria-label', 'Anterior frame');
   prevBtn.textContent = '\u2190'; // ←
   stage.appendChild(prevBtn);
 
@@ -384,7 +642,7 @@ function buildDOM() {
   const nextBtn = document.createElement('button');
   nextBtn.type = 'button';
   nextBtn.className = 'field-frame-lightbox-nav field-frame-lightbox-nav-right';
-  nextBtn.setAttribute('aria-label', 'Frame siguiente');
+  nextBtn.setAttribute('aria-label', 'Siguiente frame');
   nextBtn.textContent = '\u2192'; // →
   stage.appendChild(nextBtn);
 
@@ -403,6 +661,7 @@ function buildDOM() {
   const dlBtn = document.createElement('button');
   dlBtn.type = 'button';
   dlBtn.className = 'field-frame-lightbox-btn';
+  dlBtn.setAttribute('aria-label', 'Descargar PNG');
   dlBtn.textContent = '\u2B07 Descargar PNG'; // ⬇
   actions.appendChild(dlBtn);
   modal.appendChild(actions);
@@ -453,6 +712,18 @@ export function openFieldFrameLightbox(frames, initialIndex, context) {
     fieldName: (context && context.fieldName) || '',
     layerKey: (context && context.layerKey) || '',
   };
+  STATE.preloadCache = new Set();
+
+  // Fallback: if initial frame has no image_url, jump to the closest valid one.
+  if (!ensureValidIndex()) {
+    console.warn('[fieldFrameLightbox] no frames with valid image_url; aborting open');
+    STATE.frames = [];
+    STATE.index = 0;
+    return;
+  }
+
+  // Preserve the currently focused element so we can restore it on close.
+  STATE.previousFocus = (document && document.activeElement) || null;
 
   const root = buildDOM();
   document.body.appendChild(root);
@@ -462,6 +733,19 @@ export function openFieldFrameLightbox(frames, initialIndex, context) {
   document.addEventListener('keydown', STATE.keyHandler);
 
   renderFrame();
+
+  // After the DOM is in place, move focus to the dialog for screenreaders + keyboard.
+  const modal = root.querySelector('.field-frame-lightbox');
+  if (modal && typeof modal.focus === 'function') {
+    // next tick: make sure layout is done so focus ring renders on the right element.
+    requestAnimationFrame(() => {
+      try {
+        modal.focus({ preventScroll: true });
+      } catch (_e) {
+        modal.focus();
+      }
+    });
+  }
 }
 
 export default openFieldFrameLightbox;
