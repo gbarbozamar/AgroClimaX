@@ -1091,6 +1091,7 @@ async def save_field(session: AsyncSession, *, user: AppUser, payload: dict[str,
     row = await session.get(FarmField, field_id) if field_id else None
     if row is not None and (row.user_id != user.id or not row.active):
         raise ValueError("Campo no encontrado")
+    _is_new_field = row is None
     if row is None:
         row = FarmField(user_id=user.id, establishment_id=establishment.id)
         session.add(row)
@@ -1111,6 +1112,7 @@ async def save_field(session: AsyncSession, *, user: AppUser, payload: dict[str,
     await _upsert_field_aoi_unit(session, field_row=row, establishment=establishment)
     await session.commit()
     field_id_value = row.id
+    field_user_id_value = row.user_id
     try:
         await _ensure_field_analytics_bundle(
             session,
@@ -1122,6 +1124,35 @@ async def save_field(session: AsyncSession, *, user: AppUser, payload: dict[str,
     except Exception:
         await session.rollback()
         logger.exception("No se pudo refrescar la analitica del campo %s durante el guardado", field_id_value)
+
+    # Auto-backfill de snapshots para el campo nuevo. Corre en background task
+    # para no bloquear el save. Si falla, log warning — el usuario puede
+    # disparar manualmente desde la UI después.
+    if _is_new_field:
+        try:
+            import asyncio
+            from datetime import timedelta
+            from app.db.session import AsyncSessionLocal
+
+            async def _auto_backfill(fid: str, uid: str) -> None:
+                from app.services.field_snapshots import render_field_snapshot
+                today = date.today()
+                for i in range(30):
+                    target = today - timedelta(days=i)
+                    for layer in ("ndvi", "ndmi", "alerta_fusion"):
+                        async with AsyncSessionLocal() as bg_session:
+                            try:
+                                await render_field_snapshot(bg_session, fid, layer, target, user_id=uid)
+                                await bg_session.commit()
+                            except Exception:
+                                await bg_session.rollback()
+                logger.info("auto-backfill completed field=%s", fid)
+
+            asyncio.create_task(_auto_backfill(field_id_value, field_user_id_value))
+            logger.info("auto-backfill scheduled field=%s", field_id_value)
+        except Exception as exc:
+            logger.warning("auto-backfill failed to schedule field=%s exc=%s", field_id_value, exc)
+
     return await get_field(session, user=user, field_id=field_id_value)
 
 
