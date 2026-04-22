@@ -319,7 +319,10 @@ function renderFieldsList() {
   const videoButtonHtml = store.selectedFieldId
     ? '<button class="field-video-btn" type="button" data-role="open-video-config" title="Elegir capa y duración para generar un video timelapse">🎬 Generar video...</button>'
     : '';
-  node.innerHTML = clearButtonHtml + videoButtonHtml + items.map((item) => `
+  const backfillButtonHtml = store.selectedFieldId
+    ? '<button class="field-backfill-btn" type="button" data-role="trigger-backfill">📥 Completar histórico (90d)</button>'
+    : '';
+  node.innerHTML = clearButtonHtml + videoButtonHtml + backfillButtonHtml + items.map((item) => `
     <button class="fields-list-item ${item.id === store.selectedFieldId ? 'active' : ''}" type="button" data-field-id="${escapeHtml(item.id)}">
       <span class="fields-list-title">${escapeHtml(item.name)}</span>
       <span class="fields-list-copy">${escapeHtml(item.establishment_name || 'Sin establecimiento')} · ${escapeHtml(item.department || '-')} · ${escapeHtml(item.area_ha || '-')} ha</span>
@@ -336,6 +339,24 @@ function renderFieldsList() {
     videoBtn.addEventListener('click', async () => {
       const { openFieldVideoConfigModal } = await import('./fieldVideoConfig.js?v=20260421-1');
       await openFieldVideoConfigModal(store.selectedFieldId);
+    });
+  }
+  const backfillBtn = node.querySelector('[data-role="trigger-backfill"]');
+  if (backfillBtn) {
+    backfillBtn.addEventListener('click', async () => {
+      if (!confirm('Generar snapshots para los últimos 90 días (NDVI, NDMI, Alerta)?\nTarda ~30 min en background.')) return;
+      try {
+        const r = await fetch(`/api/v1/campos/${store.selectedFieldId}/backfill-snapshots`, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ days: 90, layers: ['ndvi', 'ndmi', 'alerta_fusion'] }),
+        });
+        const data = await r.json();
+        alert(`Backfill encolado: ~${data.estimated_minutes} min. Reload en un rato para ver los frames nuevos.`);
+      } catch (err) {
+        alert(`Error: ${err.message}`);
+      }
     });
   }
   node.querySelectorAll('[data-field-id]').forEach((button) => {

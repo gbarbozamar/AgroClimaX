@@ -59,6 +59,33 @@ class TimelineFramesEndpointTests(IsolatedAsyncioTestCase):
             self.assertIn(resp.status_code, (403, 404))
 
     @pytest.mark.skipif(not _F3_READY, reason="Fase 3 (field_timeline endpoint) pendiente")
+    def test_backfill_snapshots_unknown_field_returns_404(self):
+        """POST /api/v1/campos/{id}/backfill-snapshots — field inexistente → 404/403."""
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        with TestClient(app) as client:
+            resp = client.post(
+                "/api/v1/campos/no-such-field/backfill-snapshots",
+                json={"days": 30, "layers": ["ndvi"]},
+            )
+            self.assertIn(resp.status_code, (403, 404))
+
+    @pytest.mark.skipif(not _F3_READY, reason="Fase 3 (field_timeline endpoint) pendiente")
+    def test_backfill_snapshots_invalid_days_returns_400_or_422(self):
+        """POST /api/v1/campos/{id}/backfill-snapshots — days fuera de [1, 365] → 4xx."""
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        with TestClient(app) as client:
+            resp = client.post(
+                "/api/v1/campos/no-such-field/backfill-snapshots",
+                json={"days": 0, "layers": ["ndvi"]},
+            )
+            # Ownership check (403/404) o validación (400/422).
+            self.assertIn(resp.status_code, (400, 403, 404, 422))
+
+    @pytest.mark.skipif(not _F3_READY, reason="Fase 3 (field_timeline endpoint) pendiente")
     def test_layers_available_unknown_field_returns_404(self):
         """GET /api/v1/campos/{id}/layers-available — field inexistente → 404."""
         from fastapi.testclient import TestClient
