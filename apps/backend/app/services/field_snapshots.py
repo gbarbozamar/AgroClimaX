@@ -258,6 +258,37 @@ async def render_field_snapshot(
     except Exception as exc:
         logger.info("paddock boundaries overlay skipped: %s", exc)
 
+    # 5c. Etiqueta de fecha+layer+field_name en bottom-left del canvas.
+    try:
+        from PIL import ImageDraw, ImageFont
+        from app.models.farm import FarmField
+        field_row = (await db.execute(
+            select(FarmField.name).where(FarmField.id == field_id).limit(1)
+        )).first()
+        field_name = field_row[0] if field_row else field_id[:8]
+        label_text = f"{field_name}  |  {layer_key.upper()}  |  {observed_at.isoformat()}"
+        draw = ImageDraw.Draw(canvas, 'RGBA')
+        try:
+            # Fuente default de PIL escalada por tamaño del canvas.
+            font_size = max(14, native_w // 50)
+            font = ImageFont.load_default(size=font_size)
+        except Exception:
+            font = ImageFont.load_default()
+        # Box semitransparente detrás del texto para legibilidad.
+        padding = 8
+        bbox = draw.textbbox((0, 0), label_text, font=font)
+        tw_px = bbox[2] - bbox[0]
+        th_px = bbox[3] - bbox[1]
+        margin = 12
+        box_x0 = margin
+        box_y0 = native_h - th_px - padding * 2 - margin
+        box_x1 = box_x0 + tw_px + padding * 2
+        box_y1 = native_h - margin
+        draw.rectangle([(box_x0, box_y0), (box_x1, box_y1)], fill=(0, 0, 0, 180))
+        draw.text((box_x0 + padding, box_y0 + padding), label_text, fill=(255, 255, 255, 255), font=font)
+    except Exception as exc:
+        logger.info("label overlay skipped: %s", exc)
+
     # 6. Downscale si excede cap de ancho.
     out_w, out_h = native_w, native_h
     if native_w > MAX_WIDTH_PX:
