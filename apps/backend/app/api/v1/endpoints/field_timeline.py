@@ -161,3 +161,40 @@ async def trigger_backfill(
         "layers": body.layers,
         "estimated_minutes": round(body.days * len(body.layers) * 6 / 60, 1),
     }
+
+
+@router.get("/campos/{field_id}/layers-available")
+async def get_field_layers_available(
+    field_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: AuthContext = Depends(require_auth_context),
+) -> dict:
+    """Enumera las capas con snapshots disponibles para este field.
+
+    Devuelve para cada capa: count, first_observed, last_observed, label
+    amigable. Consumido por el modal de video para poblar el dropdown.
+    """
+    await _require_field_ownership(db, field_id, auth.user.id)
+    stmt = (
+        select(
+            FieldImageSnapshot.layer_key,
+            func.count(FieldImageSnapshot.id).label("count"),
+            func.min(FieldImageSnapshot.observed_at).label("first_observed"),
+            func.max(FieldImageSnapshot.observed_at).label("last_observed"),
+        )
+        .where(FieldImageSnapshot.field_id == field_id)
+        .group_by(FieldImageSnapshot.layer_key)
+        .order_by(FieldImageSnapshot.layer_key.asc())
+    )
+    rows = (await db.execute(stmt)).all()
+    layers = [
+        {
+            "layer_key": r.layer_key,
+            "count": int(r.count),
+            "first_observed": r.first_observed.isoformat() if r.first_observed else None,
+            "last_observed": r.last_observed.isoformat() if r.last_observed else None,
+            "label": LAYER_LABELS.get(r.layer_key, r.layer_key.upper()),
+        }
+        for r in rows
+    ]
+    return {"field_id": field_id, "layers": layers}

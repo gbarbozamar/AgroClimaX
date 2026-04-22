@@ -116,8 +116,12 @@ class TimelineFramesEndpointTests(IsolatedAsyncioTestCase):
                 db.add(FarmField(
                     id=field_id,
                     user_id=user_id,
+                    establishment_id="est-test",
                     name="Test Field",
-                    geometry_geojson={"type": "Polygon", "coordinates": []},
+                    department="Rivera",
+                    padron_value="test",
+                    field_geometry_geojson={"type": "Polygon", "coordinates": [[[0,0],[1,0],[1,1],[0,1],[0,0]]]},
+                    active=True,
                 ))
                 # 2 snapshots ndvi, 1 alerta_fusion, todos con observed_at distintos.
                 db.add(FieldImageSnapshot(
