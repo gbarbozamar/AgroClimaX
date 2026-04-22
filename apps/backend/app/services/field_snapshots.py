@@ -176,7 +176,20 @@ async def render_field_snapshot(
     # Canvas nativo: n_x * 256 x n_y * 256. Downscale al final si pasa MAX_WIDTH_PX.
     native_w = n_x * TILE_PX
     native_h = n_y * TILE_PX
-    canvas = Image.new("RGBA", (native_w, native_h), (0, 0, 0, 0))
+    # Fondo blanco sólido (antes era transparente → se veía negro en viewers).
+    canvas = Image.new("RGBA", (native_w, native_h), (255, 255, 255, 255))
+
+    # Geographic bounds REALES del canvas (tile edges, no field bbox).
+    # Esto es crítico para que los paddock boundaries queden alineados con la
+    # imagen: los XYZ tiles cubren una zona mayor que el field bbox (tiles son
+    # discretos), y el canvas pinta esa zona completa.
+    n_tiles = 2 ** zoom
+    canvas_west = x_range.start * 360.0 / n_tiles - 180.0
+    canvas_east = (x_range.start + n_x) * 360.0 / n_tiles - 180.0
+    _north_rad = math.atan(math.sinh(math.pi - 2 * math.pi * y_range.start / n_tiles))
+    _south_rad = math.atan(math.sinh(math.pi - 2 * math.pi * (y_range.start + n_y) / n_tiles))
+    canvas_north = math.degrees(_north_rad)
+    canvas_south = math.degrees(_south_rad)
 
     valid_tiles = 0
     for tx in x_range:
@@ -238,10 +251,15 @@ async def render_field_snapshot(
                 except Exception:
                     continue
                 # Convertir coords lat/lng a pixel coords dentro del canvas.
-                # Canvas cubre el bbox del field (west..east, south..north) en (0..native_w, 0..native_h).
+                # IMPORTANTE: el canvas cubre (canvas_west..canvas_east, canvas_south..canvas_north)
+                # que son los bordes de los XYZ tiles — NO los bounds del field.
+                # Si usáramos field bounds (west/east/south/north) los paddocks
+                # se dibujarían estirados y más grandes que la imagen real.
                 def lonlat_to_px(lon, lat):
-                    fx = (lon - west) / (east - west) if east > west else 0
-                    fy = (north - lat) / (north - south) if north > south else 0
+                    dx = canvas_east - canvas_west
+                    dy = canvas_north - canvas_south
+                    fx = (lon - canvas_west) / dx if dx > 0 else 0
+                    fy = (canvas_north - lat) / dy if dy > 0 else 0
                     return (int(fx * native_w), int(fy * native_h))
                 # Iterar por geometrías MultiPolygon / Polygon / LineString.
                 polys = []
@@ -284,8 +302,20 @@ async def render_field_snapshot(
         box_y0 = native_h - th_px - padding * 2 - margin
         box_x1 = box_x0 + tw_px + padding * 2
         box_y1 = native_h - margin
-        draw.rectangle([(box_x0, box_y0), (box_x1, box_y1)], fill=(0, 0, 0, 180))
-        draw.text((box_x0 + padding, box_y0 + padding), label_text, fill=(255, 255, 255, 255), font=font)
+        # Fondo blanco semi-opaco + borde negro sutil + texto negro (legible
+        # tanto sobre imágenes claras como oscuras).
+        draw.rectangle(
+            [(box_x0, box_y0), (box_x1, box_y1)],
+            fill=(255, 255, 255, 230),
+            outline=(0, 0, 0, 180),
+            width=1,
+        )
+        draw.text(
+            (box_x0 + padding, box_y0 + padding),
+            label_text,
+            fill=(20, 20, 20, 255),
+            font=font,
+        )
     except Exception as exc:
         logger.info("label overlay skipped: %s", exc)
 

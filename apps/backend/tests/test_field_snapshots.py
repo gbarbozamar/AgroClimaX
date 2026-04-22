@@ -101,10 +101,14 @@ class RenderFieldSnapshotTests(IsolatedAsyncioTestCase):
             self.assertIsNotNone(result)
             self.assertEqual(result.field_id, field_id)
             self.assertEqual(result.layer_key, "alerta_fusion")
-            # El service guarda el path absoluto del PNG en storage_path
-            # (campo propio) o en storage_key según schema. Verificamos que
-            # al menos uno esté seteado y apunte a un archivo existente.
-            stored_path = getattr(result, "storage_path", None) or getattr(result, "storage_key", None)
+            # storage_key es RELATIVO a .tile_cache/ (contract del endpoint HTTP).
+            # storage_path (si existe) es el path absoluto. Aceptamos cualquiera
+            # y normalizamos para verificar que el archivo exista en disco.
+            stored_path = getattr(result, "storage_path", None)
+            if not stored_path:
+                stored_path = getattr(result, "storage_key", None)
+                if stored_path and not Path(stored_path).is_absolute():
+                    stored_path = str(Path(".tile_cache") / stored_path)
             self.assertIsNotNone(stored_path, "expected storage_path o storage_key")
             self.assertTrue(Path(str(stored_path)).exists(), f"PNG no escrito en {stored_path}")
 
