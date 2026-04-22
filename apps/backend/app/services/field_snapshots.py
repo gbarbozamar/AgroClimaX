@@ -379,14 +379,21 @@ async def render_field_snapshot(
         else None
     ) or "pipeline-anonymous"
 
+    # storage_key RELATIVO (fields/{field_id}/snapshots/{layer}/{date}.png)
+    # es el contract que espera el endpoint GET /campos/{id}/snapshots/{key:path}.
+    # Si usamos str(out_path) (absoluto Windows con backslashes) el endpoint no
+    # puede servir el archivo — los thumbnails del slider quedan rotos.
+    storage_key_rel = f"fields/{field_id}/snapshots/{layer_key}/{observed_at.isoformat()}.png"
     payload = {
         "field_id": field_id,
         "user_id": user_id,
         "layer_key": layer_key,
         "observed_at": observed_col,
-        # Compat con ambos nombres de columna usados por agentes paralelos.
+        # storage_path guarda el path absoluto (uso interno del worker de video
+        # que lee el archivo). storage_key es relativo para que el endpoint HTTP
+        # lo pueda servir sin duplicar field_id en la URL.
         "storage_path": str(out_path),
-        "storage_key": str(out_path),
+        "storage_key": storage_key_rel,
         "width_px": out_w,
         "height_px": out_h,
         "bbox_json": [west, south, east, north],
