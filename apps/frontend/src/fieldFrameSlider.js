@@ -392,10 +392,13 @@ export function renderFieldFrameSlider(containerEl, frames, opts = {}) {
       const date = formatShortDate(frame?.observed_at);
       const tooltip = buildTooltip(frame);
       const isActive = sameDate(frame?.observed_at, activeDate);
+      // onerror: si el PNG no carga (404/403/etc), ocultamos el dot completo
+      // en vez de mostrar el icono roto de imagen. El usuario pidió no
+      // ver "cards con el símbolo de la imagen rota".
       const thumb = frame?.image_url
         ? `<img src="${escapeAttr(
             frame.image_url,
-          )}" alt="${escapeAttr(date)}" class="field-frame-thumb" loading="lazy" />`
+          )}" alt="${escapeAttr(date)}" class="field-frame-thumb" loading="lazy" onerror="this.closest('.field-frame-dot')?.remove()" />`
         : `<div class="field-frame-thumb-missing" aria-label="sin imagen">n/a</div>`;
       const dateSlug = sanitizeFilenamePart(date, 'frame');
       const filename = `${fieldSlug}-${layerSlug}-${dateSlug}.png`;

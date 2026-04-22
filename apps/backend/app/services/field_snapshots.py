@@ -230,6 +230,47 @@ async def render_field_snapshot(
     if valid_tiles == 0:
         return None
 
+    # 5a. Clippear canvas al polígono del field: los tiles XYZ cubren un área
+    # RECTANGULAR mayor que el field real; queremos que la imagen visible sea
+    # solo el field (ni tiles vecinos, ni bordes del rectángulo de tiles).
+    # Pixeles fuera del field → blancos. Esto además alinea perfectamente los
+    # paddocks que se dibujan después, porque el "área con imagen" = field.
+    try:
+        from PIL import Image as _Image, ImageDraw as _ImageDraw
+        mask = _Image.new("L", (native_w, native_h), 0)
+        mdraw = _ImageDraw.Draw(mask)
+
+        def _canvas_px(lon, lat):
+            dx_ = canvas_east - canvas_west
+            dy_ = canvas_north - canvas_south
+            fx_ = (lon - canvas_west) / dx_ if dx_ > 0 else 0
+            fy_ = (canvas_north - lat) / dy_ if dy_ > 0 else 0
+            return (int(fx_ * native_w), int(fy_ * native_h))
+
+        def _fill_polygon(poly):
+            if poly.is_empty:
+                return
+            exterior = [_canvas_px(x, y) for x, y in poly.exterior.coords]
+            if len(exterior) >= 3:
+                mdraw.polygon(exterior, fill=255)
+            for interior in poly.interiors:
+                ring = [_canvas_px(x, y) for x, y in interior.coords]
+                if len(ring) >= 3:
+                    mdraw.polygon(ring, fill=0)
+
+        if geom.geom_type == "Polygon":
+            _fill_polygon(geom)
+        elif geom.geom_type == "MultiPolygon":
+            for sub in geom.geoms:
+                _fill_polygon(sub)
+
+        # Crear base blanca y pegar el canvas usando la mask del field.
+        base = _Image.new("RGBA", (native_w, native_h), (255, 255, 255, 255))
+        base.paste(canvas, (0, 0), mask)
+        canvas = base
+    except Exception as exc:
+        logger.info("field mask clipping skipped: %s", exc)
+
     # 5b. Dibujar bordes de potreros (FarmPaddock) sobre el canvas.
     try:
         from app.models.farm import FarmPaddock
@@ -241,8 +282,30 @@ async def render_field_snapshot(
                 FarmPaddock.active == True,  # noqa: E712
             )
         )).scalars().all()
+        draw = ImageDraw.Draw(canvas, 'RGBA')
+        # 5b.0 Dibujar el borde del field (naranja) para que el usuario vea la
+        # silueta completa del campo aunque no haya datos Copernicus adentro.
+        def _field_px(lon, lat):
+            dx_ = canvas_east - canvas_west
+            dy_ = canvas_north - canvas_south
+            fx_ = (lon - canvas_west) / dx_ if dx_ > 0 else 0
+            fy_ = (canvas_north - lat) / dy_ if dy_ > 0 else 0
+            return (int(fx_ * native_w), int(fy_ * native_h))
+
+        def _draw_poly_outline(poly_, color, width):
+            if poly_.is_empty:
+                return
+            ext = [_field_px(x, y) for x, y in poly_.exterior.coords]
+            if len(ext) >= 2:
+                draw.line(ext + [ext[0]], fill=color, width=width)
+
+        if geom.geom_type == "Polygon":
+            _draw_poly_outline(geom, (255, 140, 0, 240), 3)
+        elif geom.geom_type == "MultiPolygon":
+            for sub in geom.geoms:
+                _draw_poly_outline(sub, (255, 140, 0, 240), 3)
+
         if paddock_rows:
-            draw = ImageDraw.Draw(canvas, 'RGBA')
             for p in paddock_rows:
                 if not p.geometry_geojson:
                     continue
