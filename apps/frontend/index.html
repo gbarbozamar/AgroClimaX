@@ -1485,6 +1485,76 @@
       max-width: 420px; text-align: center;
     }
 
+    .field-video-config-row {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      font-size: 0.78rem;
+      color: #cfd4e0;
+    }
+
+    .field-video-config-row label {
+      min-width: 80px;
+      font-weight: 600;
+      color: #d3e1ff;
+    }
+
+    .field-video-config-row select {
+      flex: 1;
+      padding: 6px 8px;
+      background: #1b2230;
+      color: #e6ecf7;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 6px;
+      font-size: 0.78rem;
+      cursor: pointer;
+    }
+
+    .field-video-config-row select:focus {
+      outline: none;
+      border-color: rgba(90, 140, 255, 0.6);
+      box-shadow: 0 0 0 2px rgba(90, 140, 255, 0.25);
+    }
+
+    .field-video-config-actions {
+      display: flex;
+      flex-direction: row;
+      gap: 10px;
+      margin-top: 12px;
+      width: 100%;
+      justify-content: flex-end;
+    }
+
+    .field-video-config-submit {
+      width: auto;
+      margin-bottom: 0;
+      padding: 8px 18px;
+    }
+
+    .field-video-config-submit:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .field-video-config-cancel {
+      padding: 8px 16px;
+      background: rgba(255, 255, 255, 0.06);
+      color: #99a;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 8px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+
+    .field-video-config-cancel:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: #d3dbea;
+    }
+
     .fields-result-box {
       border: 1px solid rgba(255,255,255,0.08);
       border-radius: 10px;
