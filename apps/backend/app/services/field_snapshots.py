@@ -193,7 +193,9 @@ async def render_field_snapshot(
                 user_id=resolved_user_id,
             )
             # Skip 67b transparent placeholders y cualquier dato inválido.
-            if not png_bytes or len(png_bytes) <= 100:
+            # Umbral alineado con public_api._MIN_VALID_TILE_BYTES (500) para
+            # rechazar también tiles erróneos de Copernicus (~334 bytes).
+            if not png_bytes or len(png_bytes) < 500:
                 continue
             try:
                 tile_img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
@@ -296,6 +298,20 @@ async def render_field_snapshot(
         out_path.write_bytes(png_payload)
     except OSError as exc:
         logger.warning("snapshot write failed path=%s exc=%s", out_path, exc)
+        return None
+
+    # Validar que el PNG persistido tiene contenido útil, no solo bordes amarillos
+    # sobre fondo transparente (caso: todos los tiles fueron placeholders pero
+    # valid_tiles > 0 porque >100 bytes es un threshold muy bajo).
+    if len(png_payload) < 1200:
+        logger.info(
+            "render: PNG final muy chico (%d b), probable placeholder agregado",
+            len(png_payload),
+        )
+        try:
+            out_path.unlink()
+        except Exception:
+            pass
         return None
 
     # 10. Upsert FieldImageSnapshot. Si el modelo aún no fue materializado
