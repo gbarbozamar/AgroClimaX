@@ -65,6 +65,23 @@ if SQLITE_BACKEND_ENABLED:
 engine = create_async_engine(RESOLVED_DATABASE_URL, **engine_kwargs)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
+# SQLite: habilitar WAL mode al primer connect de cada pool. WAL permite
+# múltiples lectores + un escritor concurrente y evita "database is locked"
+# cuando uvicorn + worker + background tasks escriben a la misma DB.
+# (PostgreSQL ignora este listener.)
+if SQLITE_BACKEND_ENABLED:
+    from sqlalchemy import event
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _enable_sqlite_wal(dbapi_conn, _connection_record):  # noqa: ANN001
+        cur = dbapi_conn.cursor()
+        try:
+            cur.execute("PRAGMA journal_mode=WAL")
+            cur.execute("PRAGMA synchronous=NORMAL")
+            cur.execute("PRAGMA busy_timeout=30000")
+        finally:
+            cur.close()
+
 
 class Base(DeclarativeBase):
     pass
