@@ -5,10 +5,15 @@ GET /api/v1/campos/{field_id}/timeline-frames?layer=ndvi&days=30
   -> lista de FieldImageSnapshot recientes (última ventana N días) para
      la capa pedida, con URL para el PNG rendereado + metadata embebida.
 
+GET /api/v1/campos/{field_id}/layers-available
+  -> lista de capas con snapshots rendereados para el campo (layer_key,
+     count, first/last observed_at, label amigable). Usado por el selector
+     de capas del Field Mode en el frontend.
+
 GET /api/v1/campos/{field_id}/snapshots/{storage_key:path}
   -> sirve el PNG raw leyendo del filesystem de tile cache.
 
-Ambos endpoints requieren auth y verifican ownership del field.
+Todos los endpoints requieren auth y verifican ownership del field.
 """
 from __future__ import annotations
 
@@ -42,6 +47,10 @@ LAYER_LABELS: dict[str, str] = {
 
 # Ruta donde field_snapshots service escribe los PNGs.
 _TILE_CACHE_ROOT = Path(".tile_cache")
+
+# Alias hacia el dict público — dedup del dict _LAYER_LABELS que L1 agregó y
+# que era gemelo de LAYER_LABELS. Mantenemos el nombre con underscore por compat.
+_LAYER_LABELS = LAYER_LABELS
 
 
 async def _require_field_ownership(db: AsyncSession, field_id: str, user_id: str) -> FarmField:
@@ -97,6 +106,50 @@ async def get_field_timeline_frames(
         "layer_key": layer,
         "total": len(frames),
         "days": frames,
+    }
+
+
+@router.get("/campos/{field_id}/layers-available")
+async def get_field_layers_available(
+    field_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: AuthContext = Depends(require_auth_context),
+) -> dict:
+    """
+    Devuelve las capas (layer_key) que tienen al menos un FieldImageSnapshot
+    rendereado para este campo, con count y ventana temporal (first/last
+    observed_at). Usado por el frontend para pintar el selector de capas del
+    Field Mode sin tener que tirar una query por cada layer.
+    """
+    await _require_field_ownership(db, field_id, auth.user.id)
+
+    stmt = (
+        select(
+            FieldImageSnapshot.layer_key,
+            func.count(FieldImageSnapshot.id).label("count"),
+            func.min(FieldImageSnapshot.observed_at).label("first_observed"),
+            func.max(FieldImageSnapshot.observed_at).label("last_observed"),
+        )
+        .where(FieldImageSnapshot.field_id == field_id)
+        .group_by(FieldImageSnapshot.layer_key)
+        .order_by(FieldImageSnapshot.layer_key.asc())
+    )
+    rows = (await db.execute(stmt)).all()
+
+    layers = [
+        {
+            "layer_key": row.layer_key,
+            "count": int(row.count or 0),
+            "first_observed": row.first_observed.isoformat() if row.first_observed else None,
+            "last_observed": row.last_observed.isoformat() if row.last_observed else None,
+            "label": _LAYER_LABELS.get(row.layer_key, row.layer_key.upper()),
+        }
+        for row in rows
+    ]
+
+    return {
+        "field_id": field_id,
+        "layers": layers,
     }
 
 
