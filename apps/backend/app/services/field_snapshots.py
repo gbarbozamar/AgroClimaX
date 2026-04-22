@@ -38,14 +38,14 @@ SNAPSHOTS_ROOT = Path(__file__).resolve().parents[2] / ".tile_cache" / "fields"
 TILE_PX = 256
 
 # Cap de tiles totales. Un zoom alto con bbox grande puede explotar — subimos
-# de zoom 15 hacia 14 o 13 hasta caer bajo este cap.
-MAX_TILES = 16
-DEFAULT_ZOOM = 15
-MIN_ZOOM = 13
+# de zoom 16 hacia 15 o 14 hasta caer bajo este cap. 64 permite grillas 8×8.
+MAX_TILES = 64
+DEFAULT_ZOOM = 16
+MIN_ZOOM = 14
 
 # Canvas máximo en píxeles. Bbox chico puede quedar bajo esto, bbox grande se
-# resamplea para no pasar 1024 de ancho.
-MAX_WIDTH_PX = 1024
+# resamplea para no pasar 2560 de ancho (~4× el cap anterior de 1024).
+MAX_WIDTH_PX = 2560
 
 
 def _tile_count_for_zoom(bounds: tuple[float, float, float, float], zoom: int) -> int:
@@ -230,6 +230,16 @@ async def render_field_snapshot(
     if valid_tiles == 0:
         return None
 
+    # Aviso si la grilla es grande: con MAX_TILES=64 el tiempo por snapshot
+    # puede subir a ~20s (vs ~5s para 16 tiles). Aceptable para backfill batch
+    # pero caro si el auto-backfill se dispara en serie — alertamos para
+    # poder aplicar límites de tiempo total arriba si hace falta.
+    if valid_tiles > 32:
+        logger.warning(
+            "render_field_snapshot: %d valid tiles (field=%s layer=%s date=%s zoom=%s); snapshot render puede tardar >15s",
+            valid_tiles, field_id, layer_key, observed_at, zoom,
+        )
+
     # 5a. Clippear canvas al polígono del field: los tiles XYZ cubren un área
     # RECTANGULAR mayor que el field real; queremos que la imagen visible sea
     # solo el field (ni tiles vecinos, ni bordes del rectángulo de tiles).
@@ -353,48 +363,103 @@ async def render_field_snapshot(
     except Exception as exc:
         logger.info("field crop centering skipped: %s", exc)
 
-    # 5c. Etiqueta de fecha+layer+field_name en bottom-left del canvas.
+    # 5b.7 Watermark logo AgroClimaX en top-right (branding de la plataforma).
+    # El logo vive en el frontend público: apps/frontend/logo_agroclimax_header.png.
+    # Desde apps/backend/app/services/field_snapshots.py, parents[4] es el
+    # worktree root. Si el archivo no existe se loggea y se sigue sin logo.
     try:
-        from PIL import ImageDraw, ImageFont
+        from PIL import Image as _Image
+        from pathlib import Path as _Path
+        worktree_root = _Path(__file__).resolve().parents[4]
+        logo_path = worktree_root / "apps" / "frontend" / "logo_agroclimax_header.png"
+        if not logo_path.exists():
+            # Fallback: logo genérico del frontend.
+            logo_path = worktree_root / "apps" / "frontend" / "logo.png"
+        if logo_path.exists():
+            logo = _Image.open(logo_path).convert("RGBA")
+            # Escalar el logo al 20% del ancho del canvas, preservando aspect.
+            target_w = max(80, native_w // 5)
+            ratio = target_w / logo.width
+            target_h = int(logo.height * ratio)
+            logo_resized = logo.resize((target_w, target_h), _Image.LANCZOS)
+            # Fondo blanco semi-opaco detrás del logo para que sea legible
+            # sobre imágenes oscuras.
+            margin = max(6, native_w // 80)
+            pad = max(4, target_h // 8)
+            box_x0 = native_w - target_w - margin - pad
+            box_y0 = margin
+            box_x1 = native_w - margin
+            box_y1 = margin + target_h + pad * 2
+            from PIL import ImageDraw as _ImageDraw
+            dr = _ImageDraw.Draw(canvas, 'RGBA')
+            dr.rectangle([(box_x0, box_y0), (box_x1, box_y1)], fill=(255, 255, 255, 200))
+            canvas.paste(logo_resized, (box_x0 + pad, box_y0 + pad), logo_resized)
+        else:
+            # Fallback extremo: texto estilizado "AgroClimaX" con fuente default.
+            from PIL import ImageDraw as _ImageDraw
+            from PIL import ImageFont as _ImageFont
+            try:
+                font_size = max(16, native_w // 30)
+                font = _ImageFont.load_default(size=font_size)
+            except Exception:
+                font = _ImageFont.load_default()
+            text = "AgroClimaX"
+            dr = _ImageDraw.Draw(canvas, 'RGBA')
+            bbox = dr.textbbox((0, 0), text, font=font)
+            tw_px = bbox[2] - bbox[0]
+            th_px = bbox[3] - bbox[1]
+            margin = max(6, native_w // 80)
+            pad = 8
+            box_x0 = native_w - tw_px - margin - pad * 2
+            box_y0 = margin
+            box_x1 = native_w - margin
+            box_y1 = margin + th_px + pad * 2
+            dr.rectangle([(box_x0, box_y0), (box_x1, box_y1)], fill=(255, 255, 255, 200))
+            dr.text((box_x0 + pad, box_y0 + pad), text, fill=(20, 80, 20, 255), font=font)
+    except Exception as exc:
+        logger.info("logo watermark skipped: %s", exc)
+
+    # 5c. Label sobre franja blanca inferior (NO sobre la imagen del field).
+    try:
+        from PIL import Image as _Image, ImageDraw, ImageFont
         from app.models.farm import FarmField
         field_row = (await db.execute(
             select(FarmField.name).where(FarmField.id == field_id).limit(1)
         )).first()
         field_name = field_row[0] if field_row else field_id[:8]
         label_text = f"{field_name}  |  {layer_key.upper()}  |  {observed_at.isoformat()}"
-        draw = ImageDraw.Draw(canvas, 'RGBA')
+
+        # Determinar font size basado en el canvas final.
+        font_size = max(18, native_w // 40)
         try:
-            # Fuente default de PIL escalada por tamaño del canvas.
-            font_size = max(14, native_w // 50)
             font = ImageFont.load_default(size=font_size)
         except Exception:
             font = ImageFont.load_default()
-        # Box semitransparente detrás del texto para legibilidad.
-        padding = 8
-        bbox = draw.textbbox((0, 0), label_text, font=font)
-        tw_px = bbox[2] - bbox[0]
-        th_px = bbox[3] - bbox[1]
-        margin = 12
-        box_x0 = margin
-        box_y0 = native_h - th_px - padding * 2 - margin
-        box_x1 = box_x0 + tw_px + padding * 2
-        box_y1 = native_h - margin
-        # Fondo blanco semi-opaco + borde negro sutil + texto negro (legible
-        # tanto sobre imágenes claras como oscuras).
-        draw.rectangle(
-            [(box_x0, box_y0), (box_x1, box_y1)],
-            fill=(255, 255, 255, 230),
-            outline=(0, 0, 0, 180),
-            width=1,
-        )
-        draw.text(
-            (box_x0 + padding, box_y0 + padding),
-            label_text,
-            fill=(20, 20, 20, 255),
-            font=font,
-        )
+
+        # Medir texto para saber cuánto alto de banda necesitamos.
+        tmp = _Image.new("RGBA", (10, 10))
+        measure = ImageDraw.Draw(tmp)
+        tbbox = measure.textbbox((0, 0), label_text, font=font)
+        tw_px = tbbox[2] - tbbox[0]
+        th_px = tbbox[3] - tbbox[1]
+        pad = max(8, th_px // 3)
+        band_h = th_px + pad * 2
+
+        # Nuevo canvas con banda blanca debajo.
+        new_canvas = _Image.new("RGBA", (native_w, native_h + band_h), (255, 255, 255, 255))
+        new_canvas.paste(canvas, (0, 0))
+        # Dibujar label centrado dentro de la banda.
+        dr = ImageDraw.Draw(new_canvas, 'RGBA')
+        label_x = max(pad, (native_w - tw_px) // 2)
+        label_y = native_h + pad
+        dr.text((label_x, label_y), label_text, fill=(20, 20, 20, 255), font=font)
+        # Línea divisoria sutil entre imagen y banda de label.
+        dr.line([(0, native_h), (native_w, native_h)], fill=(200, 200, 200, 255), width=1)
+
+        canvas = new_canvas
+        native_h = canvas.height
     except Exception as exc:
-        logger.info("label overlay skipped: %s", exc)
+        logger.info("label band skipped: %s", exc)
 
     # 6. Downscale si excede cap de ancho.
     out_w, out_h = native_w, native_h
