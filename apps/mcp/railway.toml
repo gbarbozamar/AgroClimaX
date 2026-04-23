@@ -1,0 +1,38 @@
+# Railway deploy config para el AgroClimaX MCP server.
+#
+# Setup en Railway:
+#   1. Create service → Deploy from GitHub (repo AgroClimaX)
+#   2. Settings → Root Directory: apps/mcp
+#   3. Railway detecta este railway.toml + Dockerfile
+#   4. Setear env vars (ver [env] abajo, o Settings → Variables)
+#   5. Generate public domain → copiar el URL para usarlo en Onyx
+#
+# El MCP server actúa como proxy autenticado al backend principal de AgroClimaX.
+# Todas las queries van al backend público (AGROCLIMAX_BACKEND_URL) con
+# header X-Service-Token y opcional X-User-Id del caller MCP.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# Restart policy generoso: si el process muere por alguna razón (ej. backend
+# caído momentáneamente durante un request), reinicia automáticamente.
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+# Healthcheck: el MCP responde 400-ish a un GET sin session, pero al menos
+# TCP open en PORT. Para un healthcheck más robusto hay que pegar
+# a /mcp con un POST JSON-RPC — omitimos por simplicidad.
+
+# IMPORTANTE — variables de entorno que HAY QUE setear en Railway UI:
+#
+#   MCP_SERVICE_TOKEN          token compartido con backend (generá con:
+#                              python -c "import secrets; print(secrets.token_urlsafe(32))")
+#                              Este mismo valor debe existir en el backend principal.
+#
+#   AGROCLIMAX_BACKEND_URL     URL HTTPS público del backend AgroClimaX en Railway.
+#                              Ejemplo: https://agroclimax-backend-production.up.railway.app
+#
+# Las siguientes ya vienen en el Dockerfile como ENV pero pueden override:
+#   AGROCLIMAX_MCP_TRANSPORT=http
+#   AGROCLIMAX_MCP_PORT        override del puerto (default Railway PORT o 8088).
