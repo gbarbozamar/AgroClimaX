@@ -276,7 +276,18 @@ async def download_snapshot_url(field_id: str, storage_key: str, user_id: str | 
 if __name__ == "__main__":
     transport = os.environ.get("AGROCLIMAX_MCP_TRANSPORT", "stdio").lower()
     if transport == "http":
-        port = int(os.environ.get("AGROCLIMAX_MCP_PORT", "8088"))
-        mcp.run(transport="http", port=port)
+        # Port priority: Railway PORT > MCP_SERVER_PORT > AGROCLIMAX_MCP_PORT > 8088.
+        # Railway injects PORT automatically on every deploy; respetarlo es
+        # condición necesaria para que el gateway público llegue al container.
+        port = int(
+            os.environ.get("PORT")
+            or os.environ.get("MCP_SERVER_PORT")
+            or os.environ.get("AGROCLIMAX_MCP_PORT")
+            or "8088"
+        )
+        # Bind 0.0.0.0 (no 127.0.0.1) para ser alcanzable desde fuera del
+        # container. FastMCP default es 127.0.0.1 que solo funciona local.
+        host = os.environ.get("AGROCLIMAX_MCP_HOST", "0.0.0.0")
+        mcp.run(transport="http", host=host, port=port)
     else:
         mcp.run(transport="stdio")
