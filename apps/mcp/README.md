@@ -1,18 +1,62 @@
 # agroclimax-mcp
 
-FastMCP server that exposes AgroClimaX backend tools (field snapshots, timelines,
-timelapse video jobs, alert-based field listings, y las métricas por potrero de
-Fase 5) sobre el Model Context Protocol.
+FastMCP server que expone el backend AgroClimaX sobre el Model Context Protocol:
+field snapshots, timelines, timelapse video jobs, alertas (current/history/forecast),
+metadata de fields/paddocks/establishments, métricas de potreros (Fase 5) y
+operaciones administrativas como `trigger_backfill`.
 
 ## Tools
 
-- `get_field_snapshot(field_id, layer, date?, user_id?)` — snapshot PNG + metadata.
-- `get_field_timeline(field_id, layer, days, user_id?)` — últimos N snapshots.
-- `request_field_video(field_id, layer, duration_days, user_id?)` — enqueue timelapse job.
-- `list_fields_by_alert(min_level, user_id?)` — campos con alerta >= nivel.
-- `paddock_metrics(field_id, user_id?)` — NDVI/NDMI stats por potrero (Fase 5, placeholder hasta que el endpoint backend esté wired).
-- `establishment_summary(field_id, user_id?)` — resumen de emergencia / cobertura / stand count (Fase 5, placeholder).
-- `crop_prediction(field_id, horizon_days, user_id?)` — predicción de rendimiento / estrés (Fase 5, placeholder).
+19 tools disponibles — cubren snapshots, timelines, videos, alertas, metadata de fields/paddocks/establishments, y operaciones administrativas (backfill, layers-available). El MCP server espera que el backend en `AGROCLIMAX_BACKEND_URL` exponga `/api/v1/mcp/...`; algunas tools degradan a `{"status":"not_implemented"}` si la ruta backend aún no está wired.
+
+### Snapshots & timelines
+
+| Tool | Descripción | Params |
+|---|---|---|
+| `get_field_snapshot` | Snapshot PNG + metadata de un campo en una fecha. | `field_id`, `layer='ndvi'`, `date?`, `user_id?` |
+| `get_field_timeline` | Últimos N snapshots del campo. | `field_id`, `layer='ndvi'`, `days=30`, `user_id?` |
+| `layers_available` | Capas con snapshots rendereados para un campo. | `field_id`, `user_id?` |
+| `download_snapshot_url` | URL directa del PNG de un snapshot (para fetch con header). | `field_id`, `storage_key`, `user_id?` |
+
+### Video timelapse
+
+| Tool | Descripción | Params |
+|---|---|---|
+| `request_field_video` | Encola job de video timelapse (idempotente sobre jobs recientes). | `field_id`, `layer='ndvi'`, `duration_days=30`, `user_id?` |
+| `get_video_status` | Estado de un video job (`queued/rendering/ready/failed` + progress + URL). | `field_id`, `job_id`, `user_id?` |
+| `list_video_jobs` | Lista los N video jobs más recientes de un campo. | `field_id`, `limit=20`, `user_id?` |
+
+### Fields / paddocks / establishments metadata
+
+| Tool | Descripción | Params |
+|---|---|---|
+| `list_user_fields` | Todos los campos de un usuario con metadata básica. | `user_id` |
+| `get_field_details` | Detalles completos de un campo incluyendo paddocks. | `field_id`, `user_id?` |
+| `list_paddocks` | Potreros activos de un campo. | `field_id`, `user_id?` |
+| `list_establishments` | Establecimientos de un usuario. | `user_id` |
+
+### Alerts
+
+| Tool | Descripción | Params |
+|---|---|---|
+| `list_fields_by_alert` | Campos con alerta >= nivel. | `min_level=2`, `user_id?` |
+| `get_alert_current` | Estado actual de alertas según scope. | `scope='nacional'` (`nacional\|departamento\|unidad\|field`), `ref?`, `user_id?` |
+| `get_alert_history` | Histórico de alertas (últimos N estados del scope). | `scope='nacional'`, `ref?`, `limit=30`, `user_id?` |
+| `get_alert_forecast` | Forecast agroclimático (proyección a N días) si `ForecastSignal` disponible. | `scope='nacional'`, `ref?`, `user_id?` |
+
+### Paddock intelligence (Fase 5)
+
+| Tool | Descripción | Params |
+|---|---|---|
+| `paddock_metrics` | Métricas agregadas de un potrero (risk current/mean/max 30d, NDMI trend, días en alerta). | `paddock_id`, `date_range_days=30`, `user_id?` |
+| `establishment_summary` | Resumen de establecimiento (fields totales, área, highest_risk_field, fields_in_alert). | `establishment_id`, `user_id?` |
+| `crop_prediction` | Outlook heurístico de un campo (NDMI trend + risk tier + yield estimate; modelo `heuristic-v0.1`). | `field_id`, `horizon_days=30`, `user_id?` |
+
+### Operaciones administrativas
+
+| Tool | Descripción | Params |
+|---|---|---|
+| `trigger_backfill` | Dispara backfill async de snapshots para N días y M capas. | `field_id`, `days=30`, `layers?=['ndvi','ndmi','alerta_fusion']`, `user_id?` |
 
 ## Environment
 
@@ -86,7 +130,7 @@ Cerrá Claude Desktop **completo** (no solo la ventana — revisá el system tra
 
 ### 5. Verificar que el server cargó
 
-- En Claude Desktop, abrí **Settings → Developer**. Deberías ver `agroclimax` listado como un server conectado con sus 7 tools.
+- En Claude Desktop, abrí **Settings → Developer**. Deberías ver `agroclimax` listado como un server conectado con sus 19 tools.
 - Si aparece en rojo / error, abrí los logs en `%APPDATA%\Claude\logs\mcp-server-agroclimax.log` (macOS: `~/Library/Logs/Claude/mcp-server-agroclimax.log`).
 - Probá en el chat: *"usá la tool `list_fields_by_alert` con min_level=2"*. Si el backend está vivo, devuelve JSON; si no, un error de conexión.
 
