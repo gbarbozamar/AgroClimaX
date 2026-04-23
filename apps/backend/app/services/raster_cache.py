@@ -4,7 +4,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import desc, select
+from sqlalchemy import and_, desc, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -364,6 +364,39 @@ async def update_preload_run(
 async def get_preload_run(session: AsyncSession, run_key: str) -> PreloadRun | None:
     result = await session.execute(select(PreloadRun).where(PreloadRun.run_key == run_key).limit(1))
     return result.scalar_one_or_none()
+
+
+async def sweep_stale_preload_runs(
+    session: AsyncSession,
+    *,
+    stale_minutes: int,
+) -> int:
+    """Mark preload_runs stuck in running/queued for more than `stale_minutes` as failed.
+
+    Best-effort safety net so crashed workers, Windows sleeps, or process restarts
+    do not leave zombie rows that forever look like "in progress". Returns the
+    number of rows patched.
+    """
+    if stale_minutes <= 0:
+        return 0
+    cutoff = _now_utc() - timedelta(minutes=stale_minutes)
+    stmt = (
+        update(PreloadRun)
+        .where(
+            and_(
+                PreloadRun.status.in_(("running", "queued")),
+                PreloadRun.updated_at < cutoff,
+            )
+        )
+        .values(
+            status="failed",
+            stage="failed",
+            error_message=f"stale preload (>{stale_minutes}min without progress)",
+            updated_at=_now_utc(),
+        )
+    )
+    result = await session.execute(stmt)
+    return int(result.rowcount or 0)
 
 
 def serialize_preload_run(row: PreloadRun | None) -> dict[str, Any] | None:

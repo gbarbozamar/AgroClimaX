@@ -70,6 +70,8 @@ class Settings(BaseSettings):
     preload_adjacent_zoom_delta: int = 1
     preload_max_tiles_per_zoom: int = 48
     preload_run_ttl_hours: int = 24
+    # Safety net: preload_runs stuck en running/queued más de X min se marcan failed.
+    preload_stale_minutes: int = 15
 
     # Object storage / buckets
     storage_backend: str = "filesystem"

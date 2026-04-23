@@ -25,6 +25,7 @@ from app.services.raster_cache import (
     get_preload_run,
     raster_cache_key,
     serialize_preload_run,
+    sweep_stale_preload_runs,
     update_preload_run,
     upsert_raster_cache_entry,
     viewport_bucket,
@@ -36,6 +37,20 @@ PRELOAD_TASKS: dict[str, asyncio.Task] = {}
 
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
+
+
+async def _sweep_stale_runs_safe() -> None:
+    """Best-effort reap of stale preload_runs. Never raises."""
+    try:
+        async with AsyncSessionLocal() as session:
+            reaped = await sweep_stale_preload_runs(
+                session, stale_minutes=settings.preload_stale_minutes
+            )
+            if reaped:
+                await session.commit()
+    except Exception:
+        # Sweeping is a safety net; never block callers on its failure.
+        pass
 
 
 def _default_bbox() -> str:
@@ -578,6 +593,7 @@ async def _create_and_schedule_run(
 ) -> dict[str, Any]:
     if not settings.preload_enabled:
         return {"status": "disabled"}
+    await _sweep_stale_runs_safe()
     resolved_target_date = target_date or date.today()
     resolved_temporal_layers = _normalize_temporal_layers(temporal_layers)
     resolved_official_layers = _normalize_official_layers(official_layers)
@@ -736,6 +752,7 @@ async def start_timeline_window_preload(
 
 
 async def get_preload_status(run_key: str) -> dict[str, Any]:
+    await _sweep_stale_runs_safe()
     async with AsyncSessionLocal() as session:
         row = await get_preload_run(session, run_key)
         payload = serialize_preload_run(row) or {"run_key": run_key, "status": "missing"}
