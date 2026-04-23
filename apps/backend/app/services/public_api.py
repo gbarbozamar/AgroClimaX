@@ -548,6 +548,7 @@ async def fetch_tile_png(
     clip_ref: str | None = None,
     db: "AsyncSession | None" = None,
     user_id: str | None = None,
+    tile_px: int = 256,
 ) -> bytes:
     resolved_layer = resolve_temporal_layer_id(layer)
     if resolved_layer not in EVALSCRIPTS or z < TILE_MIN_ZOOM or z > TILE_MAX_ZOOM:
@@ -644,8 +645,11 @@ async def fetch_tile_png(
             "data": data_sources,
         },
         "output": {
-            "width": 256,
-            "height": 256,
+            # Resolución de la tile. Default 256 (OSM/Leaflet compatible).
+            # Field snapshots llaman con tile_px=512 para mayor detalle visible
+            # (Copernicus hace resampling profesional del raster fuente).
+            "width": tile_px,
+            "height": tile_px,
             "responses": [{"identifier": "default", "format": {"type": "image/png"}}],
         },
         "evalscript": EVALSCRIPTS[resolved_layer],

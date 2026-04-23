@@ -34,8 +34,10 @@ logger = logging.getLogger(__name__)
 # (que guarda tiles individuales) para evitar mezclar granularidades.
 SNAPSHOTS_ROOT = Path(__file__).resolve().parents[2] / ".tile_cache" / "fields"
 
-# Pixeles por tile Sentinel Hub (public_api usa 256 en el request).
-TILE_PX = 256
+# Pixeles por tile Sentinel Hub. Snapshot de campo usa 512 (vs 256 default
+# para Leaflet map) → ~4× más pixels, más detalle visible con el resampling
+# profesional de Copernicus sobre el raster fuente.
+TILE_PX = 512
 
 # Cap de tiles totales. Un zoom alto con bbox grande puede explotar — subimos
 # de zoom 16 hacia 15 o 14 hasta caer bajo este cap. 64 permite grillas 8×8.
@@ -204,6 +206,7 @@ async def render_field_snapshot(
                 clip_ref=field_id,
                 db=db,
                 user_id=resolved_user_id,
+                tile_px=TILE_PX,  # 512 = alta definición (vs 256 default)
             )
             # Skip 67b transparent placeholders y cualquier dato inválido.
             # Umbral alineado con public_api._MIN_VALID_TILE_BYTES (500) para
@@ -363,36 +366,49 @@ async def render_field_snapshot(
     except Exception as exc:
         logger.info("field crop centering skipped: %s", exc)
 
+    # 5b.6 Upscale a min 1280px de ancho si el field es chico. LANCZOS
+    # preserva detalle percibido de los paddocks y labels. Sin agregar
+    # información real (el raster S2 es 10m/px), pero las etiquetas, logos
+    # y líneas ganan nitidez visible en monitor/impresión.
+    _MIN_FINAL_WIDTH = 1280
+    if native_w < _MIN_FINAL_WIDTH:
+        from PIL import Image as _Image
+        scale = _MIN_FINAL_WIDTH / native_w
+        new_w = _MIN_FINAL_WIDTH
+        new_h = max(1, int(round(native_h * scale)))
+        canvas = canvas.resize((new_w, new_h), _Image.LANCZOS)
+        native_w, native_h = new_w, new_h
+
     # 5b.7 Watermark logo AgroClimaX en top-right (branding de la plataforma).
-    # El logo vive en el frontend público: apps/frontend/logo_agroclimax_header.png.
-    # Desde apps/backend/app/services/field_snapshots.py, parents[4] es el
-    # worktree root. Si el archivo no existe se loggea y se sigue sin logo.
+    # Logo resize a 15% del ancho con LANCZOS, SIN caja blanca (el PNG del
+    # logo ya tiene alpha transparente bien). Más limpio y profesional.
     try:
         from PIL import Image as _Image
         from pathlib import Path as _Path
         worktree_root = _Path(__file__).resolve().parents[4]
         logo_path = worktree_root / "apps" / "frontend" / "logo_agroclimax_header.png"
         if not logo_path.exists():
-            # Fallback: logo genérico del frontend.
             logo_path = worktree_root / "apps" / "frontend" / "logo.png"
         if logo_path.exists():
             logo = _Image.open(logo_path).convert("RGBA")
-            # Escalar el logo al 20% del ancho del canvas, preservando aspect.
-            target_w = max(80, native_w // 5)
+            # 15% del ancho — suficientemente visible sin invadir la imagen.
+            target_w = max(120, int(native_w * 0.15))
             ratio = target_w / logo.width
             target_h = int(logo.height * ratio)
             logo_resized = logo.resize((target_w, target_h), _Image.LANCZOS)
-            # Fondo blanco semi-opaco detrás del logo para que sea legible
-            # sobre imágenes oscuras.
-            margin = max(6, native_w // 80)
-            pad = max(4, target_h // 8)
+            # Margen top-right proporcional.
+            margin = max(8, native_w // 100)
+            # Caja blanca MUY sutil solo para legibilidad sobre áreas oscuras
+            # (ej NDVI saturado verde). Usamos alpha 120 (vs 200 antes) — más
+            # transparente para que no se note el rectángulo.
+            pad = max(3, target_h // 12)
             box_x0 = native_w - target_w - margin - pad
             box_y0 = margin
             box_x1 = native_w - margin
             box_y1 = margin + target_h + pad * 2
             from PIL import ImageDraw as _ImageDraw
             dr = _ImageDraw.Draw(canvas, 'RGBA')
-            dr.rectangle([(box_x0, box_y0), (box_x1, box_y1)], fill=(255, 255, 255, 200))
+            dr.rectangle([(box_x0, box_y0), (box_x1, box_y1)], fill=(255, 255, 255, 140))
             canvas.paste(logo_resized, (box_x0 + pad, box_y0 + pad), logo_resized)
         else:
             # Fallback extremo: texto estilizado "AgroClimaX" con fuente default.
