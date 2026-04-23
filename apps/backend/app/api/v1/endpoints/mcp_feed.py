@@ -277,3 +277,185 @@ async def mcp_crop_prediction(
         return await predict_crop_outlook(db, field_id, horizon_days)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/fields/{field_id}/video/{job_id}")
+async def mcp_get_video_status(
+    field_id: str,
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_service_token),
+) -> dict:
+    """Estado actual de un video job: queued/rendering/ready/failed + progress + video_url + frame_count + size_bytes."""
+    try:
+        from app.models.field_video import FieldVideoJob
+    except Exception:
+        raise HTTPException(status_code=503, detail="FieldVideoJob model not available")
+    from pathlib import Path
+    job = await db.get(FieldVideoJob, job_id)
+    if job is None or job.field_id != field_id:
+        raise HTTPException(status_code=404, detail="Video job not found")
+    size_bytes = None
+    if job.video_path:
+        p = Path(job.video_path)
+        if p.exists():
+            size_bytes = p.stat().st_size
+    return {
+        "job_id": job.id,
+        "field_id": job.field_id,
+        "layer_key": job.layer_key,
+        "duration_days": job.duration_days,
+        "status": job.status,
+        "progress_pct": round(float(job.progress_pct or 0.0), 2),
+        "frame_count": getattr(job, "frame_count", None),
+        "size_bytes": size_bytes,
+        "video_url": (f"/api/v1/campos/{job.field_id}/videos/{job.id}/file" if job.status == "ready" else None),
+        "error_message": job.error_message,
+        "created_at": job.created_at.isoformat() if job.created_at else None,
+        "finished_at": job.finished_at.isoformat() if job.finished_at else None,
+    }
+
+
+@router.get("/fields/{field_id}/videos")
+async def mcp_list_video_jobs(
+    field_id: str,
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_service_token),
+) -> dict:
+    """Lista los N video jobs más recientes de un campo."""
+    try:
+        from app.models.field_video import FieldVideoJob
+    except Exception:
+        raise HTTPException(status_code=503, detail="FieldVideoJob model not available")
+    stmt = (
+        select(FieldVideoJob)
+        .where(FieldVideoJob.field_id == field_id)
+        .order_by(desc(FieldVideoJob.created_at))
+        .limit(limit)
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+    return {
+        "field_id": field_id,
+        "total": len(rows),
+        "jobs": [
+            {
+                "job_id": j.id,
+                "layer_key": j.layer_key,
+                "duration_days": j.duration_days,
+                "status": j.status,
+                "frame_count": getattr(j, "frame_count", None),
+                "created_at": j.created_at.isoformat() if j.created_at else None,
+            }
+            for j in rows
+        ],
+    }
+
+
+@router.get("/users/{user_id}/fields")
+async def mcp_list_user_fields(
+    user_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_service_token),
+) -> dict:
+    """Lista todos los campos de un usuario con datos básicos."""
+    stmt = select(FarmField).where(FarmField.user_id == user_id, FarmField.active == True)  # noqa: E712
+    rows = (await db.execute(stmt)).scalars().all()
+    return {
+        "user_id": user_id,
+        "total": len(rows),
+        "fields": [
+            {
+                "field_id": f.id,
+                "field_name": f.name,
+                "establishment_id": f.establishment_id,
+                "department": f.department,
+                "padron_value": f.padron_value,
+                "area_ha": getattr(f, "area_ha", None),
+            }
+            for f in rows
+        ],
+    }
+
+
+@router.get("/fields/{field_id}/details")
+async def mcp_get_field_details(
+    field_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_service_token),
+) -> dict:
+    """Detalles completos de un campo: metadata + paddocks + analytics if available."""
+    field = (await db.execute(select(FarmField).where(FarmField.id == field_id).limit(1))).scalar_one_or_none()
+    if field is None:
+        raise HTTPException(status_code=404, detail="Field not found")
+    # Paddocks
+    try:
+        from app.models.farm import FarmPaddock
+        pad_rows = (await db.execute(
+            select(FarmPaddock).where(FarmPaddock.field_id == field_id, FarmPaddock.active == True)  # noqa: E712
+        )).scalars().all()
+        paddocks = [
+            {"paddock_id": p.id, "paddock_name": p.name, "area_ha": getattr(p, "area_ha", None)}
+            for p in pad_rows
+        ]
+    except Exception:
+        paddocks = []
+    return {
+        "field_id": field.id,
+        "field_name": field.name,
+        "establishment_id": field.establishment_id,
+        "department": field.department,
+        "padron_value": field.padron_value,
+        "area_ha": getattr(field, "area_ha", None),
+        "user_id": field.user_id,
+        "paddocks": paddocks,
+        "n_paddocks": len(paddocks),
+    }
+
+
+@router.get("/fields/{field_id}/paddocks")
+async def mcp_list_paddocks(
+    field_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_service_token),
+) -> dict:
+    """Lista los paddocks de un campo."""
+    try:
+        from app.models.farm import FarmPaddock
+    except Exception:
+        return {"field_id": field_id, "paddocks": [], "total": 0}
+    rows = (await db.execute(
+        select(FarmPaddock).where(FarmPaddock.field_id == field_id, FarmPaddock.active == True)  # noqa: E712
+    )).scalars().all()
+    return {
+        "field_id": field_id,
+        "total": len(rows),
+        "paddocks": [
+            {"paddock_id": p.id, "paddock_name": p.name, "area_ha": getattr(p, "area_ha", None)}
+            for p in rows
+        ],
+    }
+
+
+@router.get("/users/{user_id}/establishments")
+async def mcp_list_establishments(
+    user_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_service_token),
+) -> dict:
+    """Lista los establecimientos de un usuario."""
+    try:
+        from app.models.farm import FarmEstablishment
+    except Exception:
+        return {"user_id": user_id, "establishments": [], "total": 0}
+    rows = (await db.execute(
+        select(FarmEstablishment).where(FarmEstablishment.user_id == user_id, FarmEstablishment.active == True)  # noqa: E712
+    )).scalars().all()
+    return {
+        "user_id": user_id,
+        "total": len(rows),
+        "establishments": [
+            {"establishment_id": e.id, "name": e.name, "description": getattr(e, "description", None)}
+            for e in rows
+        ],
+    }

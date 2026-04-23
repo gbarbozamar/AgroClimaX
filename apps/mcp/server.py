@@ -157,6 +157,60 @@ async def crop_prediction(
     )
 
 
+@mcp.tool
+async def get_video_status(field_id: str, job_id: str, user_id: str | None = None) -> dict:
+    """Estado de un video job: queued/rendering/ready/failed + progress + video_url."""
+    async with httpx.AsyncClient() as cli:
+        r = await cli.get(f"{BACKEND_URL}/api/v1/mcp/fields/{field_id}/video/{job_id}", headers=_headers(user_id))
+        r.raise_for_status()
+        return r.json()
+
+
+@mcp.tool
+async def list_video_jobs(field_id: str, limit: int = 20, user_id: str | None = None) -> dict:
+    """Lista los N video jobs más recientes de un campo."""
+    async with httpx.AsyncClient() as cli:
+        r = await cli.get(f"{BACKEND_URL}/api/v1/mcp/fields/{field_id}/videos", params={"limit": limit}, headers=_headers(user_id))
+        r.raise_for_status()
+        return r.json()
+
+
+@mcp.tool
+async def list_user_fields(user_id: str) -> dict:
+    """Lista todos los campos de un usuario con su metadata básica."""
+    async with httpx.AsyncClient() as cli:
+        r = await cli.get(f"{BACKEND_URL}/api/v1/mcp/users/{user_id}/fields", headers=_headers(user_id))
+        r.raise_for_status()
+        return r.json()
+
+
+@mcp.tool
+async def get_field_details(field_id: str, user_id: str | None = None) -> dict:
+    """Detalles completos de un campo incluyendo paddocks."""
+    async with httpx.AsyncClient() as cli:
+        r = await cli.get(f"{BACKEND_URL}/api/v1/mcp/fields/{field_id}/details", headers=_headers(user_id))
+        r.raise_for_status()
+        return r.json()
+
+
+@mcp.tool
+async def list_paddocks(field_id: str, user_id: str | None = None) -> dict:
+    """Lista los paddocks de un campo."""
+    async with httpx.AsyncClient() as cli:
+        r = await cli.get(f"{BACKEND_URL}/api/v1/mcp/fields/{field_id}/paddocks", headers=_headers(user_id))
+        r.raise_for_status()
+        return r.json()
+
+
+@mcp.tool
+async def list_establishments(user_id: str) -> dict:
+    """Lista los establecimientos de un usuario."""
+    async with httpx.AsyncClient() as cli:
+        r = await cli.get(f"{BACKEND_URL}/api/v1/mcp/users/{user_id}/establishments", headers=_headers(user_id))
+        r.raise_for_status()
+        return r.json()
+
+
 if __name__ == "__main__":
     transport = os.environ.get("AGROCLIMAX_MCP_TRANSPORT", "stdio").lower()
     if transport == "http":
