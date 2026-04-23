@@ -459,3 +459,249 @@ async def mcp_list_establishments(
             for e in rows
         ],
     }
+
+
+@router.get("/alerts/current")
+async def mcp_get_alert_current(
+    scope: str = Query("nacional"),
+    ref: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_service_token),
+) -> dict:
+    """Estado actual de alertas. scope: nacional|departamento|unidad|field. ref: department name o unit_id o field_id."""
+    try:
+        from app.services.analysis import _format_state_payload
+        from app.models.materialized import LatestStateCache, UnitIndexSnapshot
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"model/service unavailable: {e}")
+
+    # Mapear scope a unit_id esperado por la caché/materialized.
+    if scope == "nacional":
+        unit_id = "Uruguay"
+    elif scope == "departamento":
+        if not ref:
+            raise HTTPException(status_code=400, detail="ref (department name) required for scope=departamento")
+        unit_id = ref
+    elif scope == "unidad":
+        unit_id = ref
+    elif scope == "field":
+        if not ref:
+            raise HTTPException(status_code=400, detail="ref (field_id) required for scope=field")
+        unit_id = f"user-field-{ref}"
+    else:
+        raise HTTPException(status_code=400, detail=f"invalid scope: {scope}")
+
+    # Leer último UnitIndexSnapshot.
+    snap = (await db.execute(
+        select(UnitIndexSnapshot)
+        .where(UnitIndexSnapshot.unit_id == unit_id)
+        .order_by(desc(UnitIndexSnapshot.observed_at))
+        .limit(1)
+    )).scalar_one_or_none()
+    if snap is None:
+        raise HTTPException(status_code=404, detail=f"No alert state for {scope}/{ref}")
+    return {
+        "scope": scope,
+        "ref": ref,
+        "unit_id": unit_id,
+        "observed_at": snap.observed_at.isoformat() if snap.observed_at else None,
+        "state": getattr(snap, "state", None),
+        "state_level": getattr(snap, "state_level", None),
+        "risk_score": getattr(snap, "risk_score", None),
+        "confidence_score": getattr(snap, "confidence_score", None),
+        "s1_humidity_mean_pct": getattr(snap, "s1_humidity_mean_pct", None),
+        "s2_ndmi_mean": getattr(snap, "s2_ndmi_mean", None),
+        "spi_30d": getattr(snap, "spi_30d", None),
+        "primary_driver": getattr(snap, "primary_driver", None),
+    }
+
+
+@router.get("/alerts/history")
+async def mcp_get_alert_history(
+    scope: str = Query("nacional"),
+    ref: str | None = Query(None),
+    limit: int = Query(30, ge=1, le=365),
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_service_token),
+) -> dict:
+    """Histórico de alert states para un scope, ordenado por fecha desc, limit N."""
+    try:
+        from app.models.materialized import UnitIndexSnapshot
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"model unavailable: {e}")
+
+    if scope == "nacional":
+        unit_id = "Uruguay"
+    elif scope == "departamento":
+        unit_id = ref
+    elif scope == "unidad":
+        unit_id = ref
+    elif scope == "field":
+        unit_id = f"user-field-{ref}" if ref else None
+    else:
+        raise HTTPException(status_code=400, detail=f"invalid scope: {scope}")
+    if not unit_id:
+        raise HTTPException(status_code=400, detail="ref required")
+
+    rows = (await db.execute(
+        select(UnitIndexSnapshot)
+        .where(UnitIndexSnapshot.unit_id == unit_id)
+        .order_by(desc(UnitIndexSnapshot.observed_at))
+        .limit(limit)
+    )).scalars().all()
+    return {
+        "scope": scope, "ref": ref, "unit_id": unit_id,
+        "total": len(rows),
+        "history": [
+            {
+                "observed_at": r.observed_at.isoformat() if r.observed_at else None,
+                "state": getattr(r, "state", None),
+                "state_level": getattr(r, "state_level", None),
+                "risk_score": getattr(r, "risk_score", None),
+                "s2_ndmi_mean": getattr(r, "s2_ndmi_mean", None),
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get("/alerts/forecast")
+async def mcp_get_alert_forecast(
+    scope: str = Query("nacional"),
+    ref: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_service_token),
+) -> dict:
+    """Forecast de alertas (si hay ForecastSignal disponible). Devuelve lista de días futuros con proyección."""
+    try:
+        from app.models.humedad import ForecastSignal
+    except Exception:
+        return {"scope": scope, "ref": ref, "forecast": [], "available": False}
+
+    if scope == "nacional":
+        unit_id = "Uruguay"
+    elif scope in ("departamento", "unidad"):
+        unit_id = ref
+    elif scope == "field":
+        unit_id = f"user-field-{ref}" if ref else None
+    else:
+        unit_id = None
+    if not unit_id:
+        return {"scope": scope, "ref": ref, "forecast": [], "available": False}
+
+    rows = (await db.execute(
+        select(ForecastSignal)
+        .where(ForecastSignal.unit_id == unit_id)
+        .order_by(ForecastSignal.forecast_date.asc())
+        .limit(30)
+    )).scalars().all()
+    return {
+        "scope": scope, "ref": ref, "unit_id": unit_id,
+        "available": len(rows) > 0,
+        "forecast": [
+            {
+                "forecast_date": r.forecast_date.isoformat() if r.forecast_date else None,
+                "peak_risk": getattr(r, "peak_risk", None),
+                "confidence": getattr(r, "confidence", None),
+            }
+            for r in rows
+        ],
+    }
+
+
+class MCPBackfillBody(BaseModel):
+    days: int = 30
+    layers: list[str] = ["ndvi", "ndmi", "alerta_fusion"]
+
+
+@router.get("/fields/{field_id}/layers-available")
+async def mcp_layers_available(
+    field_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_service_token),
+) -> dict:
+    """Capas con snapshots rendereados para un campo (layer_key, count, rango fechas)."""
+    try:
+        from app.models.field_snapshot import FieldImageSnapshot
+    except Exception:
+        return {"field_id": field_id, "layers": []}
+    from sqlalchemy import func
+    stmt = (
+        select(
+            FieldImageSnapshot.layer_key,
+            func.count(FieldImageSnapshot.id).label("count"),
+            func.min(FieldImageSnapshot.observed_at).label("first_observed"),
+            func.max(FieldImageSnapshot.observed_at).label("last_observed"),
+        )
+        .where(FieldImageSnapshot.field_id == field_id)
+        .group_by(FieldImageSnapshot.layer_key)
+        .order_by(FieldImageSnapshot.layer_key.asc())
+    )
+    rows = (await db.execute(stmt)).all()
+    return {
+        "field_id": field_id,
+        "layers": [
+            {
+                "layer_key": r.layer_key,
+                "count": int(r.count or 0),
+                "first_observed": r.first_observed.isoformat() if r.first_observed else None,
+                "last_observed": r.last_observed.isoformat() if r.last_observed else None,
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.post("/fields/{field_id}/backfill", status_code=202)
+async def mcp_trigger_backfill(
+    field_id: str,
+    body: MCPBackfillBody,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_service_token),
+) -> dict:
+    """Dispara backfill async de snapshots para N días y M capas."""
+    if body.days < 1 or body.days > 365:
+        raise HTTPException(status_code=400, detail="days must be in [1, 365]")
+    import asyncio
+    from datetime import date, timedelta
+    from app.db.session import AsyncSessionLocal
+    from app.services.field_snapshots import render_field_snapshot
+    user_id = auth.get("user_id")
+    async def _run():
+        today = date.today()
+        for i in range(body.days):
+            target = today - timedelta(days=i)
+            for layer in body.layers:
+                async with AsyncSessionLocal() as session:
+                    try:
+                        await render_field_snapshot(session, field_id, layer, target, user_id=user_id)
+                        await session.commit()
+                    except Exception:
+                        await session.rollback()
+    asyncio.create_task(_run())
+    return {
+        "field_id": field_id,
+        "status": "scheduled",
+        "days": body.days,
+        "layers": body.layers,
+        "estimated_minutes": round(body.days * len(body.layers) * 6 / 60, 1),
+    }
+
+
+@router.get("/fields/{field_id}/snapshots/{storage_key:path}")
+async def mcp_download_snapshot_png(
+    field_id: str,
+    storage_key: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_service_token),
+):
+    """Sirve el PNG raw de un snapshot. storage_key esperado con prefix fields/{field_id}/."""
+    from pathlib import Path
+    from fastapi.responses import FileResponse
+    safe_prefix = f"fields/{field_id}/"
+    if not storage_key.startswith(safe_prefix):
+        raise HTTPException(status_code=400, detail="storage_key does not match field scope")
+    path = Path(".tile_cache") / storage_key
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Snapshot file not found")
+    return FileResponse(path, media_type="image/png")

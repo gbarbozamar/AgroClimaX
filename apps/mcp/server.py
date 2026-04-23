@@ -211,6 +211,68 @@ async def list_establishments(user_id: str) -> dict:
         return r.json()
 
 
+@mcp.tool
+async def get_alert_current(scope: str = "nacional", ref: str | None = None, user_id: str | None = None) -> dict:
+    """Estado actual de alertas. scope: nacional|departamento|unidad|field. ref: name/id según scope."""
+    async with httpx.AsyncClient() as cli:
+        params: dict = {"scope": scope}
+        if ref: params["ref"] = ref
+        r = await cli.get(f"{BACKEND_URL}/api/v1/mcp/alerts/current", params=params, headers=_headers(user_id))
+        r.raise_for_status()
+        return r.json()
+
+
+@mcp.tool
+async def get_alert_history(scope: str = "nacional", ref: str | None = None, limit: int = 30, user_id: str | None = None) -> dict:
+    """Histórico de alertas. Últimos N estados del scope."""
+    async with httpx.AsyncClient() as cli:
+        params: dict = {"scope": scope, "limit": limit}
+        if ref: params["ref"] = ref
+        r = await cli.get(f"{BACKEND_URL}/api/v1/mcp/alerts/history", params=params, headers=_headers(user_id))
+        r.raise_for_status()
+        return r.json()
+
+
+@mcp.tool
+async def get_alert_forecast(scope: str = "nacional", ref: str | None = None, user_id: str | None = None) -> dict:
+    """Forecast agroclimático (proyección de alertas a N días) si hay ForecastSignal disponible."""
+    async with httpx.AsyncClient() as cli:
+        params: dict = {"scope": scope}
+        if ref: params["ref"] = ref
+        r = await cli.get(f"{BACKEND_URL}/api/v1/mcp/alerts/forecast", params=params, headers=_headers(user_id))
+        r.raise_for_status()
+        return r.json()
+
+
+@mcp.tool
+async def layers_available(field_id: str, user_id: str | None = None) -> dict:
+    """Capas con snapshots rendereados para un campo."""
+    async with httpx.AsyncClient() as cli:
+        r = await cli.get(f"{BACKEND_URL}/api/v1/mcp/fields/{field_id}/layers-available", headers=_headers(user_id))
+        r.raise_for_status()
+        return r.json()
+
+
+@mcp.tool
+async def trigger_backfill(field_id: str, days: int = 30, layers: list[str] | None = None, user_id: str | None = None) -> dict:
+    """Dispara backfill async de snapshots para N días y M capas."""
+    body = {"days": days, "layers": layers or ["ndvi", "ndmi", "alerta_fusion"]}
+    async with httpx.AsyncClient() as cli:
+        r = await cli.post(f"{BACKEND_URL}/api/v1/mcp/fields/{field_id}/backfill", json=body, headers=_headers(user_id))
+        r.raise_for_status()
+        return r.json()
+
+
+@mcp.tool
+async def download_snapshot_url(field_id: str, storage_key: str, user_id: str | None = None) -> dict:
+    """Retorna la URL directa del PNG de un snapshot (Claude puede luego descargarla)."""
+    return {
+        "url": f"{BACKEND_URL}/api/v1/mcp/fields/{field_id}/snapshots/{storage_key}",
+        "requires_header": {"X-Service-Token": "..."},
+        "note": "Fetch con httpx.get pasando el X-Service-Token header para obtener los bytes del PNG",
+    }
+
+
 if __name__ == "__main__":
     transport = os.environ.get("AGROCLIMAX_MCP_TRANSPORT", "stdio").lower()
     if transport == "http":
