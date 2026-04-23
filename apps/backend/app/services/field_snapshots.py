@@ -37,7 +37,7 @@ SNAPSHOTS_ROOT = Path(__file__).resolve().parents[2] / ".tile_cache" / "fields"
 # Pixeles por tile Sentinel Hub. Snapshot de campo usa 512 (vs 256 default
 # para Leaflet map) → ~4× más pixels, más detalle visible con el resampling
 # profesional de Copernicus sobre el raster fuente.
-TILE_PX = 512
+TILE_PX = 256
 
 # Cap de tiles totales. Un zoom alto con bbox grande puede explotar — subimos
 # de zoom 16 hacia 15 o 14 hasta caer bajo este cap. 64 permite grillas 8×8.
