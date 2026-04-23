@@ -202,7 +202,7 @@ TEMPORAL_LAYER_CONFIGS: dict[str, dict[str, Any]] = {
         "revisit_days": 5,
         "window_before_days": 2,
         "window_after_days": 2,
-        "time_mode": "symmetric",
+        "time_mode": "carry_forward",
         "anchor_date": date(2020, 1, 3),
     },
     "ndvi": {
@@ -211,7 +211,7 @@ TEMPORAL_LAYER_CONFIGS: dict[str, dict[str, Any]] = {
         "revisit_days": 5,
         "window_before_days": 2,
         "window_after_days": 2,
-        "time_mode": "symmetric",
+        "time_mode": "carry_forward",
         "anchor_date": date(2020, 1, 3),
     },
     "ndmi": {
@@ -220,7 +220,7 @@ TEMPORAL_LAYER_CONFIGS: dict[str, dict[str, Any]] = {
         "revisit_days": 5,
         "window_before_days": 2,
         "window_after_days": 2,
-        "time_mode": "symmetric",
+        "time_mode": "carry_forward",
         "anchor_date": date(2020, 1, 3),
     },
     "ndwi": {
@@ -229,7 +229,7 @@ TEMPORAL_LAYER_CONFIGS: dict[str, dict[str, Any]] = {
         "revisit_days": 5,
         "window_before_days": 2,
         "window_after_days": 2,
-        "time_mode": "symmetric",
+        "time_mode": "carry_forward",
         "anchor_date": date(2020, 1, 3),
     },
     "savi": {
@@ -238,7 +238,7 @@ TEMPORAL_LAYER_CONFIGS: dict[str, dict[str, Any]] = {
         "revisit_days": 5,
         "window_before_days": 2,
         "window_after_days": 2,
-        "time_mode": "symmetric",
+        "time_mode": "carry_forward",
         "anchor_date": date(2020, 1, 3),
     },
     "sar": {
@@ -247,7 +247,7 @@ TEMPORAL_LAYER_CONFIGS: dict[str, dict[str, Any]] = {
         "revisit_days": 6,
         "window_before_days": 3,
         "window_after_days": 3,
-        "time_mode": "symmetric",
+        "time_mode": "carry_forward",
         "anchor_date": date(2020, 1, 2),
     },
     "lst": {
@@ -256,7 +256,7 @@ TEMPORAL_LAYER_CONFIGS: dict[str, dict[str, Any]] = {
         "revisit_days": 1,
         "window_before_days": 1,
         "window_after_days": 1,
-        "time_mode": "symmetric",
+        "time_mode": "carry_forward",
         "anchor_date": date(2020, 1, 1),
     },
 }

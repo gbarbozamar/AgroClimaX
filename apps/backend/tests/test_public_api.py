@@ -164,8 +164,12 @@ class ConeatProxyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(content, _valid_png)
         payload = captured["payload"]
         time_range = payload["input"]["data"][0]["dataFilter"]["timeRange"]
+        # NDMI ahora es time_mode=carry_forward (antes 'symmetric'). carry_forward
+        # solo mira hacia atrás: la ventana termina en el source_date resuelto
+        # (no en display_date futuro). Esto evita que Copernicus devuelva
+        # placeholders vacíos cuando la fecha pedida no tiene pase Sentinel.
         self.assertEqual(time_range["from"], "2025-12-20T00:00:00Z")
-        self.assertEqual(time_range["to"], "2025-12-24T23:59:59Z")
+        self.assertEqual(time_range["to"], "2025-12-22T23:59:59Z")
         self.assertEqual(payload["metadata"]["display_date"], "2025-12-24")
         self.assertEqual(payload["metadata"]["source_date"], "2025-12-22")
 
