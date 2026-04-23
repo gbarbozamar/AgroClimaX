@@ -200,8 +200,8 @@ TEMPORAL_LAYER_CONFIGS: dict[str, dict[str, Any]] = {
         "public_id": "rgb",
         "label": "RGB",
         "revisit_days": 5,
-        "window_before_days": 2,
-        "window_after_days": 2,
+        "window_before_days": 14,
+        "window_after_days": 0,
         "time_mode": "carry_forward",
         "anchor_date": date(2020, 1, 3),
     },
@@ -209,8 +209,8 @@ TEMPORAL_LAYER_CONFIGS: dict[str, dict[str, Any]] = {
         "public_id": "ndvi",
         "label": "NDVI",
         "revisit_days": 5,
-        "window_before_days": 2,
-        "window_after_days": 2,
+        "window_before_days": 14,
+        "window_after_days": 0,
         "time_mode": "carry_forward",
         "anchor_date": date(2020, 1, 3),
     },
@@ -218,8 +218,8 @@ TEMPORAL_LAYER_CONFIGS: dict[str, dict[str, Any]] = {
         "public_id": "ndmi",
         "label": "NDMI",
         "revisit_days": 5,
-        "window_before_days": 2,
-        "window_after_days": 2,
+        "window_before_days": 14,
+        "window_after_days": 0,
         "time_mode": "carry_forward",
         "anchor_date": date(2020, 1, 3),
     },
@@ -227,8 +227,8 @@ TEMPORAL_LAYER_CONFIGS: dict[str, dict[str, Any]] = {
         "public_id": "ndwi",
         "label": "NDWI",
         "revisit_days": 5,
-        "window_before_days": 2,
-        "window_after_days": 2,
+        "window_before_days": 14,
+        "window_after_days": 0,
         "time_mode": "carry_forward",
         "anchor_date": date(2020, 1, 3),
     },
@@ -236,8 +236,8 @@ TEMPORAL_LAYER_CONFIGS: dict[str, dict[str, Any]] = {
         "public_id": "savi",
         "label": "SAVI",
         "revisit_days": 5,
-        "window_before_days": 2,
-        "window_after_days": 2,
+        "window_before_days": 14,
+        "window_after_days": 0,
         "time_mode": "carry_forward",
         "anchor_date": date(2020, 1, 3),
     },
@@ -245,8 +245,8 @@ TEMPORAL_LAYER_CONFIGS: dict[str, dict[str, Any]] = {
         "public_id": "sar",
         "label": "SAR VV",
         "revisit_days": 6,
-        "window_before_days": 3,
-        "window_after_days": 3,
+        "window_before_days": 12,
+        "window_after_days": 0,
         "time_mode": "carry_forward",
         "anchor_date": date(2020, 1, 2),
     },
@@ -254,8 +254,8 @@ TEMPORAL_LAYER_CONFIGS: dict[str, dict[str, Any]] = {
         "public_id": "lst",
         "label": "Termal",
         "revisit_days": 1,
-        "window_before_days": 1,
-        "window_after_days": 1,
+        "window_before_days": 5,
+        "window_after_days": 0,
         "time_mode": "carry_forward",
         "anchor_date": date(2020, 1, 1),
     },
@@ -622,11 +622,17 @@ async def fetch_tile_png(
     start_date, end_date = _time_range_for_temporal_layer(resolved_layer, source_date)
     data_filter = {"timeRange": {"from": f"{start_date.isoformat()}T00:00:00Z", "to": f"{end_date.isoformat()}T23:59:59Z"}}
     if info.get("clouds"):
-        data_filter["maxCloudCoverage"] = 50
+        # Con ventana abierta por carry_forward (hasta 14 días), si hay múltiples
+        # pases Copernicus compone mosaico pixel a pixel por MENOR cobertura
+        # nubosa en vez de simplemente el más reciente (que podría estar nublado).
+        data_filter["maxCloudCoverage"] = 70
+        data_filter["mosaickingOrder"] = "leastCC"
 
     if info.get("fusion"):
+        # s1 no tiene concepto de nubes: mostRecent por defecto es adecuado.
+        s1_filter = {"timeRange": data_filter["timeRange"], "mosaickingOrder": "mostRecent"}
         data_sources = [
-            {"id": "s1", "type": "sentinel-1-grd", "dataFilter": {"timeRange": data_filter["timeRange"]}},
+            {"id": "s1", "type": "sentinel-1-grd", "dataFilter": s1_filter},
             {"id": "s2", "type": "sentinel-2-l2a", "dataFilter": data_filter},
         ]
     else:

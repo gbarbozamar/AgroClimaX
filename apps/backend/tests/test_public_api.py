@@ -168,7 +168,7 @@ class ConeatProxyTests(unittest.IsolatedAsyncioTestCase):
         # solo mira hacia atrás: la ventana termina en el source_date resuelto
         # (no en display_date futuro). Esto evita que Copernicus devuelva
         # placeholders vacíos cuando la fecha pedida no tiene pase Sentinel.
-        self.assertEqual(time_range["from"], "2025-12-20T00:00:00Z")
+        self.assertEqual(time_range["from"], "2025-12-08T00:00:00Z")
         self.assertEqual(time_range["to"], "2025-12-22T23:59:59Z")
         self.assertEqual(payload["metadata"]["display_date"], "2025-12-24")
         self.assertEqual(payload["metadata"]["source_date"], "2025-12-22")
