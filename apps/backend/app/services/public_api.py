@@ -673,6 +673,20 @@ async def fetch_tile_png(
                 timeout=30,
             )
         )
+        # Log no-200 responses explícitamente: 403 = créditos Copernicus agotados,
+        # 429 = rate limit, 5xx = server side. Sin este log eran invisibles y
+        # parecían "bug de ventana temporal" cuando en realidad la cuenta estaba
+        # sin quota.
+        if response.status_code != 200:
+            body_snippet = ""
+            try:
+                body_snippet = response.content[:200].decode("utf-8", errors="replace")
+            except Exception:
+                body_snippet = "<unreadable>"
+            logger.warning(
+                "Copernicus non-200 layer=%s z=%s x=%s y=%s status=%s body=%r",
+                resolved_layer, z, x, y, response.status_code, body_snippet,
+            )
         if response.status_code == 200 and "image" in response.headers.get("content-type", ""):
             if _is_valid_tile_png(response.content):
                 final_bytes = response.content
