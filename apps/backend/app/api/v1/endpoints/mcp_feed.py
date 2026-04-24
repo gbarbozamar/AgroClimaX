@@ -151,6 +151,19 @@ async def mcp_request_video(
 
     from sqlalchemy import and_
 
+    # Validar que el field existe antes de crear el job — evita 500 por FK
+    # violation en Postgres cuando el field_id es invalido, y devuelve un 404
+    # con detalle claro para MCP clients (Onyx, Claude Desktop). Si el caller
+    # se identifica con X-User-Id, enforce ownership del field.
+    field = (await db.execute(
+        select(FarmField).where(FarmField.id == field_id)
+    )).scalar_one_or_none()
+    if field is None:
+        raise HTTPException(status_code=404, detail=f"Field {field_id} not found")
+    user_scope = auth.get("user_id")
+    if user_scope and field.user_id != user_scope:
+        raise HTTPException(status_code=404, detail=f"Field {field_id} not found")
+
     # Idempotencia: si hay un job ready o queued reciente, devolvemos el existente.
     recent = (await db.execute(
         select(FieldVideoJob)

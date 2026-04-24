@@ -37,6 +37,20 @@ class MCPFullSuiteTests(unittest.IsolatedAsyncioTestCase):
             r = c.get("/api/v1/mcp/fields/no-such/video/no-such-job", headers=self._headers())
             self.assertIn(r.status_code, (404, 500, 503))
 
+    def test_request_video_unknown_field_returns_404(self):
+        """POST /fields/{unknown}/video debe devolver 404 claro (no 500 por FK)."""
+        with self._client() as c:
+            r = c.post(
+                "/api/v1/mcp/fields/00000000-0000-0000-0000-000000000000/video",
+                json={"layer_key": "ndvi", "duration_days": 30},
+                headers=self._headers(),
+            )
+            # En SQLite sin FK enforce antes hubiera sido 200 (crea orphan job).
+            # En Postgres prod hubiera sido 500 (FK violation). Ambos casos
+            # ahora se normalizan a 404 con detail="Field not found".
+            self.assertEqual(r.status_code, 404)
+            self.assertIn("not found", r.json().get("detail", "").lower())
+
     def test_list_video_jobs_empty(self):
         with self._client() as c:
             r = c.get("/api/v1/mcp/fields/no-such/videos", headers=self._headers())
