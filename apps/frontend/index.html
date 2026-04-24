@@ -1,16 +1,22 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AgroClimaX — Alertas Agroclimáticas Rivera, Uruguay</title>
+  <title>AgroClimaX - Alertas Agroclimaticas Rivera, Uruguay</title>
+  <link rel="icon" type="image/png" href="/static/logo_agroclimax_header.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.18.3/dist/leaflet-geoman.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.18.3/dist/leaflet-geoman.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
     :root {
+      --header-height: 110px;
+      --header-current-height: var(--header-height);
+      --map-panel-height: clamp(520px, 62vh, 700px);
       --bg: #0f1117;
       --surface: #1a1d2e;
       --surface2: #242740;
@@ -35,49 +41,89 @@
       flex-direction: column;
     }
 
-    /* ── HEADER ── */
+    /* â”€â”€ HEADER â”€â”€ */
     header {
       background: var(--surface);
       border-bottom: 1px solid var(--border);
       padding: 0 24px;
-      height: 60px;
+      height: var(--header-current-height);
       display: flex;
       align-items: center;
       justify-content: space-between;
       position: sticky;
       top: 0;
       z-index: 1000;
+      transition: height 0.22s ease, padding 0.22s ease;
     }
 
     .logo {
       display: flex;
       align-items: center;
-      gap: 10px;
-      font-weight: 700;
-      font-size: 1.2rem;
+      gap: 20px;
+      height: 100%;
     }
 
-    .logo-icon {
-      width: 32px;
-      height: 32px;
-      background: linear-gradient(135deg, #2ecc71, #4a90d9);
-      border-radius: 8px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 16px;
+    .logo img {
+      height: 88px;
+      width: auto;
+      display: block;
     }
 
-    .logo-sub {
-      font-size: 0.7rem;
-      color: var(--text-muted);
-      font-weight: 400;
+    .logo img.logo-principal {
+      height: 72px;
+    }
+
+    .logo img.logo-secundario {
+      height: 58px;
+      opacity: 0.9;
     }
 
     .header-right {
       display: flex;
       align-items: center;
       gap: 16px;
+    }
+
+    .header-collapse-toggle {
+      padding: 6px 12px;
+      border-radius: 8px;
+      border: 1px solid rgba(125, 183, 255, 0.32);
+      background: rgba(15, 23, 38, 0.55);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.76rem;
+      font-family: Inter, sans-serif;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .header-collapse-toggle:hover,
+    .header-collapse-toggle:focus-visible {
+      background: rgba(15, 23, 38, 0.8);
+      border-color: rgba(125, 183, 255, 0.52);
+      outline: none;
+    }
+
+    body.header-collapsed {
+      --header-current-height: 0px;
+    }
+
+    body.header-collapsed header {
+      padding: 0;
+      min-height: 0;
+      height: 0;
+      border-bottom-color: transparent;
+      overflow: hidden;
+      pointer-events: none;
+    }
+
+    body.header-collapsed .logo,
+    body.header-collapsed .header-right {
+      display: none !important;
+    }
+
+    .hidden {
+      display: none !important;
     }
 
     .badge-area {
@@ -99,7 +145,299 @@
       color: var(--text-muted);
     }
 
-    /* ── ALERTA BANNER ── */
+    .auth-user-badge {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 10px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.03);
+      min-width: 0;
+      max-width: 280px;
+      cursor: pointer;
+    }
+
+    .auth-user-avatar {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      object-fit: cover;
+      flex-shrink: 0;
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .auth-user-copy {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .auth-user-name {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .auth-user-subtitle {
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .auth-header-btn {
+      padding: 6px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #141828;
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.78rem;
+      font-family: Inter, sans-serif;
+      font-weight: 600;
+    }
+
+    .auth-header-btn.primary {
+      border-color: #4a90d9;
+      color: #d9ebff;
+    }
+
+    .auth-gate {
+      position: fixed;
+      inset: 0;
+      z-index: 2200;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: rgba(5, 8, 14, 0.74);
+      backdrop-filter: blur(4px);
+    }
+
+    .auth-gate-card {
+      width: min(520px, 100%);
+      border-radius: 24px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: linear-gradient(160deg, rgba(26,29,46,0.98) 0%, rgba(15,17,23,0.98) 100%);
+      box-shadow: 0 40px 90px rgba(0,0,0,0.45);
+      padding: 32px 30px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .auth-gate-kicker {
+      font-size: 0.74rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--accent);
+    }
+
+    .auth-gate-title {
+      font-size: 1.9rem;
+      line-height: 1.08;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .auth-gate-copy {
+      font-size: 0.96rem;
+      line-height: 1.6;
+      color: var(--text-muted);
+    }
+
+    .auth-gate-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .auth-gate-btn {
+      padding: 12px 18px;
+      border-radius: 12px;
+      border: 1px solid #4a90d9;
+      background: linear-gradient(135deg, #1d4f86 0%, #2f76c5 100%);
+      color: #f8fbff;
+      cursor: pointer;
+      font-size: 0.92rem;
+      font-family: Inter, sans-serif;
+      font-weight: 700;
+    }
+
+    .auth-gate-note {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+
+    body.auth-blocked {
+      overflow: hidden;
+    }
+
+    .preload-blocked {
+      overflow: hidden;
+    }
+
+    .app-preload-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 2400;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: rgba(5, 8, 14, 0.82);
+      backdrop-filter: blur(6px);
+    }
+
+    .app-preload-card {
+      width: min(620px, 100%);
+      padding: 28px 28px 24px;
+      border-radius: 22px;
+      border: 1px solid rgba(74, 144, 217, 0.28);
+      background: linear-gradient(160deg, rgba(26, 29, 46, 0.98) 0%, rgba(15, 17, 23, 0.98) 100%);
+      box-shadow: 0 36px 80px rgba(0, 0, 0, 0.42);
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .app-preload-kicker {
+      font-size: 0.72rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    .app-preload-title {
+      font-size: 1.45rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .app-preload-copy {
+      font-size: 0.88rem;
+      line-height: 1.5;
+      color: var(--text-muted);
+    }
+
+    .app-preload-progressbar {
+      width: 100%;
+      height: 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.06);
+      overflow: hidden;
+      border: 1px solid rgba(74, 144, 217, 0.18);
+    }
+
+    .app-preload-progressfill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, rgba(74, 144, 217, 0.95) 0%, rgba(46, 204, 113, 0.95) 100%);
+      transition: width 0.28s ease;
+    }
+
+    .app-preload-headrow {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+
+    .app-preload-stage-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .app-preload-stage {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px 16px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(74, 144, 217, 0.14);
+      background: rgba(19, 27, 40, 0.72);
+    }
+
+    .app-preload-stage-name {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .app-preload-stage-detail {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+    }
+
+    .app-preload-stage-status {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: #d9ebff;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .app-preload-stage.is-done {
+      border-color: rgba(46, 204, 113, 0.28);
+      background: rgba(46, 204, 113, 0.08);
+    }
+
+    .app-preload-stage.is-running {
+      border-color: rgba(74, 144, 217, 0.34);
+      background: rgba(74, 144, 217, 0.08);
+    }
+
+    .app-preload-footnote {
+      font-size: 0.74rem;
+      color: var(--text-muted);
+    }
+
+    .app-preload-mini {
+      position: sticky;
+      top: calc(var(--header-current-height) + 72px);
+      z-index: 950;
+      margin: 0 16px;
+      padding: 9px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(74, 144, 217, 0.25);
+      background: rgba(15, 17, 23, 0.92);
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .app-preload-mini-copy {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .app-preload-mini-title {
+      font-size: 0.74rem;
+      font-weight: 700;
+    }
+
+    .app-preload-mini-detail {
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* â”€â”€ ALERTA BANNER â”€â”€ */
     #alerta-banner {
       padding: 10px 24px;
       font-size: 0.85rem;
@@ -122,62 +460,312 @@
       50% { opacity: 0.6; transform: scale(1.3); }
     }
 
-    /* ── LAYOUT ── */
+    /* â”€â”€ LAYOUT â”€â”€ */
     .main-grid {
       display: grid;
       grid-template-columns: 1fr 340px;
-      grid-template-rows: auto 1fr;
+      grid-template-rows: auto auto var(--map-panel-height);
       gap: 0;
       flex: 1;
       min-height: 0;
     }
 
-    /* ── KPI BAR ── */
-    .kpi-bar {
+    /* â”€â”€ KPI BAR â”€â”€ */
+    .dashboard-top-strip {
       grid-column: 1 / -1;
+      display: flex;
+      align-items: stretch;
+      gap: 0;
+      width: calc(100% - 16px);
+      margin-left: 16px;
+      align-self: start;
+    }
+
+    .kpi-bar {
       display: grid;
-      grid-template-columns: repeat(5, 1fr);
+      grid-template-columns: repeat(7, minmax(0, 1fr));
       gap: 1px;
       background: var(--border);
       border-bottom: 1px solid var(--border);
+      width: min(1080px, calc(100% - 340px));
+      border-inline: 1px solid var(--border);
+      flex: 0 0 auto;
     }
 
     .kpi-card {
       background: var(--surface);
-      padding: 16px 20px;
+      min-width: 0;
+      padding: 11px 12px;
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 3px;
+      position: relative;
+      overflow: visible;
     }
 
     .kpi-label {
-      font-size: 0.72rem;
+      font-size: 0.66rem;
       color: var(--text-muted);
       text-transform: uppercase;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.42px;
+      line-height: 1.25;
+    }
+
+    .kpi-label-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .metric-tooltip-wrap {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      flex-shrink: 0;
+    }
+
+    .metric-info-btn {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      border: 1px solid rgba(136, 146, 164, 0.45);
+      background: rgba(255,255,255,0.04);
+      color: var(--text-muted);
+      font-size: 0.68rem;
+      font-weight: 700;
+      cursor: help;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+      padding: 0;
+    }
+
+    .metric-info-btn:hover,
+    .metric-info-btn:focus-visible {
+      border-color: var(--accent);
+      color: var(--accent);
+      outline: none;
+    }
+
+    .metric-tooltip-panel {
+      position: absolute;
+      top: calc(100% + 10px);
+      right: 0;
+      min-width: 280px;
+      max-width: 340px;
+      padding: 12px 13px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: rgba(15, 17, 23, 0.97);
+      box-shadow: 0 18px 42px rgba(0,0,0,0.38);
+      color: var(--text);
+      font-size: 0.72rem;
+      line-height: 1.45;
+      z-index: 1200;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(-4px);
+      transition: opacity 0.16s ease, transform 0.16s ease, visibility 0.16s ease;
+      pointer-events: none;
+      text-transform: none;
+      letter-spacing: normal;
+    }
+
+    .metric-tooltip-wrap:hover .metric-tooltip-panel,
+    .metric-tooltip-wrap:focus-within .metric-tooltip-panel {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+
+    .metric-tooltip-title {
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 4px;
+    }
+
+    .metric-tooltip-unit {
+      color: var(--accent);
+      margin-bottom: 6px;
+    }
+
+    .metric-tooltip-copy {
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+
+    .metric-tooltip-copy:last-child {
+      margin-bottom: 0;
+    }
+
+    .metric-tooltip-panel a {
+      color: #7db7ff;
+      text-decoration: none;
+    }
+
+    .metric-tooltip-panel a:hover {
+      text-decoration: underline;
     }
 
     .kpi-value {
-      font-size: 1.6rem;
+      font-size: 1.32rem;
       font-weight: 700;
-      line-height: 1;
+      line-height: 1.02;
     }
 
     .kpi-sub {
-      font-size: 0.72rem;
+      font-size: 0.64rem;
       color: var(--text-muted);
+      line-height: 1.25;
     }
 
-    /* ── MAPA ── */
+    .weather-strip-panel {
+      min-width: 360px;
+      flex: 1 1 380px;
+      display: flex;
+      flex-direction: column;
+      border-bottom: 1px solid var(--border);
+      border-right: 1px solid var(--border);
+      background: var(--border);
+    }
+
+    .weather-strip-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 9px 10px;
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .weather-strip-title {
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      line-height: 1.15;
+    }
+
+    .weather-strip-meta {
+      margin-top: 3px;
+      font-size: 0.72rem;
+      color: var(--text);
+      line-height: 1.25;
+    }
+
+    .weather-strip-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .weather-filter-select {
+      min-width: 170px;
+      max-width: 220px;
+      padding: 6px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #111723;
+      color: var(--text);
+      font-size: 0.74rem;
+      font-family: 'Inter', sans-serif;
+    }
+
+    .weather-kpi-bar {
+      min-width: 0;
+      flex: 1 1 auto;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 1px;
+      background: var(--border);
+      border-left: 1px solid var(--border);
+    }
+
+    .weather-kpi-bar .kpi-card {
+      padding: 10px 9px;
+    }
+
+    .weather-kpi-bar .kpi-label {
+      font-size: 0.58rem;
+      letter-spacing: 0.06em;
+    }
+
+    .weather-kpi-bar .kpi-value {
+      font-size: 0.98rem;
+      line-height: 1.05;
+    }
+
+    .weather-kpi-bar .kpi-sub {
+      font-size: 0.56rem;
+      line-height: 1.25;
+    }
+
+    .overview-grid {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: 1.05fr 1fr 1.45fr 1.05fr;
+      gap: 12px;
+      width: calc(100% - 24px);
+      margin: 12px auto 0;
+      align-self: start;
+    }
+
+    .overview-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 16px;
+      min-width: 0;
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.14);
+    }
+
+    .overview-card .panel-title {
+      margin-bottom: 10px;
+    }
+
+    .overview-card.overview-card-series {
+      min-width: 0;
+    }
+
+    .overview-card.overview-card-alerts {
+      min-width: 0;
+    }
+
+    .overview-card #alertas-recientes {
+      max-height: 168px;
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+
+    .overview-card #alertas-recientes::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    .overview-card #alertas-recientes::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 999px;
+    }
+
+    /* â”€â”€ MAPA â”€â”€ */
     .map-container {
       position: relative;
       background: var(--surface);
       border-right: 1px solid var(--border);
+      height: var(--map-panel-height);
+      min-height: var(--map-panel-height);
+      overflow: hidden;
     }
 
     #map {
       height: 100%;
-      min-height: 500px;
+      min-height: 0;
     }
 
     .map-legend {
@@ -238,80 +826,417 @@
       flex-shrink: 0;
     }
 
-    /* ── LAYER SELECTOR ── */
-    .map-controls {
+    /* LAYER MENU */
+    .map-layer-menu {
       position: absolute;
-      top: 10px;
-      left: 10px;
-      right: 10px;
-      z-index: 500;
-      display: flex;
-      gap: 5px;
-      flex-wrap: nowrap;
-      overflow-x: auto;
-      scrollbar-width: none;
-      padding-bottom: 2px;
-    }
-    .map-controls::-webkit-scrollbar { display: none; }
-
-    .map-btn {
-      background: rgba(15, 17, 23, 0.92);
-      border: 1px solid var(--border);
-      border-radius: 7px;
-      padding: 7px 10px 5px;
-      color: var(--text-muted);
-      font-family: 'Inter', sans-serif;
-      cursor: pointer;
-      transition: all 0.2s;
+      top: 12px;
+      right: 12px;
+      left: auto;
+      z-index: 700;
       display: flex;
       flex-direction: column;
+      gap: 8px;
+      width: min(360px, calc(100% - 24px));
+    }
+    .map-layer-menu-toggle {
+      align-self: flex-start;
+      display: inline-flex;
       align-items: center;
-      gap: 1px;
-      flex: 0 0 auto;
-      backdrop-filter: blur(6px);
-      min-width: 70px;
+      gap: 8px;
+      padding: 9px 14px;
+      border-radius: 10px;
+      border: 1px solid rgba(88, 103, 136, 0.7);
+      background: rgba(15, 17, 23, 0.92);
+      color: var(--text);
+      font-size: 0.78rem;
+      font-weight: 700;
+      cursor: pointer;
+      backdrop-filter: blur(8px);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
     }
-    .map-btn-icon  { font-size: 1.1rem; line-height: 1; }
-    .map-btn-name  { font-size: 0.72rem; font-weight: 700; color: var(--text); letter-spacing: 0.3px; }
-    .map-btn-desc  { font-size: 0.58rem; color: var(--text-muted); white-space: nowrap; }
-    .map-btn-formula { font-size: 0.55rem; color: rgba(136,146,164,0.7); font-family: monospace; white-space: nowrap; }
-
-    .map-btn:hover { background: var(--surface2); border-color: var(--accent); }
-    .map-btn.active {
-      border-color: var(--accent);
-      background: rgba(74,144,217,0.18);
-      box-shadow: 0 0 0 1px rgba(74,144,217,0.3);
+    .map-layer-menu-toggle:hover {
+      border-color: rgba(125, 183, 255, 0.65);
+      background: rgba(18, 23, 32, 0.96);
     }
-    .map-btn.active .map-btn-name { color: var(--accent); }
-    .map-btn.active .map-btn-icon { filter: drop-shadow(0 0 4px rgba(74,144,217,0.6)); }
-
-    /* Opacity slider */
-    .map-opacity-wrap {
-      position: absolute;
-      top: 10px;
-      right: 10px;
-      z-index: 500;
-      background: rgba(15,17,23,0.92);
-      border: 1px solid var(--border);
-      border-radius: 7px;
-      padding: 6px 10px;
+    .map-layer-menu-panel {
+      background: rgba(10, 14, 20, 0.94);
+      border: 1px solid rgba(58, 75, 104, 0.85);
+      border-radius: 14px;
+      padding: 12px;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 18px 38px rgba(0, 0, 0, 0.28);
+      max-height: min(74vh, 760px);
+      overflow: auto;
+    }
+    .map-layer-menu-panel[hidden] {
+      display: none;
+    }
+    .map-layer-menu-head {
       display: flex;
       align-items: center;
-      gap: 7px;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+    .map-layer-menu-title {
+      font-size: 0.84rem;
+      font-weight: 800;
+      color: var(--text);
+    }
+    .map-layer-menu-subtitle {
       font-size: 0.68rem;
       color: var(--text-muted);
-      backdrop-filter: blur(6px);
+      margin-top: 3px;
     }
-    .map-opacity-wrap input[type=range] {
-      width: 70px;
+    .map-layer-menu-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+    .map-layer-action {
+      padding: 6px 9px;
+      border-radius: 8px;
+      border: 1px solid rgba(70, 88, 118, 0.8);
+      background: rgba(20, 26, 36, 0.9);
+      color: var(--text);
+      font-size: 0.67rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .map-layer-action:hover {
+      border-color: rgba(125, 183, 255, 0.65);
+    }
+    .map-layer-groups {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .map-layer-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .map-layer-group-title {
+      margin: 0;
+      font-size: 0.7rem;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: rgba(191, 208, 233, 0.88);
+    }
+    .map-layer-category-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 2px;
+      margin: 0;
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: inherit;
+      text-align: left;
+      width: 100%;
+      user-select: none;
+    }
+    .map-layer-category-header:hover .map-layer-group-title {
+      color: rgba(220, 233, 250, 1);
+    }
+    .map-layer-category-header:focus-visible {
+      outline: 2px solid rgba(74, 144, 217, 0.55);
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
+    .map-layer-category-chevron {
+      display: inline-block;
+      font-size: 0.7rem;
+      color: rgba(191, 208, 233, 0.7);
+      transition: transform 150ms ease;
+      transform: rotate(0deg);
+    }
+    .map-layer-group.is-collapsed .map-layer-category-chevron {
+      transform: rotate(-90deg);
+    }
+    .map-layer-category-body {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .map-layer-category-body.collapsed {
+      display: none;
+    }
+    .map-layer-item {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 9px 10px;
+      border: 1px solid rgba(44, 58, 78, 0.92);
+      border-radius: 10px;
+      background: rgba(16, 21, 30, 0.86);
+    }
+    .map-layer-item.is-active {
+      border-color: rgba(74, 144, 217, 0.6);
+      background: rgba(17, 28, 43, 0.92);
+      box-shadow: inset 0 0 0 1px rgba(74, 144, 217, 0.14);
+    }
+    .map-layer-item-main {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+    .map-layer-checkbox {
+      margin-top: 2px;
+      accent-color: #4a90d9;
+      cursor: pointer;
+    }
+    .map-layer-copy {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .map-layer-name {
+      font-size: 0.76rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .map-layer-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      font-size: 0.64rem;
+      color: var(--text-muted);
+    }
+    .map-layer-source,
+    .map-layer-zoom {
+      padding: 2px 6px;
+      border-radius: 999px;
+      background: rgba(86, 102, 132, 0.18);
+    }
+    .map-layer-error {
+      font-size: 0.64rem;
+      color: #ff9a9a;
+    }
+    .map-layer-opacity {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: 28px;
+      color: var(--text-muted);
+      font-size: 0.66rem;
+    }
+    .map-layer-opacity input[type=range] {
+      flex: 1;
       accent-color: var(--accent);
       cursor: pointer;
+    }
+    .map-layer-opacity-inline {
+      display: inline-flex;
+      align-items: center;
+      margin-left: auto;
+      padding-left: 8px;
+      flex-shrink: 0;
+    }
+    .map-layer-item-main {
+      align-items: center;
+    }
+    input[type=range].layer-opacity {
+      width: 72px;
+      height: 14px;
+      accent-color: var(--accent);
+      cursor: pointer;
+      margin: 0;
+      padding: 0;
+      background: transparent;
+    }
+    input[type=range].layer-opacity:focus-visible {
+      outline: 2px solid rgba(74, 144, 217, 0.55);
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
+    .map-layer-item .map-layer-copy {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .map-timeline {
+      position: absolute;
+      left: 50%;
+      bottom: 14px;
+      transform: translateX(-50%);
+      z-index: 710;
+      width: min(900px, calc(100% - 28px));
+      padding: 10px 14px;
+      border: 1px solid rgba(58, 75, 104, 0.88);
+      border-radius: 14px;
+      background: rgba(10, 14, 20, 0.94);
+      backdrop-filter: blur(10px);
+      box-shadow: 0 18px 38px rgba(0, 0, 0, 0.3);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .map-timeline.is-disabled {
+      opacity: 0.72;
+    }
+    .map-timeline-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .map-timeline-head-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-left: auto;
+    }
+    .map-timeline-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.8rem;
+      font-weight: 800;
+      color: var(--text);
+    }
+    .map-timeline-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      color: var(--text-muted);
+      font-size: 0.67rem;
+    }
+    .map-timeline-pill {
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: rgba(86, 102, 132, 0.18);
+      border: 1px solid rgba(58, 75, 104, 0.45);
+      color: var(--text);
+    }
+    .map-timeline-controls {
+      display: grid;
+      grid-template-columns: auto minmax(120px, 170px) minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 12px;
+    }
+    .map-timeline-button,
+    .map-timeline-speed,
+    .map-timeline-header-toggle {
+      border: 1px solid rgba(74, 144, 217, 0.52);
+      background: rgba(19, 27, 40, 0.96);
+      color: var(--text);
+      border-radius: 10px;
+      font-family: Inter, sans-serif;
+      font-size: 0.74rem;
+      font-weight: 700;
+      padding: 8px 12px;
+    }
+    .map-timeline-button {
+      cursor: pointer;
+    }
+    .map-timeline-header-toggle {
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .map-timeline-button:disabled,
+    .map-timeline-speed:disabled,
+    .map-timeline-slider:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    .map-timeline-datecopy {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .map-timeline-date {
+      font-size: 0.84rem;
+      font-weight: 800;
+      color: var(--text);
+    }
+    .map-timeline-source {
+      font-size: 0.66rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .map-timeline-slider {
+      width: 100%;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+    .leaflet-officialOverlay-pane .leaflet-tile,
+    .leaflet-satellite-pane .leaflet-tile {
+      mix-blend-mode: normal !important;
+    }
+
+    .map-controls {
+      display: none !important;
+    }
+
+    .map-opacity-wrap {
+      display: none !important;
+    }
+
+    .timeline-dock {
+      position: sticky;
+      top: var(--header-current-height);
+      z-index: 960;
+      padding: 10px 16px 0;
+      background: linear-gradient(180deg, rgba(15, 17, 23, 0.98) 0%, rgba(15, 17, 23, 0.88) 74%, rgba(15, 17, 23, 0) 100%);
+      transition: top 0.22s ease, padding 0.22s ease;
+    }
+
+    body.header-collapsed .timeline-dock {
+      top: 0;
+      padding: 0;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+
+    body.header-collapsed .timeline-dock .map-timeline {
+      border-radius: 0;
+      border-left: none;
+      border-right: none;
+      border-top: none;
+      box-shadow: none;
+      background: var(--surface);
+    }
+
+    body.header-collapsed .timeline-dock .map-timeline-title {
+      font-size: 0.84rem;
+    }
+
+    body.header-collapsed .map-timeline-header-toggle {
+      background: rgba(15, 23, 38, 0.55);
+    }
+
+    body.header-collapsed .app-preload-mini {
+      top: 72px;
+    }
+
+    body.header-collapsed .timeline-dock {
+      padding-top: 4px;
+    }
+
+    .timeline-dock .map-timeline {
+      position: static;
+      left: auto;
+      bottom: auto;
+      transform: none;
+      width: 100%;
+      margin: 0 auto;
+      max-width: none;
     }
 
     /* Tile loading indicator */
     .map-tile-loading {
       position: absolute;
-      bottom: 90px;
+      bottom: 20px;
       left: 50%;
       transform: translateX(-50%);
       background: rgba(15,17,23,0.9);
@@ -325,14 +1250,27 @@
       white-space: nowrap;
       animation: pulse 1.5s infinite;
     }
+    @media (max-width: 920px) {
+      .map-timeline-controls {
+        grid-template-columns: 1fr;
+      }
+      .timeline-dock {
+        padding: 8px 12px 0;
+      }
+      .map-tile-loading {
+        bottom: 16px;
+      }
+    }
 
-    /* ── SIDEBAR PANEL ── */
+    /* â”€â”€ SIDEBAR PANEL â”€â”€ */
     .side-panel {
       background: var(--surface);
       overflow-y: auto;
       display: flex;
       flex-direction: column;
       gap: 0;
+      height: var(--map-panel-height);
+      min-height: 0;
     }
 
     .panel-section {
@@ -349,7 +1287,965 @@
       font-weight: 600;
     }
 
-    /* ── ALERTA CARD ── */
+    .sidebar-tabs {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1px;
+      background: var(--border);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 3;
+    }
+
+    .sidebar-tab {
+      border: 0;
+      padding: 12px 14px;
+      background: var(--surface2);
+      color: var(--text-muted);
+      font-family: inherit;
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      cursor: pointer;
+      transition: background 0.2s ease, color 0.2s ease;
+    }
+
+    .sidebar-tab.active {
+      background: rgba(74, 144, 217, 0.16);
+      color: var(--accent);
+    }
+
+    .fields-toolbar {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: end;
+      margin-bottom: 12px;
+    }
+
+    .fields-grid {
+      display: grid;
+      gap: 10px;
+    }
+
+    .fields-grid.two {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .fields-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+
+    .fields-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .fields-list-item {
+      width: 100%;
+      text-align: left;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: rgba(255,255,255,0.03);
+      padding: 10px 12px;
+      cursor: pointer;
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .fields-list-item.compact {
+      padding: 8px 10px;
+    }
+
+    .fields-list-item.active {
+      border-color: var(--accent);
+      background: rgba(74,144,217,0.12);
+    }
+
+    .fields-list-title {
+      font-size: 0.8rem;
+      font-weight: 700;
+    }
+
+    .fields-list-copy {
+      font-size: 0.68rem;
+      color: var(--text-muted);
+    }
+
+    .fields-empty {
+      padding: 12px;
+      border: 1px dashed rgba(255,255,255,0.08);
+      border-radius: 10px;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      line-height: 1.5;
+    }
+
+    .fields-list-clear {
+      width: 100%;
+      padding: 8px 12px;
+      margin-bottom: 8px;
+      background: rgba(255, 80, 80, 0.12);
+      color: #ff9090;
+      border: 1px solid rgba(255, 80, 80, 0.35);
+      border-radius: 8px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+
+    .fields-list-clear:hover {
+      background: rgba(255, 80, 80, 0.22);
+      color: #ffbcbc;
+    }
+
+    .field-video-btn {
+      width: 100%;
+      padding: 8px 12px;
+      margin-bottom: 8px;
+      background: rgba(90, 140, 255, 0.14);
+      color: #a9c4ff;
+      border: 1px solid rgba(90, 140, 255, 0.35);
+      border-radius: 8px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+
+    .field-video-btn:hover {
+      background: rgba(90, 140, 255, 0.25);
+      color: #d3e1ff;
+    }
+
+    .field-backfill-btn {
+      width: 100%; padding: 8px 12px; margin-bottom: 8px;
+      background: rgba(80, 200, 160, 0.14); color: #9ee3c8;
+      border: 1px solid rgba(80, 200, 160, 0.35); border-radius: 8px;
+      font-size: 0.75rem; font-weight: 600; cursor: pointer;
+    }
+    .field-backfill-btn:hover { background: rgba(80, 200, 160, 0.25); color: #c8f3df; }
+
+    .field-video-modal-backdrop {
+      position: fixed; inset: 0;
+      background: rgba(0, 0, 0, 0.7);
+      z-index: 10000;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    .field-video-modal {
+      position: relative;
+      background: #14181f;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      padding: 20px 22px 16px;
+      max-width: 80vw; max-height: 80vh; min-width: 480px;
+      box-shadow: 0 14px 36px rgba(0,0,0,0.55);
+    }
+
+    .field-video-title {
+      font-size: 0.9rem; font-weight: 700;
+      color: #fff; margin-bottom: 12px;
+    }
+
+    .field-video-close {
+      position: absolute; top: 8px; right: 10px;
+      background: transparent; border: none;
+      color: #99a; cursor: pointer;
+      font-size: 1.1rem; line-height: 1;
+    }
+    .field-video-close:hover { color: #fff; }
+
+    .field-video-body {
+      display: flex; flex-direction: column;
+      align-items: center; gap: 10px;
+      min-height: 180px; justify-content: center;
+    }
+
+    .field-video-progress-text { font-size: 0.8rem; color: #99a; }
+
+    .field-video-spinner {
+      width: 38px; height: 38px;
+      border: 3px solid rgba(255, 255, 255, 0.15);
+      border-top-color: #a9c4ff;
+      border-radius: 50%;
+      animation: field-video-spin 0.9s linear infinite;
+    }
+    @keyframes field-video-spin { to { transform: rotate(360deg); } }
+
+    .field-video-player {
+      max-width: 72vw; max-height: 60vh;
+      border-radius: 8px; background: #000;
+    }
+
+    .field-video-meta { font-size: 0.72rem; color: #99a; }
+
+    .field-video-error {
+      color: #ff9090; font-size: 0.8rem;
+      max-width: 420px; text-align: center;
+    }
+
+    .field-video-config-row {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      font-size: 0.78rem;
+      color: #cfd4e0;
+    }
+
+    .field-video-config-row label {
+      min-width: 80px;
+      font-weight: 600;
+      color: #d3e1ff;
+    }
+
+    .field-video-config-row select {
+      flex: 1;
+      padding: 6px 8px;
+      background: #1b2230;
+      color: #e6ecf7;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 6px;
+      font-size: 0.78rem;
+      cursor: pointer;
+    }
+
+    .field-video-config-row select:focus {
+      outline: none;
+      border-color: rgba(90, 140, 255, 0.6);
+      box-shadow: 0 0 0 2px rgba(90, 140, 255, 0.25);
+    }
+
+    .field-video-config-actions {
+      display: flex;
+      flex-direction: row;
+      gap: 10px;
+      margin-top: 12px;
+      width: 100%;
+      justify-content: flex-end;
+    }
+
+    .field-video-config-submit {
+      width: auto;
+      margin-bottom: 0;
+      padding: 8px 18px;
+    }
+
+    .field-video-config-submit:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .field-video-config-cancel {
+      padding: 8px 16px;
+      background: rgba(255, 255, 255, 0.06);
+      color: #99a;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 8px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+
+    .field-video-config-cancel:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: #d3dbea;
+    }
+
+    .fields-result-box {
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 10px;
+      background: rgba(255,255,255,0.03);
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .fields-result-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 0.72rem;
+    }
+
+    .fields-note {
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      line-height: 1.45;
+    }
+
+    .fields-analytics-card {
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 12px;
+      background: rgba(255,255,255,0.03);
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .fields-analytics-card.hidden {
+      display: none;
+    }
+
+    .fields-analytics-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+    }
+
+    .fields-analytics-title {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .fields-analytics-title strong {
+      font-size: 0.82rem;
+      color: var(--text);
+    }
+
+    .fields-analytics-copy {
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      line-height: 1.45;
+    }
+
+    .fields-inline-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-size: 0.64rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      border: 1px solid rgba(255,255,255,0.12);
+      color: #f4f7ff;
+      background: rgba(255,255,255,0.06);
+      white-space: nowrap;
+    }
+
+    .fields-metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .fields-metric {
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 10px;
+      background: rgba(10, 12, 18, 0.44);
+      padding: 8px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .fields-metric-label {
+      font-size: 0.62rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+    }
+
+    .fields-metric-value {
+      font-size: 0.76rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .fields-list-analytics {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px 10px;
+      margin-top: 8px;
+    }
+
+    .fields-list-analytics span {
+      font-size: 0.64rem;
+      color: var(--text-muted);
+    }
+
+    .fields-dialog-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 2400;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
+      background: rgba(7, 10, 18, 0.72);
+      backdrop-filter: blur(4px);
+    }
+
+    .fields-dialog {
+      width: min(420px, calc(100vw - 32px));
+      border: 1px solid rgba(74, 144, 217, 0.28);
+      border-radius: 16px;
+      background: linear-gradient(180deg, rgba(26, 29, 46, 0.98) 0%, rgba(15, 17, 23, 0.98) 100%);
+      color: var(--text);
+      box-shadow: 0 28px 80px rgba(0, 0, 0, 0.42);
+    }
+
+    .fields-dialog-card {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      padding: 20px;
+    }
+
+    .fields-dialog-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .fields-dialog-copy {
+      font-size: 0.78rem;
+      line-height: 1.45;
+      color: var(--text-muted);
+    }
+
+    .fields-dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .farm-label-marker {
+      background: transparent;
+      border: 0;
+    }
+
+    .farm-label-chip {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 4px;
+      padding: 8px 10px;
+      text-align: left;
+      white-space: normal;
+      min-width: 140px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      box-shadow: 0 8px 22px rgba(0, 0, 0, 0.22);
+      transform: translate(-50%, -50%) scale(var(--farm-label-scale, 1));
+      transform-origin: center center;
+      cursor: grab;
+      user-select: none;
+    }
+
+    .farm-label-chip:active {
+      cursor: grabbing;
+    }
+
+    .farm-label-chip strong {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: #f8fbff;
+      line-height: 1.15;
+    }
+
+    .farm-label-chip span {
+      font-size: 0.66rem;
+      color: #c4d1e2;
+    }
+
+    .farm-label-metrics {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 2px 8px;
+      width: 100%;
+    }
+
+    .farm-label-metric {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+    }
+
+    .farm-label-metric-label {
+      font-size: 0.52rem;
+      color: rgba(220, 230, 244, 0.65);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      line-height: 1.05;
+    }
+
+    .farm-label-metric-value {
+      font-size: 0.62rem;
+      color: #f7fbff;
+      line-height: 1.1;
+      font-weight: 600;
+    }
+
+    .farm-label-chip[data-density="compact"] .farm-label-metrics {
+      display: none;
+    }
+
+    .farm-label-chip[data-density="medium"] .farm-label-metric.detail-only {
+      display: none;
+    }
+
+    .farm-label-chip-field {
+      background: rgba(28, 59, 92, 0.84);
+      border-color: rgba(93, 183, 255, 0.35);
+    }
+
+    .farm-label-chip-paddock {
+      background: rgba(19, 55, 35, 0.86);
+      border-color: rgba(140, 240, 190, 0.32);
+    }
+
+    .sidebar-view {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .sidebar-view.hidden {
+      display: none;
+    }
+
+    .settings-card {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 12px;
+      background: rgba(36, 39, 64, 0.72);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+
+    .settings-toolbar {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+    }
+
+    .settings-meta {
+      display: grid;
+      gap: 6px;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+
+    .settings-actions {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+    }
+
+    .settings-btn {
+      padding: 9px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: rgba(15, 17, 23, 0.92);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+    }
+
+    .settings-btn:hover {
+      transform: translateY(-1px);
+      border-color: rgba(74, 144, 217, 0.45);
+      background: rgba(26, 29, 46, 0.96);
+    }
+
+    .settings-btn.primary {
+      border-color: rgba(74, 144, 217, 0.4);
+      background: rgba(74, 144, 217, 0.14);
+      color: #b4d6ff;
+    }
+
+    .settings-btn.warn {
+      border-color: rgba(231, 76, 60, 0.35);
+      background: rgba(231, 76, 60, 0.12);
+      color: #f2b0a7;
+    }
+
+    .settings-input {
+      width: 100%;
+      padding: 9px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: rgba(15, 17, 23, 0.92);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.82rem;
+    }
+
+    .settings-input.invalid {
+      border-color: var(--rojo);
+      box-shadow: 0 0 0 1px rgba(231, 76, 60, 0.2);
+    }
+
+    .settings-json {
+      min-height: 124px;
+      resize: vertical;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 0.74rem;
+      line-height: 1.45;
+    }
+
+    .settings-status {
+      min-height: 40px;
+      padding: 9px 10px;
+      border-radius: 8px;
+      background: rgba(15, 17, 23, 0.72);
+      border: 1px dashed rgba(136, 146, 164, 0.25);
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      line-height: 1.45;
+    }
+
+    .settings-status[data-tone="success"] { color: #8de0b0; border-color: rgba(46, 204, 113, 0.4); }
+    .settings-status[data-tone="error"] { color: #f4b0a8; border-color: rgba(231, 76, 60, 0.4); }
+    .settings-status[data-tone="info"] { color: #b4d6ff; border-color: rgba(74, 144, 217, 0.4); }
+
+    .settings-section-card {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 12px;
+      background: rgba(15, 17, 23, 0.44);
+      border: 1px solid rgba(46, 49, 80, 0.9);
+      border-radius: 10px;
+    }
+
+    .settings-section-title {
+      font-size: 0.88rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .settings-section-copy {
+      font-size: 0.76rem;
+      color: var(--text-muted);
+      line-height: 1.45;
+    }
+
+    .settings-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .settings-field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .settings-field-wide {
+      grid-column: 1 / -1;
+    }
+
+    .settings-field-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .settings-field-help {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+
+    .profile-completion-banner {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 12px 16px;
+      margin: 0 16px;
+      border-bottom: 1px solid rgba(74, 144, 217, 0.3);
+      background: rgba(74, 144, 217, 0.08);
+      cursor: pointer;
+      transition: background 0.18s ease, border-color 0.18s ease;
+    }
+
+    .profile-completion-banner:hover,
+    .profile-completion-banner:focus-visible {
+      background: rgba(74, 144, 217, 0.12);
+      border-bottom-color: rgba(98, 176, 255, 0.5);
+      outline: none;
+    }
+
+    .profile-completion-copy {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      font-size: 0.8rem;
+      color: #dbeafe;
+    }
+
+    .profile-completion-pill {
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(125, 183, 255, 0.35);
+      background: rgba(125, 183, 255, 0.12);
+      color: #d9ebff;
+      font-size: 0.72rem;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    .profile-completion-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .profile-completion-close {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      border: 1px solid rgba(125, 183, 255, 0.28);
+      background: rgba(15, 23, 38, 0.4);
+      color: #dbeafe;
+      cursor: pointer;
+      font-size: 1rem;
+      font-weight: 700;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .profile-completion-close:hover,
+    .profile-completion-close:focus-visible {
+      background: rgba(15, 23, 38, 0.7);
+      border-color: rgba(125, 183, 255, 0.48);
+      outline: none;
+    }
+
+    .profile-identity-head {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .profile-identity-avatar {
+      width: 54px;
+      height: 54px;
+      border-radius: 50%;
+      object-fit: cover;
+      border: 1px solid rgba(255,255,255,0.1);
+      background: rgba(255,255,255,0.04);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text);
+      font-weight: 700;
+    }
+
+    .profile-identity-avatar-fallback {
+      font-size: 1.2rem;
+    }
+
+    .profile-identity-name {
+      font-size: 0.98rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .profile-identity-email {
+      margin-top: 3px;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    .profile-identity-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      font-size: 0.76rem;
+    }
+
+    .profile-identity-grid div {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 9px 10px;
+      border-radius: 8px;
+      border: 1px solid rgba(46, 49, 80, 0.9);
+      background: rgba(15, 17, 23, 0.44);
+      min-width: 0;
+    }
+
+    .profile-identity-grid strong {
+      color: var(--text-muted);
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .profile-identity-grid span {
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .profile-summary-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+      font-size: 0.84rem;
+    }
+
+    .profile-progress {
+      width: 100%;
+      height: 8px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: rgba(255,255,255,0.06);
+      margin-bottom: 10px;
+    }
+
+    .profile-progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #1f78d1 0%, #62b0ff 100%);
+    }
+
+    .profile-summary-copy {
+      font-size: 0.76rem;
+      line-height: 1.45;
+      color: var(--text-muted);
+    }
+
+    .profile-checkbox-group {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .profile-checkbox {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 9px 10px;
+      border-radius: 8px;
+      border: 1px solid rgba(46, 49, 80, 0.9);
+      background: rgba(15, 17, 23, 0.44);
+      font-size: 0.78rem;
+      line-height: 1.4;
+      color: var(--text);
+    }
+
+    .profile-checkbox input {
+      margin-top: 2px;
+    }
+
+    .profile-multiselect {
+      min-height: 160px;
+    }
+
+    .profile-scope-note {
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px dashed rgba(136, 146, 164, 0.24);
+      background: rgba(15, 17, 23, 0.44);
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+
+    .profile-form-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding-top: 4px;
+    }
+
+    .profile-form-meta {
+      font-size: 0.74rem;
+      color: var(--text-muted);
+    }
+
+    .settings-inherited,
+    .settings-override {
+      padding: 2px 7px;
+      border-radius: 999px;
+      font-size: 0.66rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .settings-inherited {
+      color: var(--text-muted);
+      background: rgba(136, 146, 164, 0.14);
+      border: 1px solid rgba(136, 146, 164, 0.18);
+    }
+
+    .settings-override {
+      color: var(--accent);
+      background: rgba(74, 144, 217, 0.14);
+      border: 1px solid rgba(74, 144, 217, 0.2);
+    }
+
+    .settings-audit-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .settings-audit-item {
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: rgba(15, 17, 23, 0.48);
+      border: 1px solid rgba(46, 49, 80, 0.8);
+    }
+
+    .settings-audit-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 4px;
+      font-size: 0.78rem;
+      color: var(--text);
+    }
+
+    .settings-audit-meta,
+    .settings-audit-empty {
+      font-size: 0.73rem;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+
+    /* â”€â”€ ALERTA CARD â”€â”€ */
     .alerta-card {
       border-radius: 8px;
       padding: 14px;
@@ -394,7 +2290,7 @@
       border-left: 3px solid currentColor;
     }
 
-    /* ── INDICADORES ── */
+    /* â”€â”€ INDICADORES â”€â”€ */
     .indicador-row {
       display: flex;
       justify-content: space-between;
@@ -411,6 +2307,102 @@
     .indicador-valor {
       font-weight: 600;
       font-variant-numeric: tabular-nums;
+    }
+
+    .import-card {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 12px;
+      background: rgba(36, 39, 64, 0.75);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+
+    .import-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    .import-badge {
+      min-width: 34px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(74, 144, 217, 0.35);
+      background: rgba(74, 144, 217, 0.12);
+      color: var(--accent);
+      text-align: center;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .import-help {
+      font-size: 0.76rem;
+      color: var(--text-muted);
+      line-height: 1.45;
+    }
+
+    .import-select,
+    .import-file {
+      width: 100%;
+      padding: 9px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: rgba(15, 17, 23, 0.92);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.82rem;
+    }
+
+    .import-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .import-btn {
+      flex: 1;
+      padding: 9px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: rgba(15, 17, 23, 0.92);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+    }
+
+    .import-btn:hover:not(:disabled) {
+      transform: translateY(-1px);
+      border-color: rgba(74, 144, 217, 0.45);
+      background: rgba(26, 29, 46, 0.96);
+    }
+
+    .import-btn:disabled {
+      opacity: 0.6;
+      cursor: wait;
+    }
+
+    .import-btn.primary {
+      border-color: rgba(46, 204, 113, 0.35);
+      background: rgba(46, 204, 113, 0.12);
+      color: #9de0b9;
+    }
+
+    .import-status {
+      min-height: 36px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: rgba(15, 17, 23, 0.72);
+      border: 1px dashed rgba(136, 146, 164, 0.2);
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      line-height: 1.45;
     }
 
     /* Barra de humedad */
@@ -439,13 +2431,13 @@
       transition: width 1s ease;
     }
 
-    /* ── CHART ── */
+    /* â”€â”€ CHART â”€â”€ */
     .chart-wrap {
       position: relative;
       height: 160px;
     }
 
-    /* ── ALERTAS RECIENTES ── */
+    /* â”€â”€ ALERTAS RECIENTES â”€â”€ */
     .alerta-item {
       display: flex;
       align-items: center;
@@ -470,7 +2462,7 @@
       margin-left: auto;
     }
 
-    /* ── SPI GAUGE ── */
+    /* â”€â”€ SPI GAUGE â”€â”€ */
     .spi-gauge {
       display: flex;
       flex-direction: column;
@@ -528,12 +2520,12 @@
       margin-top: 4px;
     }
 
-    /* ── SCROLL ── */
+    /* â”€â”€ SCROLL â”€â”€ */
     .side-panel::-webkit-scrollbar { width: 4px; }
     .side-panel::-webkit-scrollbar-track { background: transparent; }
     .side-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
-    /* ── FOOTER ── */
+    /* â”€â”€ FOOTER â”€â”€ */
     footer {
       grid-column: 1 / -1;
       background: var(--surface);
@@ -558,25 +2550,519 @@
       padding: 2px 8px;
       font-size: 0.68rem;
     }
+
+    @media (max-width: 1280px) {
+      .dashboard-top-strip {
+        width: calc(100% - 32px);
+        margin-left: 16px;
+      }
+
+      .kpi-bar { width: min(1080px, calc(100% - 360px)); }
+
+      .overview-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .kpi-card {
+        padding: 10px 11px;
+      }
+
+      .kpi-value {
+        font-size: 1.22rem;
+      }
+    }
+
+    @media (max-width: 900px) {
+      .dashboard-top-strip {
+        display: grid;
+        width: calc(100% - 20px);
+        margin-left: 10px;
+      }
+
+      .kpi-bar {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        width: 100%;
+      }
+
+      .weather-strip-head {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .weather-strip-controls {
+        width: 100%;
+      }
+
+      .weather-filter-select {
+        width: 100%;
+        max-width: none;
+      }
+
+      .weather-kpi-bar {
+        min-width: 0;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .overview-grid {
+        width: calc(100% - 20px);
+      }
+
+      .kpi-card {
+        padding: 10px;
+      }
+
+      .map-controls {
+        right: 10px;
+        top: 58px;
+      }
+
+      .map-opacity-wrap {
+        top: 10px;
+        right: 10px;
+      }
+
+      .settings-toolbar,
+      .settings-actions,
+      .settings-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .kpi-bar {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .weather-kpi-bar { grid-template-columns: 1fr; }
+
+      .overview-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .kpi-value {
+        font-size: 1.16rem;
+      }
+    }
+
+    /* ── SIDEBAR LATERAL MODERNA ──────────────────────────────────────
+       Rail de íconos fijo (56px) + panel contenido (312px) que se colapsa.
+       Inspirada en Mapbox Studio / Figma / Google Earth Engine dark mode. */
+    .app-sidebar {
+      position: fixed;
+      left: 16px;
+      top: 84px;
+      bottom: 24px;
+      width: 368px;           /* 56 rail + 312 contenido */
+      z-index: 1100;
+      display: flex;
+      border-radius: 14px;
+      border: 1px solid rgba(74, 144, 217, 0.22);
+      background: linear-gradient(180deg, rgba(13, 18, 28, 0.98) 0%, rgba(8, 11, 18, 0.98) 100%);
+      box-shadow: 0 22px 60px rgba(0, 0, 0, 0.55);
+      backdrop-filter: blur(10px);
+      transition: width 180ms ease-out;
+      overflow: hidden;
+    }
+    .app-sidebar.is-collapsed { width: 56px; }
+    /* ── Rail de íconos ──────────────────────────────────────────── */
+    .sb-rail {
+      flex: 0 0 56px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      padding: 10px 0;
+      gap: 4px;
+      background: rgba(4, 7, 12, 0.8);
+      border-right: 1px solid rgba(74, 144, 217, 0.14);
+    }
+    .sb-rail-brand {
+      width: 36px; height: 36px;
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      margin-bottom: 6px;
+    }
+    .sb-rail-brand-dot {
+      width: 14px; height: 14px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #4a90d9, #2ecc71);
+      box-shadow: 0 0 12px rgba(74, 144, 217, 0.55);
+    }
+    .sb-rail-nav { display: flex; flex-direction: column; gap: 2px; flex: 1; width: 100%; padding: 0 6px; }
+    .sb-rail-foot { display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 0 6px; }
+    .sb-rail-btn {
+      appearance: none;
+      width: 44px; height: 40px;
+      margin: 0 auto;
+      border: 1px solid transparent;
+      background: transparent;
+      color: #8398b3;
+      border-radius: 10px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 140ms ease-out;
+    }
+    .sb-rail-btn:hover { background: rgba(74, 144, 217, 0.12); color: #d6deea; }
+    .sb-rail-btn.is-active {
+      background: linear-gradient(135deg, rgba(74, 144, 217, 0.22), rgba(46, 204, 113, 0.16));
+      border-color: rgba(74, 144, 217, 0.36);
+      color: #ffffff;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04);
+    }
+    .sb-rail-btn:focus-visible { outline: 2px solid rgba(74, 144, 217, 0.6); outline-offset: 2px; }
+    .sb-icon { width: 20px; height: 20px; display: block; }
+    .sb-rail-collapse { color: #5e7088; }
+    .app-sidebar.is-collapsed .sb-rail-collapse .sb-icon { transform: rotate(180deg); transition: transform 180ms ease-out; }
+    .sb-rail-collapse .sb-icon { transition: transform 180ms ease-out; }
+
+    /* ── Panel de contenido ─────────────────────────────────────── */
+    .sb-content {
+      flex: 1 1 auto;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      opacity: 1;
+      transition: opacity 120ms ease-out 60ms;
+    }
+    .app-sidebar.is-collapsed .sb-content { opacity: 0; pointer-events: none; }
+    .sb-content-head {
+      padding: 16px 18px 12px;
+      border-bottom: 1px solid rgba(74, 144, 217, 0.12);
+    }
+    .sb-content-title {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: #eef3ff;
+      letter-spacing: 0.02em;
+    }
+    .sb-content-body {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .sb-content-body::-webkit-scrollbar { width: 6px; }
+    .sb-content-body::-webkit-scrollbar-thumb { background: rgba(74, 144, 217, 0.28); border-radius: 3px; }
+    .sb-content-foot { padding: 8px 14px; color: #5e7088; font-size: 0.66rem; border-top: 1px solid rgba(74, 144, 217, 0.08); }
+    .sb-scope-chip { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+    .sb-scope-dot { width: 8px; height: 8px; border-radius: 50%; background: #2ecc71; flex: 0 0 auto; }
+    .sb-scope-chip[data-scope="departamento"] .sb-scope-dot { background: #4a90d9; }
+    .sb-scope-chip[data-scope="seccion"] .sb-scope-dot { background: #f1c40f; }
+    .sb-scope-chip[data-scope="field"] .sb-scope-dot { background: #e67e22; }
+    .sb-scope-label { flex: 1; color: #a9c2e0; font-size: 0.7rem; letter-spacing: 0.02em; }
+    .sb-scope-reset { appearance: none; border: 1px solid rgba(74,144,217,0.32); background: transparent; color: #8cb8e6; width: 22px; height: 22px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; line-height: 1; }
+    .sb-scope-reset:hover { background: rgba(74,144,217,0.14); }
+
+    /* ── Tarjetas genéricas ─────────────────────────────────────── */
+    .sb-card {
+      display: flex; flex-direction: column; gap: 10px;
+      padding: 12px;
+      border-radius: 12px;
+      background: rgba(17, 23, 35, 0.55);
+      border: 1px solid rgba(74, 144, 217, 0.14);
+    }
+    .sb-card-copy { font-size: 0.8rem; color: #a0adc2; line-height: 1.4; }
+    .sb-card-actions { display: flex; flex-direction: column; gap: 6px; }
+    .sb-btn {
+      display: inline-flex;
+      justify-content: center;
+      align-items: center;
+      padding: 8px 12px;
+      border-radius: 8px;
+      background: transparent;
+      border: 1px solid rgba(74, 144, 217, 0.32);
+      color: #a9c2e0;
+      font-size: 0.8rem;
+      font-family: inherit;
+      font-weight: 500;
+      text-decoration: none;
+      cursor: pointer;
+      transition: all 140ms ease-out;
+    }
+    .sb-btn:hover { background: rgba(74, 144, 217, 0.14); color: #eef3ff; border-color: rgba(74, 144, 217, 0.48); }
+    .sb-btn.primary {
+      background: linear-gradient(135deg, #4a90d9, #2ecc71);
+      border-color: transparent;
+      color: #0a0e16;
+      font-weight: 600;
+    }
+    .sb-btn.primary:hover { filter: brightness(1.1); color: #0a0e16; }
+    .sb-btn.ghost { border-style: dashed; color: #6a7894; }
+
+    /* ── Capas ──────────────────────────────────────────────────── */
+    .sb-layer-group { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-radius: 12px; background: rgba(17, 23, 35, 0.55); border: 1px solid rgba(74, 144, 217, 0.14); }
+    .sb-layer-group-head { display: flex; align-items: baseline; justify-content: space-between; padding: 0 0 6px; }
+    .sb-layer-group-title { font-size: 0.78rem; font-weight: 600; color: #d6deea; letter-spacing: 0.02em; }
+    .sb-layer-group-hint { font-size: 0.65rem; color: #6a7894; }
+    .sb-layer-group-body { display: flex; flex-direction: column; gap: 2px; }
+    .sb-layer-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 8px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 140ms ease-out;
+    }
+    .sb-layer-row:hover { background: rgba(74, 144, 217, 0.08); }
+    .sb-layer-row.is-active { background: rgba(46, 204, 113, 0.1); }
+    .sb-layer-checkbox {
+      appearance: none;
+      width: 14px; height: 14px;
+      border-radius: 4px;
+      border: 1.5px solid rgba(74, 144, 217, 0.5);
+      cursor: pointer;
+      position: relative;
+      flex: 0 0 auto;
+      background: transparent;
+    }
+    .sb-layer-checkbox:checked { background: #2ecc71; border-color: #2ecc71; }
+    .sb-layer-checkbox:checked::after {
+      content: '';
+      position: absolute;
+      left: 3px; top: 0px;
+      width: 4px; height: 8px;
+      border: solid #0a0e16;
+      border-width: 0 2px 2px 0;
+      transform: rotate(45deg);
+    }
+    .sb-layer-copy { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+    .sb-layer-label { font-size: 0.82rem; color: #d6deea; font-weight: 500; }
+    .sb-layer-hint { font-size: 0.65rem; color: #6a7894; }
+
+    /* ── Alerta actual ──────────────────────────────────────────── */
+    .sb-alerts-card { display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 12px; background: rgba(17, 23, 35, 0.55); border: 1px solid rgba(74, 144, 217, 0.14); }
+    .sb-alerts-scope { font-size: 0.7rem; color: #8cb8e6; text-transform: uppercase; letter-spacing: 0.08em; }
+    .sb-alerts-level { font-size: 1.25rem; font-weight: 700; color: #f1c40f; letter-spacing: 0.02em; }
+    .sb-alerts-level[data-level="Emergencia"], .sb-alerts-level[data-level="ROJO"] { color: #e74c3c; }
+    .sb-alerts-level[data-level="Alerta"], .sb-alerts-level[data-level="NARANJA"] { color: #e67e22; }
+    .sb-alerts-level[data-level="Vigilancia"], .sb-alerts-level[data-level="AMARILLO"] { color: #f1c40f; }
+    .sb-alerts-level[data-level="Normal"], .sb-alerts-level[data-level="VERDE"] { color: #2ecc71; }
+    .sb-alerts-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .sb-alerts-metric { display: flex; flex-direction: column; padding: 8px 10px; background: rgba(74, 144, 217, 0.08); border-radius: 8px; }
+    .sb-alerts-metric-label { font-size: 0.62rem; color: #6a7894; text-transform: uppercase; letter-spacing: 0.08em; }
+    .sb-alerts-metric-value { font-size: 0.95rem; color: #d6deea; font-weight: 600; }
+
+    /* ── Perfil ─────────────────────────────────────────────────── */
+    .sb-profile-name { font-size: 0.95rem; color: #eef3ff; font-weight: 600; }
+    .sb-profile-sub { font-size: 0.78rem; color: #a0adc2; }
+
+    /* ── Diagnóstico ────────────────────────────────────────────── */
+    .sb-diag-header { display: flex; flex-wrap: wrap; gap: 6px; }
+    .sb-diag-pill { padding: 3px 8px; border-radius: 999px; font-size: 0.68rem; font-weight: 600; letter-spacing: 0.02em; background: rgba(74, 144, 217, 0.14); color: #a9c2e0; }
+    .sb-diag-pill-error { background: rgba(231, 76, 60, 0.18); color: #ff9489; }
+    .sb-diag-pill-fetch { background: rgba(241, 196, 15, 0.14); color: #f4d76b; }
+    .sb-diag-pill-action { background: rgba(46, 204, 113, 0.18); color: #7ee7a3; }
+    .sb-diag-copy { font-size: 0.76rem; color: #8ca0bd; line-height: 1.4; }
+    .sb-diag-status { font-size: 0.72rem; color: #6a7894; min-height: 14px; }
+    .sb-diag-status[data-tone="success"] { color: #7ee7a3; }
+    .sb-diag-status[data-tone="error"] { color: #ff9489; }
+    .sb-diag-status[data-tone="info"] { color: #8cb8e6; }
+
+    /* Modal de diagnóstico */
+    .sb-diag-modal {
+      position: fixed; inset: 0; z-index: 3000;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .sb-diag-backdrop { position: absolute; inset: 0; background: rgba(5,8,14,0.75); backdrop-filter: blur(6px); }
+    .sb-diag-dialog {
+      position: relative;
+      width: min(1100px, 92vw);
+      height: min(700px, 85vh);
+      background: linear-gradient(180deg, rgba(13, 18, 28, 0.98) 0%, rgba(8, 11, 18, 0.98) 100%);
+      border: 1px solid rgba(74, 144, 217, 0.24);
+      border-radius: 14px;
+      box-shadow: 0 30px 80px rgba(0,0,0,0.7);
+      display: flex; flex-direction: column;
+      overflow: hidden;
+    }
+    .sb-diag-dialog-head { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid rgba(74,144,217,0.16); }
+    .sb-diag-dialog-title { font-weight: 600; color: #eef3ff; flex: 0 0 auto; }
+    .sb-diag-filters { flex: 1; display: flex; gap: 6px; flex-wrap: wrap; }
+    .sb-diag-filter { appearance: none; border: 1px solid rgba(74,144,217,0.24); background: transparent; color: #8cb8e6; padding: 5px 10px; border-radius: 8px; cursor: pointer; font-size: 0.74rem; }
+    .sb-diag-filter:hover { background: rgba(74,144,217,0.1); }
+    .sb-diag-filter.is-active { background: rgba(74,144,217,0.22); color: #eef3ff; border-color: rgba(74,144,217,0.4); }
+    .sb-diag-close { appearance: none; border: 1px solid rgba(74,144,217,0.24); background: transparent; color: #8cb8e6; width: 34px; height: 34px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+    .sb-diag-close:hover { background: rgba(231,76,60,0.18); color: #ff9489; }
+    .sb-diag-table-wrap { flex: 1; overflow: auto; padding: 4px 16px 16px; }
+    .sb-diag-table { width: 100%; border-collapse: collapse; font-size: 0.74rem; color: #d6deea; }
+    .sb-diag-table thead { position: sticky; top: 0; background: rgba(5,8,14,0.96); z-index: 1; }
+    .sb-diag-table th { text-align: left; font-weight: 600; color: #8cb8e6; padding: 8px; border-bottom: 1px solid rgba(74,144,217,0.18); letter-spacing: 0.02em; }
+    .sb-diag-table td { padding: 6px 8px; border-bottom: 1px solid rgba(74,144,217,0.06); vertical-align: top; }
+    .sb-diag-row-error td { background: rgba(231,76,60,0.08); color: #ffb4ab; }
+    .sb-diag-row-warn td { background: rgba(241,196,15,0.06); color: #f4d76b; }
+    .sb-diag-row-action td { color: #7ee7a3; }
+    .sb-diag-t { white-space: nowrap; color: #5e7088; font-family: 'SF Mono', Menlo, monospace; font-size: 0.68rem; }
+    .sb-diag-level { text-transform: uppercase; font-weight: 600; font-size: 0.68rem; }
+    .sb-diag-type { color: #a0adc2; font-size: 0.72rem; }
+    .sb-diag-msg { min-width: 280px; word-break: break-word; }
+    .sb-diag-meta { max-width: 380px; color: #6a7894; font-family: 'SF Mono', Menlo, monospace; font-size: 0.68rem; word-break: break-all; }
+    .sb-diag-dialog-foot { padding: 10px 16px; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid rgba(74,144,217,0.16); font-size: 0.74rem; color: #8cb8e6; }
+
+    /* Hacemos lugar al sidebar desplazando TODO el body una sola vez. */
+    body { padding-left: 400px; transition: padding-left 180ms ease-out; }
+    body.sidebar-collapsed { padding-left: 88px; }
+    @media (max-width: 960px) {
+      .app-sidebar { top: 72px; bottom: 16px; left: 8px; width: 320px; }
+      body { padding-left: 0; }
+      body.sidebar-collapsed { padding-left: 72px; }
+      body:not(.sidebar-collapsed) .app-sidebar {
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.7);
+      }
+    }
+
+    /* Timeline event dots */
+    .timeline-events-track {
+      position: relative;
+      height: 14px;
+      margin-top: 6px;
+      pointer-events: none;
+    }
+    .timeline-event {
+      position: absolute;
+      top: 3px;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      transform: translateX(-50%);
+      pointer-events: auto;
+      cursor: pointer;
+      box-shadow: 0 0 0 2px rgba(10, 14, 22, 0.7);
+      transition: transform 0.14s ease;
+    }
+    .timeline-event:hover { transform: translateX(-50%) scale(1.45); }
+    .timeline-event[data-severity="Normal"] { background: #2ecc71; }
+    .timeline-event[data-severity="Vigilancia"] { background: #f1c40f; }
+    .timeline-event[data-severity="Alerta"] { background: #e67e22; }
+    .timeline-event[data-severity="Emergencia"] { background: #e74c3c; }
+    .timeline-event-tooltip {
+      position: absolute;
+      bottom: calc(100% + 6px);
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 6px 9px;
+      background: rgba(5, 8, 14, 0.95);
+      border: 1px solid rgba(74, 144, 217, 0.32);
+      border-radius: 6px;
+      font-size: 0.7rem;
+      color: #d6deea;
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.14s ease;
+    }
+    .timeline-event:hover .timeline-event-tooltip { opacity: 1; }
   </style>
 </head>
 <body>
 
 <!-- HEADER -->
 <header>
-  <div class="logo">
-    <div class="logo-icon">🌾</div>
-    <div>
-      <div>AgroClimaX</div>
-      <div class="logo-sub">Alertas Agroclimáticas por Teledetección</div>
+    <div class="logo">
+      <img src="static/logo_agroclimax_header.png" alt="AgroClimaX Logo" class="logo-principal">
+      <img src="static/AIDeepEconomics.png" alt="AI Deep Economics Logo" class="logo-secundario">
     </div>
-  </div>
   <div class="header-right">
-    <div class="badge-area">Área: <span>Rivera, Uruguay</span></div>
-    <div class="badge-area">Satélites: <span>Sentinel-1 · Sentinel-2 · ERA5</span></div>
-    <div class="last-update" id="last-update">Actualizado: —</div>
+    <div class="badge-area">Area: <span id="scope-badge-value">Uruguay</span></div>
+    <div class="badge-area">Satelites: <span>Sentinel-1 - Sentinel-2 - ERA5</span></div>
+    <select id="department-select" style="padding:6px 12px;border-radius:6px;border:1px solid #2a3447;background:#111723;color:#d6deea;font-size:0.8rem;font-family:Inter,sans-serif">
+      <option value="nacional">Uruguay (nacional)</option>
+    </select>
+    <button id="btn-dibujar" onclick="window._drawingMode ? window.finishDrawing() : window.startDrawing()" style="padding:6px 14px;border-radius:6px;border:1px solid #4a90d9;background:#1a1d2e;color:#4a90d9;cursor:pointer;font-size:0.8rem;font-family:Inter,sans-serif;font-weight:600">DIB Dibujar Parcela</button>
+    <button id="btn-limpiar" onclick="window.clearDrawing()" style="display:none;padding:6px 14px;border-radius:6px;border:1px solid #e74c3c;background:#1a1d2e;color:#e74c3c;cursor:pointer;font-size:0.8rem;font-family:Inter,sans-serif;font-weight:600">&#128465; Limpiar</button>
+    <div class="auth-user-badge hidden" id="auth-user-badge">
+      <img class="auth-user-avatar hidden" id="auth-user-avatar" alt="Avatar usuario" />
+      <div class="auth-user-copy">
+        <div class="auth-user-name" id="auth-user-name">Usuario</div>
+        <div class="auth-user-subtitle" id="auth-user-subtitle">Cuenta Google</div>
+      </div>
+    </div>
+    <button class="auth-header-btn primary hidden" id="auth-login-btn" type="button">Entrar con Google</button>
+    <button class="auth-header-btn hidden" id="auth-logout-btn" type="button">Cerrar sesion</button>
+    <div class="last-update" id="last-update">Actualizado: -</div>
+    <button class="header-collapse-toggle" id="header-collapse-toggle" data-header-collapse-toggle type="button" aria-expanded="true">Plegar header</button>
   </div>
 </header>
+
+<!-- SIDEBAR LATERAL (renderizado por src/sidebar.js) -->
+<aside class="app-sidebar" id="app-sidebar" aria-label="Panel lateral AgroClimaX"></aside>
+
+<div class="auth-gate hidden" id="auth-gate">
+  <div class="auth-gate-card">
+    <div class="auth-gate-kicker">Acceso protegido</div>
+    <div class="auth-gate-title">AgroClimaX requiere inicio de sesion con Google</div>
+    <div class="auth-gate-copy" id="auth-gate-message">Inicia sesion con Google para entrar a AgroClimaX.</div>
+    <div class="auth-gate-copy" id="auth-welcome">Necesitas autenticarte con Google para usar el dashboard y las APIs operativas.</div>
+    <div class="auth-gate-actions">
+      <button class="auth-gate-btn" id="auth-gate-login-btn" type="button">Continuar con Google</button>
+    </div>
+    <div class="auth-gate-note">La sesion se gestiona desde el backend con cookie segura y expiracion controlada.</div>
+  </div>
+</div>
+
+<div class="app-preload-overlay" id="app-preload-overlay" aria-live="polite">
+  <div class="app-preload-card">
+    <div class="app-preload-kicker">Precarga inteligente</div>
+    <div class="app-preload-title" id="app-preload-title">Preparando capas y cache inicial</div>
+    <div class="app-preload-copy" id="app-preload-copy">Cargando sesion, catalogos y frames temporales para reducir el buffering inicial.</div>
+    <div class="app-preload-headrow">
+      <span id="app-preload-stage-label">Iniciando...</span>
+      <span id="app-preload-progress-label">0%</span>
+    </div>
+    <div class="app-preload-progressbar">
+      <div class="app-preload-progressfill" id="app-preload-progressfill"></div>
+    </div>
+    <div class="app-preload-stage-list" id="app-preload-stage-list"></div>
+    <div class="app-preload-footnote" id="app-preload-footnote">La app se habilita apenas lo critico queda listo. El resto sigue calentando en segundo plano.</div>
+  </div>
+</div>
+
+<div class="profile-completion-banner hidden" id="profile-completion-banner" role="button" tabindex="0" aria-label="Abrir perfil completo">
+  <div class="profile-completion-copy">
+    <span class="profile-completion-pill" id="profile-completion-pct">0%</span>
+    <span id="profile-completion-copy">Completa tu perfil operativo para usar la plataforma con mejor contexto.</span>
+  </div>
+  <div class="profile-completion-actions">
+    <button class="settings-btn primary" id="profile-completion-open-btn" type="button">Completar perfil</button>
+    <button class="profile-completion-close" id="profile-completion-close-btn" type="button" aria-label="Cerrar aviso de perfil" title="Cerrar aviso">×</button>
+  </div>
+</div>
+
+<div class="timeline-dock">
+  <div class="map-timeline is-disabled" id="map-timeline">
+    <div class="map-timeline-head">
+      <div class="map-timeline-title">Timeline historica</div>
+      <div class="map-timeline-head-actions">
+        <div class="map-timeline-meta">
+          <span class="map-timeline-pill" id="map-timeline-mode">Inactiva</span>
+          <span class="map-timeline-pill" id="map-timeline-status">Sin capas temporales activas</span>
+        </div>
+        <button class="map-timeline-header-toggle" id="map-timeline-header-toggle" data-header-collapse-toggle type="button" aria-expanded="true">Plegar header</button>
+      </div>
+    </div>
+    <div class="map-timeline-controls">
+      <button class="map-timeline-button" id="map-timeline-play" type="button" disabled>Play</button>
+      <div class="map-timeline-datecopy">
+        <div class="map-timeline-date" id="map-timeline-date">-</div>
+        <div class="map-timeline-source" id="map-timeline-source">Activa una capa temporal para navegar</div>
+      </div>
+      <input class="map-timeline-slider" id="map-timeline-slider" type="range" min="0" max="364" value="364" step="1" disabled>
+      <select class="map-timeline-speed" id="map-timeline-speed" disabled>
+        <option value="1">1x</option>
+      </select>
+    </div>
+  </div>
+</div>
+
+<div class="app-preload-mini hidden" id="app-preload-mini">
+  <div class="app-preload-mini-copy">
+    <div class="app-preload-mini-title" id="app-preload-mini-title">Calentando cache raster</div>
+    <div class="app-preload-mini-detail" id="app-preload-mini-detail">Preparando capas temporales y overlays del viewport actual.</div>
+  </div>
+  <div class="app-preload-mini-detail" id="app-preload-mini-progress">0%</div>
+</div>
 
 <!-- ALERTA BANNER -->
 <div id="alerta-banner"></div>
@@ -584,123 +3070,95 @@
 <div class="main-grid">
 
   <!-- KPI BAR -->
-  <div class="kpi-bar">
-    <div class="kpi-card">
-      <div class="kpi-label">Humedad Suelo (S1)</div>
-      <div class="kpi-value" id="kpi-humedad" style="color: var(--naranja);">—</div>
-      <div class="kpi-sub">Sentinel-1 SAR · ~5 cm prof.</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-label">NDMI Vegetación (S2)</div>
-      <div class="kpi-value" id="kpi-ndmi" style="color: var(--amarillo);">—</div>
-      <div class="kpi-sub">Sentinel-2 · B08/B11</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-label">SPI-30 (ERA5)</div>
-      <div class="kpi-value" id="kpi-spi" style="color: var(--rojo);">—</div>
-      <div class="kpi-sub">Índice Precip. Estandarizado</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-label">Área en Alerta</div>
-      <div class="kpi-value" id="kpi-area" style="color: var(--naranja);">—</div>
-      <div class="kpi-sub">% depto. Rivera afectado</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-label">Días en Déficit</div>
-      <div class="kpi-value" id="kpi-dias" style="color: var(--rojo);">—</div>
-      <div class="kpi-sub">Consecutivos ≥ Alerta</div>
-    </div>
-  </div>
-
-  <!-- MAPA -->
-  <div class="map-container">
-    <div id="map"></div>
-
-    <!-- SELECTOR DE CAPAS AGRONÓMICAS -->
-    <div class="map-controls">
-      <button class="map-btn active" id="btn-alerta" onclick="setLayer('alerta',this)">
-        <span class="map-btn-icon">🎯</span>
-        <span class="map-btn-name">Alerta</span>
-        <span class="map-btn-desc">S1 + S2</span>
-      </button>
-      <button class="map-btn" id="btn-rgb" onclick="setLayer('rgb',this)">
-        <span class="map-btn-icon">🌍</span>
-        <span class="map-btn-name">RGB</span>
-        <span class="map-btn-formula">B04·B03·B02</span>
-      </button>
-      <button class="map-btn" id="btn-ndvi" onclick="setLayer('ndvi',this)">
-        <span class="map-btn-icon">🌿</span>
-        <span class="map-btn-name">NDVI</span>
-        <span class="map-btn-formula">B08−B04/sum</span>
-      </button>
-      <button class="map-btn" id="btn-ndmi" onclick="setLayer('ndmi',this)">
-        <span class="map-btn-icon">💧</span>
-        <span class="map-btn-name">NDMI</span>
-        <span class="map-btn-formula">B08−B11/sum</span>
-      </button>
-      <button class="map-btn" id="btn-ndwi" onclick="setLayer('ndwi',this)">
-        <span class="map-btn-icon">🔵</span>
-        <span class="map-btn-name">NDWI</span>
-        <span class="map-btn-formula">B03−B08/sum</span>
-      </button>
-      <button class="map-btn" id="btn-savi" onclick="setLayer('savi',this)">
-        <span class="map-btn-icon">🌾</span>
-        <span class="map-btn-name">SAVI</span>
-        <span class="map-btn-formula">(B08−B04)/…·1.5</span>
-      </button>
-      <button class="map-btn" id="btn-sar" onclick="setLayer('sar',this)">
-        <span class="map-btn-icon">📡</span>
-        <span class="map-btn-name">SAR VV</span>
-        <span class="map-btn-formula">S1 · Díaz 2026</span>
-      </button>
-    </div>
-
-    <!-- Control de opacidad -->
-    <div class="map-opacity-wrap" id="opacity-wrap" style="display:none">
-      <span>Opacidad</span>
-      <input type="range" id="opacity-slider" min="20" max="100" value="85"
-             oninput="setTileOpacity(this.value/100)">
-      <span id="opacity-label">85%</span>
-    </div>
-
-    <!-- Indicador de carga -->
-    <div class="map-tile-loading" id="map-tile-loading">⏳ Cargando Sentinel...</div>
-
-    <!-- LEYENDA DINÁMICA -->
-    <div class="map-legend" id="map-legend">
-      <div class="map-legend-title" id="legend-title">Nivel de Alerta · Rivera</div>
-      <div id="legend-content">
-        <div class="legend-item"><div class="legend-dot" style="background:#2ecc71"></div> Verde — Normal (&gt;50%)</div>
-        <div class="legend-item"><div class="legend-dot" style="background:#f1c40f"></div> Amarillo (25–50%)</div>
-        <div class="legend-item"><div class="legend-dot" style="background:#e67e22"></div> Naranja (15–25%)</div>
-        <div class="legend-item"><div class="legend-dot" style="background:#e74c3c"></div> Rojo (&lt;15%)</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- SIDE PANEL -->
-  <div class="side-panel">
-
-    <!-- ESTADO ACTUAL -->
-    <div class="panel-section">
-      <div class="panel-title">Estado Hídrico Actual</div>
-      <div class="alerta-card" id="alerta-card-main">
-        <div class="alerta-header">
-          <div class="alerta-nivel" id="alerta-nivel-text">Cargando...</div>
-          <div class="alerta-badge" id="alerta-tipo-badge">—</div>
+  <div class="dashboard-top-strip">
+    <div class="kpi-bar">
+      <div class="kpi-card">
+        <div class="kpi-label-row">
+          <div class="kpi-label">Humedad Suelo (S1)</div>
+          <div class="metric-tooltip-wrap">
+            <button class="metric-info-btn" type="button" aria-label="Unidad y fuente de Humedad Suelo (S1)">i</button>
+            <div class="metric-tooltip-panel" data-metric-tooltip="humidity_s1"></div>
+          </div>
         </div>
-        <div class="alerta-descripcion" id="alerta-descripcion">Conectando con datos Copernicus...</div>
-        <div class="alerta-accion" id="alerta-accion">—</div>
+        <div class="kpi-value" id="kpi-humedad" style="color: var(--naranja);">-</div>
+        <div class="kpi-sub">Sentinel-1 SAR - ~5 cm prof.</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">NDMI Vegetacion (S2)</div>
+        <div class="kpi-value" id="kpi-ndmi" style="color: var(--amarillo);">-</div>
+        <div class="kpi-sub">Sentinel-2 - B08/B11</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">SPI-30 (ERA5)</div>
+        <div class="kpi-value" id="kpi-spi" style="color: var(--rojo);">-</div>
+        <div class="kpi-sub">Indice Precip. Estandarizado</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Area en Alerta</div>
+        <div class="kpi-value" id="kpi-area" style="color: var(--naranja);">-</div>
+        <div class="kpi-sub">% unidad afectada</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Risk Score</div>
+        <div class="kpi-value" id="kpi-risk" style="color: var(--rojo);">-</div>
+        <div class="kpi-sub">Magnitud + persistencia + meteo</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Confianza</div>
+        <div class="kpi-value" id="kpi-confidence" style="color: var(--accent);">-</div>
+        <div class="kpi-sub">Calidad de dato y calibracion</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Persistencia</div>
+        <div class="kpi-value" id="kpi-dias" style="color: var(--rojo);">-</div>
+        <div class="kpi-sub">Dias en el estado actual</div>
       </div>
     </div>
 
-    <!-- BARRAS DE HUMEDAD -->
-    <div class="panel-section">
+    <div class="weather-strip-panel" id="weather-strip-panel">
+      <div class="weather-strip-head">
+        <div>
+          <div class="weather-strip-title">Meteorologia y forecast operativo</div>
+          <div class="weather-strip-meta" id="weather-filter-label">Seleccion actual</div>
+        </div>
+        <div class="weather-strip-controls">
+          <select id="weather-filter-select" class="weather-filter-select" aria-label="Filtrar meteorologia por ambito">
+            <option value="current">Seleccion actual</option>
+          </select>
+        </div>
+      </div>
+      <div class="weather-kpi-bar">
+        <div class="kpi-card">
+          <div class="kpi-label" id="weather-card-title-1">Lluvia 24h</div>
+          <div class="kpi-value" id="weather-card-value-1">-</div>
+          <div class="kpi-sub" id="weather-card-sub-1">Prob. de precipitacion</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label" id="weather-card-title-2">Temperatura</div>
+          <div class="kpi-value" id="weather-card-value-2">-</div>
+          <div class="kpi-sub" id="weather-card-sub-2">Humedad relativa media</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label" id="weather-card-title-3">Viento</div>
+          <div class="kpi-value" id="weather-card-value-3">-</div>
+          <div class="kpi-sub" id="weather-card-sub-3">Direccion y rachas</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label" id="weather-card-title-4">ET0 / Balance</div>
+          <div class="kpi-value" id="weather-card-value-4">-</div>
+          <div class="kpi-sub" id="weather-card-sub-4">Balance y presion prevista</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="overview-grid">
+    <div class="overview-card">
       <div class="panel-title">Humedad Superficial del Suelo</div>
       <div class="humedad-bar-wrap">
         <div class="humedad-bar-label">
           <span>Humedad S1 (Sentinel-1)</span>
-          <span id="hum-s1-pct">—</span>
+          <span id="hum-s1-pct">-</span>
         </div>
         <div class="humedad-bar">
           <div class="humedad-bar-fill" id="hum-s1-bar" style="width:0%;background:var(--naranja)"></div>
@@ -709,7 +3167,7 @@
       <div class="humedad-bar-wrap" style="margin-top:10px">
         <div class="humedad-bar-label">
           <span>NDMI normalizado (S2)</span>
-          <span id="hum-ndmi-pct">—</span>
+          <span id="hum-ndmi-pct">-</span>
         </div>
         <div class="humedad-bar">
           <div class="humedad-bar-fill" id="hum-ndmi-bar" style="width:0%;background:var(--amarillo)"></div>
@@ -717,11 +3175,10 @@
       </div>
     </div>
 
-    <!-- SPI GAUGE -->
-    <div class="panel-section">
-      <div class="panel-title">SPI-30 — Precipitación Estandarizada (ERA5)</div>
+    <div class="overview-card">
+      <div class="panel-title">SPI-30 - Precipitacion Estandarizada (ERA5)</div>
       <div class="spi-gauge">
-        <div class="spi-value-big" id="spi-big">—</div>
+        <div class="spi-value-big" id="spi-big">-</div>
         <div class="spi-label" id="spi-cat">Sin datos</div>
         <div class="spi-bar-wrap">
           <div class="spi-scale">
@@ -740,68 +3197,363 @@
       </div>
     </div>
 
-    <!-- SERIE TEMPORAL -->
-    <div class="panel-section">
-      <div class="panel-title">Serie Temporal — Últimos 30 días</div>
+    <div class="overview-card overview-card-series">
+      <div class="panel-title">Serie Temporal - Ultimos 30 dias</div>
       <div class="chart-wrap">
         <canvas id="chart-humedad"></canvas>
       </div>
     </div>
 
-    <!-- ALERTAS RECIENTES -->
-    <div class="panel-section">
+    <div class="overview-card overview-card-alerts">
       <div class="panel-title">Alertas Recientes</div>
       <div id="alertas-recientes">
         <!-- poblado por JS -->
       </div>
     </div>
+  </div>
 
-    <!-- INDICADORES TÉCNICOS -->
+  <!-- MAPA -->
+  <div class="map-container">
+    <div id="map"></div>
+
+    <div class="map-layer-menu" id="map-layer-menu">
+      <button class="map-layer-menu-toggle" id="map-layer-menu-toggle" type="button" aria-expanded="false">
+        Capas
+      </button>
+      <div class="map-layer-menu-panel" id="map-layer-menu-panel" hidden>
+        <div class="map-layer-menu-head">
+          <div>
+            <div class="map-layer-menu-title">Capas del mapa</div>
+            <div class="map-layer-menu-subtitle">Raster analíticos, overlays oficiales y capas administrativas.</div>
+          </div>
+        </div>
+        <div class="map-layer-menu-actions">
+          <button class="map-layer-action" id="map-layer-clear" type="button">Limpiar capas</button>
+          <button class="map-layer-action" id="map-layer-recommended" type="button">Solo recomendadas</button>
+          <button class="map-layer-action" id="map-layer-reset-view" type="button">Restaurar vista inicial</button>
+        </div>
+        <div class="map-layer-groups" id="map-layer-menu-groups"></div>
+      </div>
+    </div>
+
+    <div class="map-opacity-wrap" id="opacity-wrap" style="display:none">
+      <span>Opacidad</span>
+      <input type="range" id="opacity-slider" min="20" max="100" value="85"
+             oninput="setTileOpacity(this.value/100)">
+      <span id="opacity-label">85%</span>
+    </div>
+
+    <!-- Indicador de carga -->
+    <div class="map-tile-loading" id="map-tile-loading">&#9203; Cargando Sentinel...</div>
+
+    <!-- LEYENDA DINAMICA -->
+    <div class="map-legend" id="map-legend">
+      <div class="map-legend-title" id="legend-title">Nivel de Alerta - Rivera</div>
+      <div id="legend-content">
+        <div class="legend-item"><div class="legend-dot" style="background:#2ecc71"></div> Verde - Normal (&gt;50%)</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#f1c40f"></div> Amarillo (25-50%)</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#e67e22"></div> Naranja (15-25%)</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#e74c3c"></div> Rojo (&lt;15%)</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SIDE PANEL -->
+  <div class="side-panel">
+    <div class="sidebar-tabs">
+      <button class="sidebar-tab active" id="sidebar-monitor-tab" type="button">Monitor</button>
+      <button class="sidebar-tab" id="sidebar-fields-tab" type="button">Campos</button>
+      <button class="sidebar-tab" id="sidebar-settings-tab" type="button">Settings</button>
+      <button class="sidebar-tab" id="sidebar-profile-tab" type="button">Perfil</button>
+    </div>
+
+    <div class="sidebar-view" id="sidebar-monitor-view">
+
+    <!-- ESTADO ACTUAL -->
     <div class="panel-section">
-      <div class="panel-title">Indicadores Técnicos</div>
+      <div class="panel-title">Estado Hidrico Actual</div>
+      <div class="alerta-card" id="alerta-card-main">
+        <div class="alerta-header">
+          <div class="alerta-nivel" id="alerta-nivel-text">Cargando...</div>
+          <div class="alerta-badge" id="alerta-tipo-badge">-</div>
+        </div>
+        <div class="alerta-descripcion" id="alerta-descripcion">Conectando con datos Copernicus...</div>
+        <div class="alerta-accion" id="alerta-accion">-</div>
+        <div class="alerta-accion" id="alerta-extra" style="margin-top:8px;color:var(--text-muted)">Calibracion y trazabilidad en carga...</div>
+      </div>
+    </div>
+
+    <div class="panel-section" id="forecast-panel-section">
+      <div class="panel-title">Forecast 7 Dias</div>
+      <div id="forecast-list" style="display:flex;flex-direction:column;gap:8px;color:var(--text);font-size:0.8rem"></div>
+    </div>
+
+    <div class="panel-section">
+      <div class="panel-title">Motores de Riesgo</div>
+      <div id="drivers-list" style="display:flex;flex-direction:column;gap:8px;color:var(--text);font-size:0.8rem"></div>
+    </div>
+
+    <div class="panel-section">
+      <div class="panel-title">Unidades Productivas</div>
+      <div class="import-card">
+        <div class="import-row">
+          <span>Capa activa por archivo importado</span>
+          <span class="import-badge" id="productive-import-count">0</span>
+        </div>
+        <div class="import-help">
+          Subi un <strong>.geojson</strong>, <strong>.json</strong> o <strong>.zip</strong> con shapefile para dibujar predios o potreros reales sobre el mapa.
+        </div>
+        <label class="import-help" for="productive-category">Categoria de unidad</label>
+        <select class="import-select" id="productive-category">
+          <option value="predio">Predio</option>
+          <option value="potrero">Potrero</option>
+          <option value="lote">Lote</option>
+        </select>
+        <label class="import-help" for="productive-file">Archivo geoespacial</label>
+        <input class="import-file" id="productive-file" type="file" accept=".geojson,.json,.zip" />
+        <div class="import-actions">
+          <button class="import-btn primary" id="productive-upload-btn" type="button">Importar capa</button>
+          <button class="import-btn" id="productive-template-btn" type="button">Descargar plantilla</button>
+        </div>
+        <div class="import-status" id="productive-import-status">Preparando importador...</div>
+      </div>
+    </div>
+
+    <!-- INDICADORES TECNICOS -->
+    <div class="panel-section">
+      <div class="panel-title">Indicadores Tecnicos</div>
       <div class="indicador-row">
-        <span class="indicador-label">Puntos calibración S1</span>
-        <span class="indicador-valor" style="color:var(--verde)">5 Rivera</span>
+        <span class="indicador-label">Calibracion activa</span>
+        <span class="indicador-valor" id="indicador-calibracion" style="color:var(--verde)">Cargando...</span>
       </div>
       <div class="indicador-row">
-        <span class="indicador-label">Resolución espacial</span>
-        <span class="indicador-valor">20 m</span>
+        <span class="indicador-label">Unidad operativa</span>
+        <span class="indicador-valor" id="indicador-unidad">Departamento / H3 r9</span>
       </div>
       <div class="indicador-row">
-        <span class="indicador-label">Profundidad S1</span>
-        <span class="indicador-valor">~5 cm</span>
+        <span class="indicador-label">Cobertura / suelo</span>
+        <span class="indicador-valor" id="indicador-suelo">Cargando...</span>
       </div>
       <div class="indicador-row">
-        <span class="indicador-label">Anticipación estrés NDMI</span>
-        <span class="indicador-valor" style="color:var(--accent)">7–10 días</span>
+        <span class="indicador-label">Forecast</span>
+        <span class="indicador-valor" id="indicador-forecast" style="color:var(--accent)">3-7 dias</span>
       </div>
       <div class="indicador-row">
-        <span class="indicador-label">Fuente climática</span>
-        <span class="indicador-valor">ERA5 CDS</span>
+        <span class="indicador-label">Modo de datos</span>
+        <span class="indicador-valor" id="indicador-mode">Cargando...</span>
       </div>
       <div class="indicador-row">
         <span class="indicador-label">Pipeline</span>
-        <span class="indicador-valor" style="color:var(--verde)">Diario 03:00</span>
+        <span class="indicador-valor" id="indicador-pipeline" style="color:var(--verde)">Diario 03:30</span>
       </div>
     </div>
+
+    </div><!-- /sidebar-monitor-view -->
+
+    <div class="sidebar-view hidden" id="sidebar-settings-view">
+      <div class="panel-section">
+        <div class="panel-title">Motor Configurable</div>
+        <div class="settings-card">
+          <div class="settings-toolbar">
+            <label class="settings-field">
+              <span class="settings-field-label">Modo</span>
+              <select class="settings-input" id="settings-mode-select">
+                <option value="global">Global</option>
+                <option value="coverage">Por cobertura</option>
+              </select>
+            </label>
+            <label class="settings-field">
+              <span class="settings-field-label">Cobertura</span>
+              <select class="settings-input" id="settings-coverage-select"></select>
+            </label>
+          </div>
+          <div class="settings-field">
+            <span class="settings-field-label">Usuario autenticado</span>
+            <div class="settings-input" id="settings-authenticated-operator" style="display:flex;align-items:center;min-height:42px">La auditoria usa automaticamente la identidad del login actual.</div>
+            <span class="settings-field-help">Cada cambio queda auditado con la sesion Google activa, IP y user-agent.</span>
+          </div>
+          <div class="settings-status" id="settings-status">La configuracion editable del motor aparecera aqui.</div>
+          <div class="settings-meta" id="settings-meta"></div>
+          <div class="settings-actions">
+            <button class="settings-btn" id="settings-refresh-btn" type="button">Recargar</button>
+            <button class="settings-btn primary" id="settings-save-btn" type="button">Guardar</button>
+            <button class="settings-btn warn" id="settings-reset-btn" type="button">Reset global</button>
+            <button class="settings-btn" id="settings-clear-override-btn" type="button">Borrar override</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-title">Parametros</div>
+        <div id="settings-form" style="display:flex;flex-direction:column;gap:12px"></div>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-title">Auditoria</div>
+        <div class="settings-audit-list" id="settings-audit"></div>
+      </div>
+    </div><!-- /sidebar-settings-view -->
+
+    <div class="sidebar-view hidden" id="sidebar-profile-view">
+      <div class="panel-section">
+        <div class="panel-title">Perfil del usuario</div>
+        <div class="settings-card">
+          <div class="settings-status" id="profile-status">Carga pendiente.</div>
+          <div id="profile-completion-summary"></div>
+          <button class="settings-btn primary" id="profile-open-full-btn" type="button">Abrir version completa</button>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-title">Cuenta Google</div>
+        <div class="settings-card" id="profile-google-identity"></div>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-title">Cuestionario operativo</div>
+        <div class="settings-card" id="profile-form"></div>
+      </div>
+    </div><!-- /sidebar-profile-view -->
+
+    <div class="sidebar-view hidden" id="sidebar-fields-view">
+      <div class="panel-section">
+        <div class="panel-title">Campos privados</div>
+        <div class="settings-card">
+          <div class="settings-status" id="fields-status">Carga pendiente.</div>
+          <div class="fields-toolbar">
+            <label class="settings-field">
+              <span class="settings-field-label">Establecimiento</span>
+              <select class="settings-input" id="fields-establishment-select"></select>
+            </label>
+            <button class="settings-btn" id="fields-refresh-btn" type="button">Recargar</button>
+          </div>
+          <div class="fields-grid">
+            <label class="settings-field">
+              <span class="settings-field-label">Nombre establecimiento</span>
+              <input class="settings-input" id="fields-establishment-name" placeholder="Ej. Estancia Norte" />
+            </label>
+            <label class="settings-field">
+              <span class="settings-field-label">Descripcion</span>
+              <input class="settings-input" id="fields-establishment-description" placeholder="Opcional" />
+            </label>
+          </div>
+          <div class="fields-actions">
+            <button class="settings-btn primary" id="fields-establishment-save-btn" type="button">Guardar establecimiento</button>
+            <button class="settings-btn" id="fields-establishment-delete-btn" type="button">Eliminar establecimiento</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-title">Buscar padron</div>
+        <div class="settings-card">
+          <div class="fields-grid two">
+            <label class="settings-field">
+              <span class="settings-field-label">Departamento</span>
+              <select class="settings-input" id="fields-department-select"></select>
+            </label>
+            <label class="settings-field">
+              <span class="settings-field-label">Padron</span>
+              <input class="settings-input" id="fields-padron-input" placeholder="Ej. 12345" />
+            </label>
+          </div>
+          <div class="fields-actions">
+            <button class="settings-btn primary" id="fields-padron-search-btn" type="button">Buscar padron</button>
+          </div>
+          <div class="fields-result-box" id="fields-padron-result"></div>
+          <div class="fields-note">El padron oficial se usa como referencia visual. La geometria operativa final del campo la ajustas manualmente sobre el mapa.</div>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-title">Campo</div>
+        <div class="settings-card">
+          <div class="fields-grid">
+            <label class="settings-field">
+              <span class="settings-field-label">Nombre del campo</span>
+              <input class="settings-input" id="fields-field-name" placeholder="Ej. Campo Norte" />
+            </label>
+          </div>
+          <div class="fields-actions">
+            <button class="settings-btn" id="fields-field-draw-btn" type="button">Dibujar / editar</button>
+            <button class="settings-btn primary" id="fields-field-save-btn" type="button">Guardar campo</button>
+            <button class="settings-btn" id="fields-field-clear-btn" type="button">Reiniciar borrador</button>
+            <button class="settings-btn" id="fields-field-delete-btn" type="button">Eliminar campo</button>
+          </div>
+          <div class="fields-note">Si partes del mismo establecimiento no son contiguas, cargalas como campos separados.</div>
+          <div class="fields-analytics-card hidden" id="fields-field-analytics"></div>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-title">Campos cargados</div>
+        <div class="settings-card">
+          <div class="fields-list" id="fields-list"></div>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-title">Potreros</div>
+        <div class="settings-card">
+          <div class="fields-grid">
+            <label class="settings-field">
+              <span class="settings-field-label">Nombre del potrero</span>
+              <input class="settings-input" id="fields-paddock-name" placeholder="Ej. Potrero Norte" />
+            </label>
+          </div>
+          <div class="fields-actions">
+            <button class="settings-btn" id="fields-paddock-draw-btn" type="button">Dibujar / editar</button>
+            <button class="settings-btn primary" id="fields-paddock-save-btn" type="button">Guardar potrero</button>
+            <button class="settings-btn" id="fields-paddock-clear-btn" type="button">Reiniciar borrador</button>
+            <button class="settings-btn" id="fields-paddock-delete-btn" type="button">Eliminar potrero</button>
+          </div>
+          <div class="fields-list" id="fields-paddocks-list"></div>
+          <div class="fields-analytics-card hidden" id="fields-paddock-analytics"></div>
+        </div>
+      </div>
+
+      <div class="fields-dialog-overlay hidden" id="fields-paddock-confirm-dialog" aria-hidden="true">
+        <div class="fields-dialog" role="dialog" aria-modal="true" aria-labelledby="fields-paddock-confirm-title">
+          <div class="fields-dialog-card">
+            <div class="fields-dialog-title" id="fields-paddock-confirm-title">Confirmar potrero</div>
+            <div class="fields-dialog-copy">El poligono ya se cerro. Edita el nombre si hace falta y guardalo para seguir con el siguiente potrero.</div>
+            <label class="settings-field">
+              <span class="settings-field-label">Nombre del potrero</span>
+              <input class="settings-input" id="fields-paddock-confirm-name" placeholder="Ej. Potrero 1" />
+            </label>
+            <div class="settings-status" id="fields-paddock-confirm-status">Completa el nombre y guarda para continuar.</div>
+            <div class="fields-dialog-actions">
+              <button class="settings-btn" id="fields-paddock-confirm-cancel-btn" type="button">Cancelar</button>
+              <button class="settings-btn primary" id="fields-paddock-confirm-save-btn" type="button">Guardar y seguir</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div><!-- /sidebar-fields-view -->
 
   </div><!-- /side-panel -->
 
 </div><!-- /main-grid -->
 
 <footer>
-  <div>AgroClimaX v0.1 — AI Deep Economics · Rivera, Uruguay</div>
+  <div>AgroClimaX v1 nacional - AI Deep Economics - Uruguay</div>
   <div class="footer-sources">
-    <span class="source-tag">🛰 Sentinel-1 SAR (Copernicus)</span>
-    <span class="source-tag">🛰 Sentinel-2 L2A (Copernicus)</span>
-    <span class="source-tag">🌦 ERA5 CDS (Copernicus)</span>
-    <span class="source-tag">📐 Método: Díaz, G. 2026</span>
+    <span class="source-tag">S1 Sentinel-1 SAR (Copernicus)</span>
+    <span class="source-tag">S2 Sentinel-2 L2A (Copernicus)</span>
+    <span class="source-tag">ERA5 CDS (Copernicus)</span>
+    <span class="source-tag">Metodo: Diaz, G. 2026</span>
   </div>
 </footer>
 
-<script>
-// ── API REAL — Copernicus CDSE ─────────────────────────────────
-const API_BASE = 'http://localhost:8002/api';
+  <script type="module" src="/static/src/app.js?v=20260421-1"></script>
+<script type="text/plain" data-legacy="disabled">
+// â”€â”€ API REAL â€” Copernicus CDSE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// API_BASE: en producciÃ³n usa URL relativa (FastAPI sirve el frontend).
+// En desarrollo local, override via ?api=http://localhost:8003 en la URL.
+const _urlParams = new URLSearchParams(window.location.search);
+const API_BASE = _urlParams.get('api') || (window.location.port === '' || window.location.port === '80' || window.location.port === '443'
+  ? '/api'
+  : 'http://localhost:8005/api');
 const COLORES  = { 0: '#2ecc71', 1: '#f1c40f', 2: '#e67e22', 3: '#e74c3c' };
 const NOMBRES  = { 0: 'VERDE', 1: 'AMARILLO', 2: 'NARANJA', 3: 'ROJO' };
 
@@ -811,7 +3563,7 @@ let historialDatos = [];
 function mostrarCargando() {
   document.getElementById('alerta-banner').innerHTML =
     `<div class="banner-dot" style="background:#4a90d9;animation:pulse 1s infinite"></div>
-     <span style="color:#4a90d9">Conectando con Copernicus Data Space — descargando datos reales...</span>`;
+     <span style="color:#4a90d9">Conectando con Copernicus Data Space â€” descargando datos reales...</span>`;
   document.getElementById('alerta-banner').style.background = '#4a90d922';
   document.getElementById('alerta-banner').style.borderBottom = '1px solid #4a90d944';
   ['kpi-humedad','kpi-ndmi','kpi-spi','kpi-area','kpi-dias'].forEach(id => {
@@ -824,11 +3576,35 @@ async function cargarEstadoActual() {
   try {
     const r = await fetch(`${API_BASE}/estado-actual`);
     const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Compruebe que el polÃ­gono sea vÃ¡lido.');
     estadoActual = normalizar(data);
     renderTodo(estadoActual);
   } catch(e) {
     document.getElementById('alerta-banner').innerHTML =
-      `<span style="color:#e74c3c">Error conectando con API: ${e.message}. Verifique que el servidor esté corriendo en puerto 8002.</span>`;
+      `<span style="color:#e74c3c">Error conectando con API: ${e.message}. Verifique que el servidor estÃ© accesible en ${API_BASE}.</span>`;
+  }
+}
+
+
+async function cargarEstadoActualCustom(geojson) {
+  mostrarCargando();
+  document.querySelector('.badge-area span').textContent = 'Mi Parcela (analizandoâ€¦)';
+  try {
+    const r = await fetch(`${API_BASE}/stats/custom`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(geojson)
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Error procesando parcela en Copernicus.');
+    estadoActual = normalizar(data);
+    renderTodo(estadoActual);
+    document.querySelector('.badge-area span').textContent = 'Mi Parcela (actualizada)';
+  } catch(e) {
+    document.getElementById('alerta-banner').innerHTML =
+      `<span style="color:#e74c3c">âš  Error analizando parcela: ${e.message}</span>`;
+    document.getElementById('alerta-banner').style.background = '#e74c3c22';
+    document.querySelector('.badge-area span').textContent = 'Mi Parcela (error)';
   }
 }
 
@@ -847,7 +3623,7 @@ async function cargarHistorico() {
       renderAlertasRecientes(historialDatos);
     }
   } catch(e) {
-    console.warn('No se pudo cargar histórico:', e.message);
+    console.warn('No se pudo cargar histÃ³rico:', e.message);
   }
 }
 
@@ -882,7 +3658,7 @@ function normalizar(data) {
     tipo:            alerta.nivel_s1 && alerta.nivel_s2
                      ? `S1:${alerta.nivel_s1} | S2:${alerta.nivel_s2}`
                      : 'Combinado S1+S2',
-    // Detalles técnicos
+    // Detalles tÃ©cnicos
     vv_db:           s1.vv_db_media     ?? null,
     ndmi_p10:        s2.ndmi_p10        ?? null,
     ndmi_p90:        s2.ndmi_p90        ?? null,
@@ -903,7 +3679,7 @@ function renderTodo(d) {
   actualizarMarcadorRivera(d);
 }
 
-// ── BANNER ────────────────────────────────────────────────────
+// â”€â”€ BANNER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function renderBanner(d) {
   const banner = document.getElementById('alerta-banner');
   banner.style.background = d.color + '22';
@@ -911,13 +3687,13 @@ function renderBanner(d) {
   banner.style.color = d.color;
   banner.innerHTML = `
     <div class="banner-dot" style="background:${d.color}"></div>
-    <strong>ALERTA ${d.nivel}</strong> — ${d.descripcion}
-    ${d.es_prolongada ? `<span style="margin-left:12px;background:${d.color}33;padding:2px 10px;border-radius:12px;font-size:0.75rem">⚠ PROLONGADA: ${d.dias_deficit} días consecutivos</span>` : ''}
-    <span style="margin-left:auto;font-size:0.75rem;color:var(--text-muted)">Rivera · ${d.fecha}</span>
+    <strong>ALERTA ${d.nivel}</strong> â€” ${d.descripcion}
+    ${d.es_prolongada ? `<span style="margin-left:12px;background:${d.color}33;padding:2px 10px;border-radius:12px;font-size:0.75rem">âš  PROLONGADA: ${d.dias_deficit} dÃ­as consecutivos</span>` : ''}
+    <span style="margin-left:auto;font-size:0.75rem;color:var(--text-muted)">Rivera Â· ${d.fecha}</span>
   `;
 }
 
-// ── KPIs ─────────────────────────────────────────────────────
+// â”€â”€ KPIs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function renderKPIs(d) {
   const h = d.humedad_s1_pct;
   document.getElementById('kpi-humedad').textContent = h.toFixed(1) + '%';
@@ -933,34 +3709,34 @@ function renderKPIs(d) {
   document.getElementById('kpi-area').textContent = (d.pct_area_afectada ?? 0).toFixed(1) + '%';
   document.getElementById('kpi-area').style.color = d.color;
 
-  // VV dB como indicador técnico en lugar de días deficit
+  // VV dB como indicador tÃ©cnico en lugar de dÃ­as deficit
   const vv = d.vv_db ?? d.dias_deficit;
   document.getElementById('kpi-dias').textContent = d.vv_db ? d.vv_db.toFixed(1) + ' dB' : (d.dias_deficit ?? 0);
   document.getElementById('kpi-dias').style.color = d.vv_db ? '#4a90d9' : '#e67e22';
 
-  document.getElementById('last-update').textContent = 'Datos: ' + d.fecha + ' · Fuente: Copernicus CDSE';
+  document.getElementById('last-update').textContent = 'Datos: ' + d.fecha + ' Â· Fuente: Copernicus CDSE';
   if (d.advertencia) {
     document.getElementById('last-update').style.color = '#e67e22';
-    document.getElementById('last-update').textContent += ' ⚠';
+    document.getElementById('last-update').textContent += ' âš ';
   }
 }
 
-// ── ALERTA CARD ───────────────────────────────────────────────
+// â”€â”€ ALERTA CARD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function renderAlertaCard(d) {
   const card = document.getElementById('alerta-card-main');
   card.style.borderColor = d.color + '88';
   card.style.background = d.color + '11';
   card.style.color = d.color;
-  document.getElementById('alerta-nivel-text').textContent = '● ' + d.nivel;
+  document.getElementById('alerta-nivel-text').textContent = 'â— ' + d.nivel;
   document.getElementById('alerta-tipo-badge').textContent = d.tipo;
   document.getElementById('alerta-descripcion').textContent = d.descripcion;
   const accion = document.getElementById('alerta-accion');
-  accion.textContent = '→ ' + d.accion;
+  accion.textContent = 'â†’ ' + d.accion;
   accion.style.color = d.color;
   accion.style.borderLeftColor = d.color;
 }
 
-// ── BARRAS HUMEDAD ────────────────────────────────────────────
+// â”€â”€ BARRAS HUMEDAD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function renderBarras(d) {
   const hPct = d.humedad_s1_pct;
   document.getElementById('hum-s1-pct').textContent = hPct.toFixed(1) + '%';
@@ -975,17 +3751,17 @@ function renderBarras(d) {
   barN.style.background = d.ndmi_medio < -0.1 ? '#e74c3c' : d.ndmi_medio < 0 ? '#e67e22' : d.ndmi_medio < 0.1 ? '#f1c40f' : '#2ecc71';
 }
 
-// ── SPI GAUGE ─────────────────────────────────────────────────
+// â”€â”€ SPI GAUGE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function renderSPI(d) {
   document.getElementById('spi-big').textContent = d.spi_30d.toFixed(2);
   document.getElementById('spi-big').style.color = d.spi_30d < -1.5 ? '#e74c3c' : d.spi_30d < 0 ? '#e67e22' : '#2ecc71';
   document.getElementById('spi-cat').textContent = d.spi_categoria;
-  // Posición marcador: SPI -3 → 0%, SPI +3 → 100%
+  // PosiciÃ³n marcador: SPI -3 â†’ 0%, SPI +3 â†’ 100%
   const pos = Math.max(0, Math.min(100, ((d.spi_30d + 3) / 6) * 100));
   document.getElementById('spi-marker').style.left = pos + '%';
 }
 
-// ── CHART ─────────────────────────────────────────────────────
+// â”€â”€ CHART â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function renderChart(hist) {
   const ctx = document.getElementById('chart-humedad').getContext('2d');
   const labels = hist.map(h => h.fecha.substring(5)).reverse();
@@ -1063,7 +3839,7 @@ function renderChart(hist) {
   });
 }
 
-// ── ALERTAS RECIENTES ─────────────────────────────────────────
+// â”€â”€ ALERTAS RECIENTES â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function renderAlertasRecientes(hist) {
   const alertas = hist.filter(h => h.nivel >= 2).slice(0, 5);
   const container = document.getElementById('alertas-recientes');
@@ -1074,13 +3850,13 @@ function renderAlertasRecientes(hist) {
   container.innerHTML = alertas.map(a => `
     <div class="alerta-item">
       <div class="alerta-item-dot" style="background:${COLORES[a.nivel]}"></div>
-      <span>${NOMBRES[a.nivel]} — Humedad ${a.humedad.toFixed(1)}%</span>
+      <span>${NOMBRES[a.nivel]} â€” Humedad ${a.humedad.toFixed(1)}%</span>
       <span class="alerta-item-fecha">${a.fecha.substring(5)}</span>
     </div>
   `).join('');
 }
 
-// ── MAPA LEAFLET ──────────────────────────────────────────────
+// â”€â”€ MAPA LEAFLET â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 let map, heatLayer;
 let currentLayer = 'humedad';
 let riveraMarker = null;
@@ -1091,7 +3867,7 @@ function agregarMarcadorRivera() {
     padding:5px 8px;font-family:Inter,sans-serif;font-size:0.7rem;
     color:var(--text);white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.4);
     min-width:90px;text-align:center">
-    <div style="font-weight:700;color:#4a90d9">📍 Rivera</div>
+    <div style="font-weight:700;color:#4a90d9">ðŸ“ Rivera</div>
     <div id="marker-humedad" style="color:#f1c40f">Cargando...</div>
   </div>`;
 
@@ -1109,7 +3885,7 @@ function actualizarMarcadorRivera(d) {
   const el = document.getElementById('marker-humedad');
   if (el && d) {
     el.innerHTML = `
-      <span style="color:${d.color}">● ${d.nivel}</span><br>
+      <span style="color:${d.color}">â— ${d.nivel}</span><br>
       <span style="color:#aaa">H:</span> ${d.humedad_s1_pct.toFixed(1)}%
       <span style="color:#aaa">NDMI:</span> ${d.ndmi_medio.toFixed(3)}
     `;
@@ -1129,19 +3905,110 @@ function initMap() {
   // Pane para tiles satelitales (entre basemap y marcadores)
   map.createPane('satellitePane');
   map.getPane('satellitePane').style.zIndex = 250;
+  map.getPane('satellitePane').style.pointerEvents = 'none';
 
   // Basemap oscuro CartoDB
   L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    attribution: '© OpenStreetMap © CARTO',
+    attribution: 'Â© OpenStreetMap Â© CARTO',
     maxZoom: 18,
     pane: 'tilePane',
   }).addTo(map);
 
-  // Puntos de calibración reales (Díaz 2026)
+  // Puntos de calibraciÃ³n reales (DÃ­az 2026)
   addCalibrationPoints();
 
-  // Cargar límite real de Rivera desde GADM
-  fetch('http://localhost:8002/api/geojson/rivera')
+  // â”€â”€ DIBUJADOR NATIVO DE PARCELA â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Variables de estado en scope global para acceso desde botones del header
+  window._drawingMode   = false;
+  window._drawingPoints = [];
+  window._previewPoly   = null;
+  window._previewMarkers = [];
+  window._savedPoly     = null;
+
+  window.startDrawing = function() {
+    window._drawingMode = true;
+    window._drawingPoints = [];
+    if (window._previewPoly)  { map.removeLayer(window._previewPoly); window._previewPoly = null; }
+    window._previewMarkers.forEach(function(m) { map.removeLayer(m); });
+    window._previewMarkers = [];
+    if (window._savedPoly) { map.removeLayer(window._savedPoly); window._savedPoly = null; }
+    map.getContainer().style.cursor = 'crosshair';
+    document.getElementById('btn-dibujar').textContent = 'âœ… Finalizar Parcela';
+    document.getElementById('btn-dibujar').style.backgroundColor = '#2ecc71';
+    document.getElementById('btn-dibujar').style.color = '#000';
+    document.getElementById('btn-limpiar').style.display = 'inline-block';
+    document.querySelector('.badge-area span').textContent = 'Dibujandoâ€¦ (Clic en el mapa = punto Â· Doble-clic = cerrar)';
+  };
+
+  window.finishDrawing = function() {
+    if (window._drawingPoints.length < 3) {
+      document.querySelector('.badge-area span').textContent = 'Necesitas al menos 3 puntos para la parcela.';
+      return;
+    }
+    var coords = window._drawingPoints.map(function(p) { return [p.lng, p.lat]; });
+    coords.push(coords[0]);
+
+    if (window._previewPoly) { map.removeLayer(window._previewPoly); window._previewPoly = null; }
+    window._previewMarkers.forEach(function(m) { map.removeLayer(m); });
+    window._previewMarkers = [];
+
+    window._savedPoly = L.polygon(window._drawingPoints.map(function(p){ return [p.lat, p.lng]; }), {
+      color: '#2ecc71', weight: 2, fillColor: '#4a90d9', fillOpacity: 0.2
+    }).addTo(map);
+
+    window._drawingMode = false;
+    map.getContainer().style.cursor = '';
+    document.getElementById('btn-dibujar').textContent = 'âœï¸ Dibujar Parcela';
+    document.getElementById('btn-dibujar').style.backgroundColor = '';
+    document.getElementById('btn-dibujar').style.color = '#4a90d9';
+    document.querySelector('.badge-area span').textContent = 'Mi Parcela (analizandoâ€¦)';
+
+    var geojson = { type: 'Polygon', coordinates: [coords] };
+    cargarEstadoActualCustom(geojson);
+  };
+
+  window.clearDrawing = function() {
+    window._drawingMode = false;
+    window._drawingPoints = [];
+    if (window._previewPoly)  { map.removeLayer(window._previewPoly); window._previewPoly = null; }
+    window._previewMarkers.forEach(function(m) { map.removeLayer(m); });
+    window._previewMarkers = [];
+    if (window._savedPoly) { map.removeLayer(window._savedPoly); window._savedPoly = null; }
+    map.getContainer().style.cursor = '';
+    document.getElementById('btn-dibujar').textContent = 'âœï¸ Dibujar Parcela';
+    document.getElementById('btn-dibujar').style.backgroundColor = '';
+    document.getElementById('btn-dibujar').style.color = '#4a90d9';
+    document.getElementById('btn-limpiar').style.display = 'none';
+    document.querySelector('.badge-area span').textContent = 'Rivera, Uruguay';
+  };
+
+  // Click para aÃ±adir punto
+  map.on('click', function(e) {
+    if (!window._drawingMode) return;
+    window._drawingPoints.push(e.latlng);
+
+    var dot = L.circleMarker([e.latlng.lat, e.latlng.lng], {
+      radius: 5, color: '#4a90d9', fillColor: '#fff', fillOpacity: 1, weight: 2
+    }).addTo(map);
+    window._previewMarkers.push(dot);
+
+    if (window._previewPoly) map.removeLayer(window._previewPoly);
+    if (window._drawingPoints.length > 1) {
+      window._previewPoly = L.polygon(window._drawingPoints.map(function(p){ return [p.lat, p.lng]; }), {
+        color: '#4a90d9', weight: 2, fillOpacity: 0.1, dashArray: '6 4'
+      }).addTo(map);
+    }
+  });
+
+  // Doble-clic para cerrar polÃ­gono
+  map.on('dblclick', function(e) {
+    if (!window._drawingMode) return;
+    L.DomEvent.stop(e);
+    window.finishDrawing();
+  });
+
+  // Cargar lÃ­mite real de Rivera desde GADM
+  fetch(`${API_BASE}/geojson/rivera`)
     .then(r => r.json())
     .then(geojson => {
       L.geoJSON(geojson, {
@@ -1154,7 +4021,7 @@ function initMap() {
         }
       }).addTo(map);
     })
-    .catch(() => console.warn('No se pudo cargar límite de Rivera'));
+    .catch(() => console.warn('No se pudo cargar lÃ­mite de Rivera'));
 
   // Marcador Rivera con datos en tiempo real
   agregarMarcadorRivera();
@@ -1168,8 +4035,8 @@ function addCalibrationPoints() {
     { id: 'P1', lat: -31.4896, lon: -54.9933, desc: 'Suelo muy seco', vv: -16.92, ndmi: -0.33 },
     { id: 'P2', lat: -31.4892, lon: -54.9887, desc: 'Suelo seco', vv: -13.49, ndmi: -0.11 },
     { id: 'P3', lat: -31.5004, lon: -54.9907, desc: 'Humedad media', vv: -12.42, ndmi: 0.07 },
-    { id: 'P4', lat: -31.5045, lon: -54.9755, desc: 'Suelo húmedo', vv: -10.96, ndmi: 0.25 },
-    { id: 'P5', lat: -31.5026, lon: -55.0046, desc: 'Suelo muy húmedo', vv: -8.97, ndmi: 0.44 },
+    { id: 'P4', lat: -31.5045, lon: -54.9755, desc: 'Suelo hÃºmedo', vv: -10.96, ndmi: 0.25 },
+    { id: 'P5', lat: -31.5026, lon: -55.0046, desc: 'Suelo muy hÃºmedo', vv: -8.97, ndmi: 0.44 },
   ];
 
   pts.forEach(p => {
@@ -1183,94 +4050,120 @@ function addCalibrationPoints() {
     })
     .bindPopup(`
       <div style="font-family:Inter,sans-serif;min-width:180px">
-        <strong style="color:#4a90d9">${p.id} — Punto de Calibración</strong><br>
-        <span style="color:#aaa">Descripción:</span> ${p.desc}<br>
+        <strong style="color:#4a90d9">${p.id} â€” Punto de CalibraciÃ³n</strong><br>
+        <span style="color:#aaa">DescripciÃ³n:</span> ${p.desc}<br>
         <span style="color:#aaa">VV (dB):</span> ${p.vv}<br>
         <span style="color:#aaa">NDMI:</span> ${p.ndmi}<br>
-        <span style="color:#aaa">Fuente:</span> Díaz, G. 01/03/2026
+        <span style="color:#aaa">Fuente:</span> DÃ­az, G. 01/03/2026
       </div>
     `)
     .addTo(map);
   });
 }
 
-// ── LEYENDAS POR CAPA ─────────────────────────────────────────────────────
+// â”€â”€ LEYENDAS POR CAPA â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const LAYER_LEGENDS = {
   alerta: {
-    title: 'Nivel de Alerta · Rivera',
+    title: 'Nivel de Alerta Â· Rivera',
     html: `
-      <div class="legend-item"><div class="legend-dot" style="background:#2ecc71"></div> Verde — Normal (&gt;50%)</div>
-      <div class="legend-item"><div class="legend-dot" style="background:#f1c40f"></div> Amarillo (25–50%)</div>
-      <div class="legend-item"><div class="legend-dot" style="background:#e67e22"></div> Naranja (15–25%)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#2ecc71"></div> Verde â€” Normal (&gt;50%)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#f1c40f"></div> Amarillo (25â€“50%)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#e67e22"></div> Naranja (15â€“25%)</div>
       <div class="legend-item"><div class="legend-dot" style="background:#e74c3c"></div> Rojo (&lt;15%)</div>`
   },
   rgb: {
-    title: 'RGB — Color Natural S2',
+    title: 'RGB â€” Color Natural S2',
     html: `<div style="font-size:0.7rem;color:var(--text-muted);line-height:1.5">
-      Imagen óptica Sentinel-2 L2A<br>
-      <span style="color:rgba(136,146,164,0.6);font-family:monospace">R=B04 · G=B03 · B=B02</span><br>
-      Últimos 45 días · nubes &lt;50%
+      Imagen Ã³ptica Sentinel-2 L2A<br>
+      <span style="color:rgba(136,146,164,0.6);font-family:monospace">R=B04 Â· G=B03 Â· B=B02</span><br>
+      Ãšltimos 45 dÃ­as Â· nubes &lt;50%
     </div>`
   },
   ndvi: {
-    title: 'NDVI — Salud Vegetación',
+    title: 'NDVI â€” Salud VegetaciÃ³n',
     html: `
       <div class="legend-gradient" style="background:linear-gradient(to right,#a06428,#c8a000,#c8b400,#50b432,#006400)"></div>
       <div class="legend-scale-labels">
         <span>&lt;0 Suelo</span><span>0.2</span><span>0.5</span><span>&gt;0.7</span>
       </div>
-      <div class="legend-formula">B08−B04 / B08+B04</div>
+      <div class="legend-formula">B08âˆ’B04 / B08+B04</div>
       <div style="font-size:0.62rem;color:var(--text-muted);margin-top:3px">Salud y densidad de cultivos/pastizales</div>`
   },
   ndmi: {
-    title: 'NDMI — Humedad Foliar',
+    title: 'NDMI â€” Humedad Foliar',
     html: `
       <div class="legend-gradient" style="background:linear-gradient(to right,#b44614,#f0a050,#50b4be,#0050d2)"></div>
       <div class="legend-scale-labels">
-        <span>&lt;-0.3 Seco</span><span>0</span><span>&gt;0.3 Húmedo</span>
+        <span>&lt;-0.3 Seco</span><span>0</span><span>&gt;0.3 HÃºmedo</span>
       </div>
-      <div class="legend-formula">B08−B11 / B08+B11</div>
-      <div style="font-size:0.62rem;color:var(--text-muted);margin-top:3px">Estrés hídrico foliar (7–10 días antes)</div>`
+      <div class="legend-formula">B08âˆ’B11 / B08+B11</div>
+      <div style="font-size:0.62rem;color:var(--text-muted);margin-top:3px">EstrÃ©s hÃ­drico foliar (7â€“10 dÃ­as antes)</div>`
   },
   ndwi: {
-    title: 'NDWI — Agua Superficial',
+    title: 'NDWI â€” Agua Superficial',
     html: `
       <div class="legend-gradient" style="background:linear-gradient(to right,#afa082,#82aac8,#0050dc)"></div>
       <div class="legend-scale-labels">
         <span>&lt;-0.3 Suelo</span><span>0</span><span>&gt;0.1 Agua</span>
       </div>
-      <div class="legend-formula">B03−B08 / B03+B08</div>
+      <div class="legend-formula">B03âˆ’B08 / B03+B08</div>
       <div style="font-size:0.62rem;color:var(--text-muted);margin-top:3px">Cuerpos de agua e inundaciones</div>`
   },
   savi: {
-    title: 'SAVI — Veg. Ajustada Suelo',
+    title: 'SAVI â€” Veg. Ajustada Suelo',
     html: `
       <div class="legend-gradient" style="background:linear-gradient(to right,#d2af82,#96c87d,#148200)"></div>
       <div class="legend-scale-labels">
         <span>&lt;0.1 Suelo</span><span>0.35</span><span>&gt;0.6 Densa</span>
       </div>
-      <div class="legend-formula">(B08−B04)/(…+0.5)·1.5</div>
+      <div class="legend-formula">(B08âˆ’B04)/(â€¦+0.5)Â·1.5</div>
       <div style="font-size:0.62rem;color:var(--text-muted);margin-top:3px">Ideal para pastizales / suelo variable</div>`
   },
   sar: {
-    title: 'SAR VV — Humedad Suelo',
+    title: 'SAR VV â€” Humedad Suelo',
     html: `
       <div class="legend-gradient" style="background:linear-gradient(to right,#dc5014,#5090be,#14bcd2)"></div>
       <div class="legend-scale-labels">
-        <span>Seco −18dB</span><span>−13</span><span>Húmedo −8dB</span>
+        <span>Seco âˆ’18dB</span><span>âˆ’13</span><span>HÃºmedo âˆ’8dB</span>
       </div>
-      <div class="legend-formula">S1 VV · Calibración Díaz 2026</div>
+      <div class="legend-formula">S1 VV Â· CalibraciÃ³n DÃ­az 2026</div>
       <div style="font-size:0.62rem;color:var(--text-muted);margin-top:3px">Humedad suelo ~5 cm profundidad</div>`
+  },
+  lst: {
+    title: 'LST â€” Temperatura Superficial',
+    html: `
+      <div class="legend-gradient" style="background:linear-gradient(to right,#0000ff,#00ff00,#ffff00,#ff0000)"></div>
+      <div class="legend-scale-labels">
+        <span>10Â°C</span><span>20Â°</span><span>30Â°</span><span>>40Â°</span>
+      </div>
+      <div class="legend-formula">S3 SLSTR S8 Band</div>
+      <div style="font-size:0.62rem;color:var(--text-muted);margin-top:3px">RadiaciÃ³n tÃ©rmica terrestre (estrÃ©s evaporativo)</div>`
+  },
+  coneat: {
+    title: 'Productividad Suelos CONEAT',
+    html: `
+      <div class="legend-item"><div class="legend-dot" style="background:#8b4513"></div> Productividad Alta</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#cd853f"></div> Productividad Media</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#deb887"></div> Productividad Baja</div>
+      <div style="font-size:0.62rem;color:var(--text-muted);margin-top:3px">Datos oficiales MGAP Uruguay</div>`
+  },
+  judicial: {
+    title: 'Secciones Judiciales â€” IGM',
+    html: `
+      <div class="legend-item" style="border:1px solid #4a90d9;padding:2px;border-radius:3px">
+        <div class="legend-dot" style="background:rgba(74,144,217,0.2);border:1px solid #4a90d9"></div> LÃ­mite Judicial
+      </div>
+      <div style="font-size:0.62rem;color:var(--text-muted);margin-top:3px">DivisiÃ³n administrativa Judicial Uruguay</div>`
   }
 };
 
-// ── GESTIÓN DE CAPAS TILE ─────────────────────────────────────────────────
+// â”€â”€ GESTIÃ“N DE CAPAS TILE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 let activeTileLayer = null;
 
 function setLayer(name, btn) {
   currentLayer = name;
 
-  // Activar botón
+  // Activar botÃ³n
   document.querySelectorAll('.map-btn').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
 
@@ -1281,33 +4174,56 @@ function setLayer(name, btn) {
   }
 
   const opacityWrap = document.getElementById('opacity-wrap');
+  const tileLayerName = name === 'alerta' ? 'alerta_fusion' : name;
 
-  if (name === 'alerta') {
-    // Modo alerta: solo marcadores de color, sin tile satelital
-    opacityWrap.style.display = 'none';
-    if (estadoActual) actualizarMapaConDatos(estadoActual);
+  // Cargar satÃ©lite real siempre, incluso en la alerta de fusiÃ³n
+  opacityWrap.style.display = 'flex';
+  const loading = document.getElementById('map-tile-loading');
+
+  if (name === 'coneat') {
+    // Capa CONEAT vÃ­a Proxy de Backend (evita Mixed Content HTTP/HTTPS)
+    activeTileLayer = L.tileLayer.wms(`${API_BASE}/proxy/coneat`, {
+      layers: '2,5', // CONEAT + Padrones Rurales
+      format: 'image/png',
+      transparent: true,
+      version: '1.1.1',
+      srs: 'EPSG:4326', // El WMS del MGAP no soporta 3857
+      attribution: 'Â© MGAP/DGRN Uruguay',
+      opacity: parseFloat(document.getElementById('opacity-slider').value) / 100
+    });
+  } else if (name === 'judicial') {
+    // Capa Secciones Judiciales vÃ­a IDE Uruguay (HTTPS nativo)
+    activeTileLayer = L.tileLayer.wms('https://mapas.ide.uy/geoservicios/WMS/WMS_Uruguay', {
+      layers: 'sec_judicial_poligono',
+      format: 'image/png',
+      transparent: true,
+      version: '1.1.1',
+      attribution: 'Â© IDE Uruguay',
+      opacity: parseFloat(document.getElementById('opacity-slider').value) / 100
+    });
   } else {
-    // Modo satelital: cargar tiles reales del backend
-    opacityWrap.style.display = 'flex';
-    const loading = document.getElementById('map-tile-loading');
-
+    // Capas satelitales nativas de AgroClimaX
     activeTileLayer = L.tileLayer(
-      `http://localhost:8002/api/tiles/${name}/{z}/{x}/{y}.png`,
+      `${API_BASE}/tiles/${tileLayerName}/{z}/{x}/{y}.png`,
       {
         pane:       'satellitePane',
         maxZoom:    13,
         minZoom:    7,
         opacity:    parseFloat(document.getElementById('opacity-slider').value) / 100,
         tileSize:   256,
-        attribution: `© Copernicus/ESA · ${name.toUpperCase()} · AgroClimaX`,
+        attribution: `Â© Copernicus/ESA Â· ${tileLayerName.toUpperCase()} Â· AgroClimaX`,
       }
     );
+  }
 
-    activeTileLayer.on('loading', () => { loading.style.display = 'block'; });
-    activeTileLayer.on('load',    () => { loading.style.display = 'none';  });
-    activeTileLayer.on('tileerror', () => { /* silencio — tile transparente del backend */ });
+  activeTileLayer.on('loading', () => { loading.style.display = 'block'; });
+  activeTileLayer.on('load',    () => { loading.style.display = 'none';  });
+  activeTileLayer.on('tileerror', () => { /* silencio â€” tile transparente del backend */ });
 
-    activeTileLayer.addTo(map);
+  activeTileLayer.addTo(map);
+
+  if (name === 'alerta' && estadoActual) {
+    actualizarMapaConDatos(estadoActual);
   }
 
   // Actualizar leyenda
@@ -1321,18 +4237,18 @@ function setTileOpacity(val) {
   if (activeTileLayer) activeTileLayer.setOpacity(val);
 }
 
-// ── FUNCIÓN MAPA con datos reales ─────────────────────────────
+// â”€â”€ FUNCIÃ“N MAPA con datos reales â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function actualizarMapaConDatos(d) {
   if (!map) return;
   actualizarMarcadorRivera(d);
 }
 
-// ── INIT ──────────────────────────────────────────────────────
+// â”€â”€ INIT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 document.addEventListener('DOMContentLoaded', async () => {
   initMap();
   // Cargar datos reales de Copernicus
   await cargarEstadoActual();
-  // Cargar histórico en paralelo (puede tardar más)
+  // Cargar histÃ³rico en paralelo (puede tardar mÃ¡s)
   cargarHistorico();
   // Refrescar cada 30 minutos
   setInterval(cargarEstadoActual, 30 * 60 * 1000);
@@ -1340,3 +4256,5 @@ document.addEventListener('DOMContentLoaded', async () => {
 </script>
 </body>
 </html>
+
+

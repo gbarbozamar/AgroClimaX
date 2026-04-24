@@ -1,43 +1,125 @@
-"""
-Endpoints API — Control del pipeline Copernicus.
-Permite ejecutar el pipeline manualmente y consultar su estado.
-"""
 from datetime import date
-from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Query, HTTPException
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.copernicus.pipeline import ejecutar_pipeline
+from app.db.session import get_db
+from app.services.pipeline_ops import (
+    execute_coneat_prewarm_job,
+    execute_daily_pipeline_job,
+    execute_recalibration_job,
+    execute_timeline_backfill_job,
+    get_pipeline_status,
+    list_pipeline_runs,
+    refresh_materialized_layers,
+    run_due_scheduled_jobs,
+    run_historical_backfill,
+)
 
 router = APIRouter(prefix="/pipeline", tags=["pipeline"])
 
 
 @router.post("/ejecutar")
-async def ejecutar_pipeline_manual(
-    background_tasks: BackgroundTasks,
-    fecha: Optional[date] = Query(None, description="Fecha objetivo (por defecto: ayer)"),
-    ventana_dias: int = Query(6, description="Ventana de búsqueda de imágenes en días"),
+async def ejecutar_pipeline(
+    fecha: date | None = Query(None),
+    force: bool = Query(False),
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    Ejecuta el pipeline Copernicus manualmente en background.
-    Descarga S1 + S2, calcula humedad y NDMI, evalúa alertas.
-    """
-    background_tasks.add_task(ejecutar_pipeline, fecha, ventana_dias)
-    return {
-        "mensaje": "Pipeline iniciado en background.",
-        "fecha_objetivo": str(fecha or "ayer"),
-        "ventana_dias": ventana_dias,
-    }
+    return await execute_daily_pipeline_job(db, target_date=fecha, trigger_source="manual", force=force)
+
+
+@router.post("/recalibrar")
+async def recalibrar(
+    fecha: date | None = Query(None),
+    force: bool = Query(False),
+    db: AsyncSession = Depends(get_db),
+):
+    return await execute_recalibration_job(db, target_date=fecha, trigger_source="manual", force=force)
+
+
+@router.post("/materializar")
+async def materializar_capas(
+    fecha: date | None = Query(None),
+    department: str | None = Query(None),
+    force: bool = Query(False),
+    db: AsyncSession = Depends(get_db),
+):
+    return await refresh_materialized_layers(
+        db,
+        target_date=fecha,
+        department=department,
+        trigger_source="manual",
+        force=force,
+    )
+
+
+@router.post("/prewarm-coneat")
+async def prewarm_coneat(
+    department: str | None = Query(None),
+    force: bool = Query(False),
+    db: AsyncSession = Depends(get_db),
+):
+    return await execute_coneat_prewarm_job(
+        db,
+        department=department,
+        trigger_source="manual",
+        force=force,
+    )
+
+
+@router.post("/backfill")
+async def backfill_historico(
+    fecha_desde: date = Query(...),
+    fecha_hasta: date = Query(...),
+    incluir_recalibracion: bool = Query(True),
+    force: bool = Query(False),
+    db: AsyncSession = Depends(get_db),
+):
+    return await run_historical_backfill(
+        db,
+        start_date=fecha_desde,
+        end_date=fecha_hasta,
+        include_recalibration=incluir_recalibracion,
+        force=force,
+    )
+
+
+@router.post("/backfill-timeline")
+async def backfill_timeline_historico(
+    fecha_hasta: date | None = Query(None),
+    fecha_desde: date | None = Query(None),
+    window_days: int | None = Query(None, ge=1, le=365),
+    incluir_recalibracion: bool = Query(True),
+    force: bool = Query(False),
+    db: AsyncSession = Depends(get_db),
+):
+    return await execute_timeline_backfill_job(
+        db,
+        start_date=fecha_desde,
+        end_date=fecha_hasta,
+        window_days=window_days,
+        include_recalibration=incluir_recalibracion,
+        trigger_source="manual",
+        force=force,
+    )
+
+
+@router.post("/scheduler/tick")
+async def scheduler_tick(db: AsyncSession = Depends(get_db)):
+    return await run_due_scheduled_jobs(db)
+
+
+@router.get("/runs")
+async def pipeline_runs(
+    limit: int = Query(20, ge=1, le=100),
+    job_type: str | None = Query(None),
+    status: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    rows = await list_pipeline_runs(db, limit=limit, job_type=job_type, status=status)
+    return {"total": len(rows), "datos": rows}
 
 
 @router.get("/estado")
-async def estado_pipeline():
-    """Estado del pipeline y última ejecución."""
-    # En producción: consultar tabla de ejecuciones o Redis
-    return {
-        "estado": "disponible",
-        "descripcion": "Pipeline listo para ejecución manual o automática (cron).",
-        "fuentes": ["Sentinel-1 GRD", "Sentinel-2 L2A", "ERA5 CDS"],
-        "area": "Rivera, Uruguay",
-        "evalscripts": ["ndmi_s2_filtrado.js", "humedad_suelo_s1.js"],
-    }
+async def estado_pipeline(db: AsyncSession = Depends(get_db)):
+    return await get_pipeline_status(db)

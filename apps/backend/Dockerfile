@@ -2,14 +2,20 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y \
-    gdal-bin libgdal-dev libpq-dev gcc \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml .
-RUN pip install poetry && poetry config virtualenvs.create false
-RUN poetry install --no-dev
+COPY apps/backend/requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY apps/backend/app ./app
+COPY apps/backend/tasks ./tasks
+COPY apps/backend/data_fetcher.py ./data_fetcher.py
+COPY apps/backend/.env.example ./.env.example
+COPY evalscripts /evalscripts
+COPY apps/frontend /frontend
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+EXPOSE 8000
+
+CMD ["/bin/sh", "-c", "if [ \"$APP_RUNTIME_ROLE\" = \"worker\" ]; then python -m app.worker; else uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}; fi"]

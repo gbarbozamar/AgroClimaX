@@ -1,0 +1,11 @@
+[build]
+  dockerfilePath    = "apps/backend/Dockerfile"
+  dockerContext     = "."
+
+[deploy]
+  healthcheckPath   = "/api/health"
+  healthcheckTimeout = 300
+  restartPolicyType = "on_failure"
+
+[[services]]
+  name = "AgroClimaX"

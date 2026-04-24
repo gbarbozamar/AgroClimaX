@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "agroclimax": {
+      "command": "python",
+      "args": ["C:/Users/barbo/Documents/PhD/AI Deep Economics/AgroClimaX/.claude/worktrees/nervous-jennings/apps/mcp/server.py"],
+      "env": {
+        "AGROCLIMAX_BACKEND_URL": "http://127.0.0.1:8001",
+        "MCP_SERVICE_TOKEN": "dev-test-token"
+      }
+    }
+  }
+}

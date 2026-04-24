@@ -1,34 +1,55 @@
 """
-Tarea Celery — Pipeline diario Copernicus.
-Se ejecuta automáticamente según PIPELINE_CRON_HOUR en settings.
+Tarea Celery para ingesta diaria y recalibracion semanal.
 """
 from celery import Celery
+from celery.schedules import crontab
+
 from app.core.config import settings
+
 
 celery_app = Celery("agroclimax", broker=settings.redis_url, backend=settings.redis_url)
 
 celery_app.conf.beat_schedule = {
-    "pipeline-diario-copernicus": {
-        "task": "tasks.pipeline_task.run_pipeline_diario",
-        "schedule": {
-            "hour": settings.pipeline_cron_hour,
-            "minute": settings.pipeline_cron_minute,
-        },
-    }
+    "pipeline-diario-nacional": {
+        "task": "tasks.pipeline_task.run_pipeline_nacional",
+        "schedule": crontab(hour=settings.pipeline_cron_hour, minute=settings.pipeline_cron_minute),
+    },
+    "recalibracion-semanal": {
+        "task": "tasks.pipeline_task.run_recalibration",
+        "schedule": crontab(hour=settings.pipeline_cron_hour, minute=settings.pipeline_cron_minute, day_of_week="mon"),
+    },
 }
 
 
-@celery_app.task(name="tasks.pipeline_task.run_pipeline_diario", bind=True, max_retries=3)
-def run_pipeline_diario(self):
-    """Ejecuta el pipeline Copernicus completo y evalúa alertas."""
-    import logging
-    logger = logging.getLogger(__name__)
+@celery_app.task(name="tasks.pipeline_task.run_pipeline_nacional", bind=True, max_retries=3)
+def run_pipeline_nacional(self):
+    import asyncio
+
+    from app.db.session import AsyncSessionLocal
+    from app.services.pipeline_ops import execute_daily_pipeline_job
+
+    async def _run():
+        async with AsyncSessionLocal() as session:
+            return await execute_daily_pipeline_job(session, trigger_source="celery", force=False)
 
     try:
-        from app.copernicus.pipeline import ejecutar_pipeline
-        resultado = ejecutar_pipeline()
-        logger.info("Pipeline completado: %s", resultado.resumen())
-        return resultado.resumen()
+        return asyncio.run(_run())
     except Exception as exc:
-        logger.error("Error en pipeline: %s", exc)
-        raise self.retry(exc=exc, countdown=60 * 30)  # reintentar en 30 min
+        raise self.retry(exc=exc, countdown=60 * 30)
+
+
+@celery_app.task(name="tasks.pipeline_task.run_recalibration", bind=True, max_retries=2)
+def run_recalibration(self):
+    import asyncio
+
+    from app.db.session import AsyncSessionLocal
+    from app.services.pipeline_ops import execute_recalibration_job
+
+    async def _run():
+        async with AsyncSessionLocal() as session:
+            return await execute_recalibration_job(session, trigger_source="celery", force=False)
+
+    try:
+        return asyncio.run(_run())
+    except Exception as exc:
+        raise self.retry(exc=exc, countdown=60 * 15)

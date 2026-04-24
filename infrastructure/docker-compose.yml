@@ -20,8 +20,8 @@ services:
 
   backend:
     build:
-      context: ../apps/backend
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: apps/backend/Dockerfile
     ports:
       - "8000:8000"
     env_file:
@@ -29,30 +29,59 @@ services:
     depends_on:
       - db
       - redis
+    environment:
+      APP_RUNTIME_ROLE: web
+      PIPELINE_SCHEDULER_ENABLED: "false"
     volumes:
-      - ../apps/backend:/app
+      - ../apps/backend/app:/app/app
+      - ../apps/backend/tasks:/app/tasks
+      - ../apps/backend/data_fetcher.py:/app/data_fetcher.py
+      - ../apps/frontend:/frontend
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
-  celery-worker:
+  worker:
     build:
-      context: ../apps/backend
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: apps/backend/Dockerfile
     env_file:
       - ../apps/backend/.env
     depends_on:
       - db
       - redis
+    environment:
+      APP_RUNTIME_ROLE: worker
+      PIPELINE_SCHEDULER_ENABLED: "true"
+    volumes:
+      - ../apps/backend/app:/app/app
+      - ../apps/backend/tasks:/app/tasks
+      - ../apps/backend/data_fetcher.py:/app/data_fetcher.py
+      - ../apps/frontend:/frontend
+    command: python -m app.worker
+
+  celery-worker:
+    build:
+      context: ..
+      dockerfile: apps/backend/Dockerfile
+    env_file:
+      - ../apps/backend/.env
+    depends_on:
+      - db
+      - redis
+    profiles:
+      - legacy-celery
     command: celery -A tasks.pipeline_task.celery_app worker --loglevel=info
 
   celery-beat:
     build:
-      context: ../apps/backend
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: apps/backend/Dockerfile
     env_file:
       - ../apps/backend/.env
     depends_on:
       - db
       - redis
+    profiles:
+      - legacy-celery
     command: celery -A tasks.pipeline_task.celery_app beat --loglevel=info
 
 volumes:

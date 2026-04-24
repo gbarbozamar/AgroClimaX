@@ -20,10 +20,26 @@ build/
 apps/backend/.cache_agroclimax.json
 apps/backend/.tile_cache/
 apps/backend/.tiles_cache/
+apps/backend/.catalog_cache/
+apps/backend/.coneat_cache/
+apps/backend/.official_overlay_cache/
+apps/backend/.notification_assets/
+apps/backend/*.db
+apps/backend/*.db-shm
+apps/backend/*.db-wal
+apps/backend/tests/*.db
+apps/backend/tests/*.db-shm
+apps/backend/tests/*.db-wal
 
 # ── Logs ────────────────────────────────────────────────────────
 *.log
 logs/
+server_log.txt
+.playwright-cli/
+output/
+apps/backend/agroclimax.db
+apps/backend/test_tile.png
+Analisis_Alertas_AgroClimaX.docx
 
 # ── IDEs ────────────────────────────────────────────────────────
 .vscode/
@@ -41,3 +57,10 @@ dist/
 
 # ── Docker ──────────────────────────────────────────────────────
 *.env.docker
+
+# ── DB / seeds locales (no subir data ni secrets de seed) ───────
+/agroclimax.db
+/agroclimax.db-shm
+/agroclimax.db-wal
+scripts/nort_payload.json
+scripts/seed_nort_on_prod.py
