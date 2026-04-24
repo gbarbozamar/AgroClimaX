@@ -57,3 +57,10 @@ dist/
 
 # ── Docker ──────────────────────────────────────────────────────
 *.env.docker
+
+# ── DB / seeds locales (no subir data ni secrets de seed) ───────
+/agroclimax.db
+/agroclimax.db-shm
+/agroclimax.db-wal
+scripts/nort_payload.json
+scripts/seed_nort_on_prod.py

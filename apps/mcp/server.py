@@ -20,6 +20,7 @@ import os
 
 import httpx
 from fastmcp import FastMCP
+from fastmcp.utilities.types import Image
 
 BACKEND_URL = os.environ.get("AGROCLIMAX_BACKEND_URL", "http://127.0.0.1:8001")
 SERVICE_TOKEN = os.environ.get("MCP_SERVICE_TOKEN", "")
@@ -34,14 +35,48 @@ def _headers(user_id: str | None = None) -> dict:
     return h
 
 
+async def _fetch_png_bytes(
+    cli: httpx.AsyncClient,
+    field_id: str,
+    layer: str,
+    observed_at: str,
+    user_id: str | None,
+) -> bytes | None:
+    """Descarga los bytes del PNG desde el endpoint MCP de descarga.
+
+    storage_key sigue el patrón fields/{field_id}/snapshots/{layer}/{YYYY-MM-DD}.png
+    y el endpoint /api/v1/mcp/fields/{field_id}/snapshots/{storage_key:path} sirve
+    los bytes con X-Service-Token.
+    """
+    storage_key = f"fields/{field_id}/snapshots/{layer}/{observed_at}.png"
+    url = f"{BACKEND_URL}/api/v1/mcp/fields/{field_id}/snapshots/{storage_key}"
+    try:
+        r = await cli.get(url, headers=_headers(user_id), timeout=20)
+    except httpx.HTTPError:
+        return None
+    if r.status_code != 200:
+        return None
+    ct = r.headers.get("content-type", "")
+    if not ct.startswith("image/"):
+        return None
+    return r.content
+
+
 @mcp.tool
 async def get_field_snapshot(
     field_id: str,
     layer: str = "ndvi",
     date: str | None = None,
     user_id: str | None = None,
-) -> dict:
-    """Retorna snapshot PNG + metadata de un campo en una fecha."""
+    include_image: bool = True,
+):
+    """Retorna snapshot PNG (inline como imagen) + metadata de un campo en una fecha.
+
+    Por default `include_image=True` devuelve la imagen renderizada inline
+    (MCP `image` content) para que el cliente la muestre directamente en el chat
+    sin necesidad de descargar con auth externo. Ademas retorna el JSON con
+    metadata (risk_score, ndmi_mean, bbox, area_ha, etc.).
+    """
     async with httpx.AsyncClient() as cli:
         params: dict[str, str] = {"layer": layer}
         if date:
@@ -52,7 +87,20 @@ async def get_field_snapshot(
             headers=_headers(user_id),
         )
         r.raise_for_status()
-        return r.json()
+        metadata = r.json()
+
+        if not include_image:
+            return [metadata]
+
+        observed = metadata.get("observed_at")
+        layer_key = metadata.get("layer_key", layer)
+        if not observed:
+            return [metadata]
+
+        png = await _fetch_png_bytes(cli, field_id, layer_key, observed, user_id)
+        if png is None:
+            return [metadata]
+        return [metadata, Image(data=png, format="png")]
 
 
 @mcp.tool
@@ -61,8 +109,16 @@ async def get_field_timeline(
     layer: str = "ndvi",
     days: int = 30,
     user_id: str | None = None,
-) -> dict:
-    """Retorna últimos N snapshots del campo."""
+    include_images: bool = False,
+    max_inline_images: int = 6,
+):
+    """Retorna últimos N snapshots del campo.
+
+    Con `include_images=True` incrusta hasta `max_inline_images` PNGs inline
+    (los más recientes) para mostrar en chat. Por default False porque un timeline
+    completo puede tener 30+ frames y el payload se vuelve pesado. Siempre retorna
+    la metadata JSON con URLs descargables.
+    """
     async with httpx.AsyncClient() as cli:
         r = await cli.get(
             f"{BACKEND_URL}/api/v1/mcp/fields/{field_id}/timeline",
@@ -70,7 +126,24 @@ async def get_field_timeline(
             headers=_headers(user_id),
         )
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+
+        if not include_images:
+            return [data]
+
+        # Descargar los últimos N frames (orden: el backend ya devuelve por fecha asc,
+        # tomamos los últimos max_inline_images).
+        frames = data.get("days", []) or []
+        tail = frames[-max_inline_images:]
+        images: list = []
+        for f in tail:
+            observed = f.get("observed_at")
+            if not observed:
+                continue
+            png = await _fetch_png_bytes(cli, field_id, layer, observed, user_id)
+            if png:
+                images.append(Image(data=png, format="png"))
+        return [data] + images
 
 
 @mcp.tool
